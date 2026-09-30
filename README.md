@@ -57,8 +57,8 @@ The plan lives in [`docs/design_doc_gflowrl_optimization.md`](docs/design_doc_gf
 | P1(b) | Loss scale / `grad_clip = L̄`, and an ε-swap arm to settle the direction of Eq. 7 | Config-only, planned |
 | P1(c) | Larger group size G = 8/16 | Conditional |
 | P1(d) | epochs / β | Frozen, with trigger conditions |
-| P3 | SFT data line (front/behind never calls the depth tool; Vacant queries only the anchor object) | Moved out, separate schedule |
-| P4 | Re-train a GRPO control arm whenever G / epochs change | Conditional |
+| P2 | SFT data line (front/behind never calls the depth tool; Vacant queries only the anchor object) | Moved out, separate schedule |
+| P3 | Re-train a GRPO control arm whenever G / epochs change | Conditional |
 
 Primary metric for the next runs: the share of Vacant questions whose RoboRefer query names only the anchor object (monitored live by `p1_monitor.py`).
 
@@ -95,7 +95,6 @@ tools/                           Shared: parse_dump.py (dump → trajectory reco
 
 Where to find each piece:
 
-| You want | Path |
 |---|---|
 | The whole story in one document | [`docs/full_report_v1.md`](docs/full_report_v1.md) |
 | The current optimization plan | [`docs/design_doc_gflowrl_optimization.md`](docs/design_doc_gflowrl_optimization.md) |
