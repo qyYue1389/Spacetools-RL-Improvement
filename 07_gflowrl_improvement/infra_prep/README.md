@@ -6,12 +6,16 @@
 
 | 文件 | 作用 |
 |---|---|
-| `patched/` | 打好补丁的 4 个文件:`ray_trainer.py`(= c6fef78a + P1-a + 丢退化组)、`fsdp_workers.py`、`run_rl.sh`、`run_rl_gflowrl.sh` |
-| `infra_all_vs_c6fef78a.diff` | 上面 4 个文件相对 c6fef78a 的完整 diff,`git apply` 验证可用 |
+| `patched/` | 打好补丁的 5 个文件:`ray_trainer.py`(= c6fef78a + P1-a + 丢退化组)、`fsdp_workers.py`、`tool_agent_loop.py`、`run_rl.sh`、`run_rl_gflowrl.sh` |
+| `patched_toolshed/verl.py` | Toolshed 侧计时补丁(SpaceTools-Toolshed `712e557`) |
+| `infra_all_vs_c6fef78a.diff` | `patched/` 5 个文件相对 c6fef78a 的完整 diff,`git apply` 验证可用 |
+| `toolshed_tool_timing_vs_712e557.diff` | Toolshed 侧计时补丁的 diff,`git apply` 验证可用 |
 | `infra_drop_only.diff` | 只有「丢退化组」这一项(相对 P1-a) |
 | `infra_drop_check.py` | 丢退化组的 CPU 自检(需 torch) |
 | `stage_timing.py` | 从训练日志抽全部 `timing_s/*`,找出那 129 s |
 | `nccl_bw_probe.py` + `preflight_nccl.sh` | 开机验收:P2P 能不能用、all-reduce 带宽多少 |
+| `tool_timing_check.py` / `tool_timing_summary.py` | 按工具计时的自检 / 汇总 |
+| `stage_timing_p7_85steps.csv` | P7 训练 85 步的逐阶段耗时 |
 
 ## 1. 丢退化组(`GF_DROP_DEGEN=true`,需同时 `GF_FILTER_DEGEN=true`)
 
@@ -32,20 +36,55 @@ rollout dump(`trainer.rollout_data_dir`)仍写全部 320 条,`p1_monitor.py` 的
 
 上游 `fsdp_workers.py` 对 ref **强制** `CPUOffload(offload_params=True)`,与 `ref.fsdp_config.param_offload` 无关 ——
 原来把这个开关设成 False 也不会让 ref 上 GPU。补丁让 False 真正生效;默认 True 行为不变。
-代价约 2 GB/卡(4.07 B 参数 bf16 分到 4 卡)。收益要等 `stage_timing.py` 读出 old_log_prob(同样的前向、参数在 GPU)
-和 ref 的差才能估,上机先跑 1 步确认不 OOM。
+代价约 2 GB/卡(4.07 B 参数 bf16 分到 4 卡)。实测(§3)只省约 5 s/步(<1%),**不建议打开**;补丁保留,默认关。
 
-## 3. 那 129 s
+## 3. 那 129 s —— 已查清(2026-09-30,读 HF `provenance/full_train.log.gz`)
 
-verl 本来就给每个阶段计时(old_log_prob / reward / update_weights / dump_rollout_generations …),
-报告只抄了四项。完整日志在 HF `provenance/`:
+`python3 stage_timing.py <full_train.log>`,85 步中位(秒):
 
-```bash
-hf download qzpm55555/spacetools-p7-gflowrl-cprime-8xa40 --include "provenance/*" --local-dir p7_hf
-python3 stage_timing.py p7_hf/provenance/<日志文件>
+```
+gen            321.2   34.8%
+old_log_prob   111.9   12.1%   ← 报告漏记
+ref            116.8   12.7%
+update_actor   351.8   38.1%
+save_ckpt       39.6    4.3%   (只在 save_freq 命中的步)
+update_weights   9.7    1.0%   ← 报告漏记
+其余             0.3
+step           922
 ```
 
-## 4. 开机验收
+step 85 那 981 s 里的 129 s = old_log_prob 118.8 + update_weights 10.0 + 0.3。逐步结果在 `stage_timing_p7_85steps.csv`。
+
+由此得到的三个结论:
+
+1. **随行数缩放的部分是 old_log_prob + ref + update_actor ≈ 580 s(63%)**,比之前估的大 —— 丢退化组(§1)能砍的就是这一块。
+2. **ref 放 CPU 只多花约 5 s/步**(ref 117 vs 同样是一次前向、参数在 GPU 的 old_log_prob 112)。§2 的开关收益 < 1%,还要多占 2 GB/卡,**不建议打开**;补丁保留,默认关。
+3. **gen 的 321 s 主要在等工具,不在生成。** 最慢那条轨迹工具耗时 281 s、生成只有 26 s;平均每条工具 135 s、生成 20 s。
+   rollout 是被工具服务卡住的(工具 actor 为塞进 4 张卡缩到了 ×0.5,roborefer 只有 3 个副本)。
+   丢退化组帮不了这一段(奖励要等生成完才知道)。下一步要查的是哪个工具在排队。
+
+## 4. 按工具计时(`TOOL_TIMING_DIR=<目录>`)
+
+§3 发现 gen 的 321 s 主要在等工具,但 verl 只记每轮工具的总时间。设了 `TOOL_TIMING_DIR` 后,
+每次工具调用往 `$TOOL_TIMING_DIR/tool_calls_<pid>.jsonl` 写一行:工具名、提交时刻、总耗时,以及拆开的三段 ——
+
+- `exec_wait`:在 agent loop 进程的默认线程池里排队(Toolshed 用 `run_in_executor(None, ...)` 同步调用,线程数有上限)
+- `remote`:Toolshed 调用本身(router + 工具 actor 排队 + 计算)
+- 剩下的是回到事件循环后的处理(`ray.put` 图片/变量等)
+
+外加提交时该工具和全部工具的在途调用数、线程池大小、是否出错。不设这个变量时行为与原来完全一样。
+`remote` 和 `exec_wait` 需要 Toolshed 侧补丁(`patched_toolshed/`);没打时只有总耗时。
+
+```bash
+export TOOL_TIMING_DIR=$OUTPUT_DIR/tool_timing        # 在 run_rl_gflowrl.sh 之前,随 ray start 传给 worker
+bash examples/toolshed/run_rl_gflowrl.sh ...
+python3 tool_timing_summary.py $OUTPUT_DIR/tool_timing
+```
+
+怎么读:`remote` p50 远大于 min → 工具 actor 在排队,加副本 / 调 GPU 分配;p50 ≈ min → 算得慢,
+要批处理或换卡;`exec_wait` 大且在途数经常超过线程数 → 瓶颈是 agent loop 的线程池,不是工具。
+
+## 5. 开机验收
 
 ```bash
 CUDA_VISIBLE_DEVICES=4,5,6,7 bash preflight_nccl.sh     # 训练用的那几张卡
@@ -58,5 +97,7 @@ P2P_OK 才不设 `NCCL_P2P_DISABLE`;P2P_BROKEN 时考虑换机器。
 - `../p1_prep/p1a_check.py` 指向 `patched/ray_trainer.py`:PASS
 - `04_gflowrl_implementation/checks/run_checks.sh` 指向打了补丁的完整树:config / guard / gpusplit / onpolicy / fixedpoint / degenerate 全部 PASS
 - `infra_all_vs_c6fef78a.diff` 在干净的 c6fef78a 上 `git apply` 后与 `patched/` 逐字节相同
+
+- `tool_timing_check.py`:不设变量时返回值与原函数完全一致;设了之后每次调用一条记录,`remote` / `exec_wait` 拆分正确,线程数不够时 `exec_wait` 变大,Toolshed 报错与未知工具都记为失败。PASS
 
 没做:checkpoint 瘦身。每 5 步存一次、每次 39 s,摊到每步约 8 s(<1%),而且去掉 optimizer 状态会让自动续训失效。

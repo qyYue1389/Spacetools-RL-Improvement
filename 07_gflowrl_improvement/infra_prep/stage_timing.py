@@ -19,6 +19,9 @@ import argparse, re, statistics as st, sys
 TOP = ["gen", "reward", "old_log_prob", "ref", "values", "adv", "update_critic", "update_actor",
        "save_checkpoint", "update_weights", "dump_rollout_generations", "testing"]
 NESTED = {"gen_max"}   # inside gen
+OUTSIDE = {"start_profile", "stop_profile"}   # timed outside timing_s/step
+# Keys with a "/" (e.g. agent_loop/tool_calls/max) are per-sample statistics from inside gen,
+# not stages: they are reported but never added to the step budget.
 
 ap = argparse.ArgumentParser()
 ap.add_argument("log")
@@ -47,20 +50,23 @@ if not rows:
     sys.exit("no `step:N - ... timing_s/step:...` lines found")
 
 keys = sorted({k for d in rows.values() for k in d} - {"step"})
-unknown = [k for k in keys if k not in TOP and k not in NESTED]
+unknown = [k for k in keys if k not in TOP and k not in NESTED and k not in OUTSIDE and "/" not in k]
+inner = [k for k in keys if "/" in k]
 for d in rows.values():
     d["_unaccounted"] = d["step"] - sum(d.get(k, 0.0) for k in TOP + unknown)
 
 step_med = st.median(d["step"] for d in rows.values())
 print(f"{len(rows)} steps · median step {step_med:.0f} s")
-print(f"{'stage':28s} {'median':>8s} {'mean':>8s} {'share':>7s}")
-for k in TOP + unknown + sorted(NESTED & set(keys)) + ["_unaccounted"]:
+print(f"{'stage':40s} {'median':>8s} {'mean':>8s} {'share':>7s}")
+for k in TOP + unknown + ["_unaccounted"] + sorted(NESTED & set(keys)) + inner:
     vals = [d[k] for d in rows.values() if k in d]
     if not vals:
         continue
     med = st.median(vals)
-    tag = " (nested in gen)" if k in NESTED else (" (not in TOP list; counted)" if k in unknown else "")
-    print(f"{k:28s} {med:8.1f} {st.mean(vals):8.1f} {med / step_med:7.1%}{tag}")
+    tag = (" (nested in gen)" if k in NESTED or k in inner else
+           " (not in TOP list; counted)" if k in unknown else "")
+    share = f"{med / step_med:7.1%}" if k not in inner else "       "
+    print(f"{k:40s} {med:8.1f} {st.mean(vals):8.1f} {share}{tag}")
 
 if a.csv:
     cols = ["step_idx", "step"] + TOP + unknown + ["_unaccounted"]

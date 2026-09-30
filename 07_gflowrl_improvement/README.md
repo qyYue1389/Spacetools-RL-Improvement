@@ -33,11 +33,14 @@ Training-side speed-ups that do not change the objective; with the new switches 
 
 | Path | What |
 |---|---|
-| `patched/` | `ray_trainer.py` (= c6fef78a + P1(a) + drop degenerate groups), `fsdp_workers.py`, `run_rl.sh`, `run_rl_gflowrl.sh` |
-| `infra_all_vs_c6fef78a.diff` | All four files as one diff against `c6fef78a` (`git apply`-able) |
+| `patched/` | `ray_trainer.py` (= c6fef78a + P1(a) + drop degenerate groups), `fsdp_workers.py`, `tool_agent_loop.py`, `run_rl.sh`, `run_rl_gflowrl.sh` |
+| `patched_toolshed/verl.py` | Toolshed side of the per-tool timing (on SpaceTools-Toolshed `712e557`) |
+| `infra_all_vs_c6fef78a.diff` | All files in `patched/` as one diff against `c6fef78a` (`git apply`-able); `toolshed_tool_timing_vs_712e557.diff` for Toolshed |
 | `infra_drop_only.diff` | Only the drop-degenerate change, on top of P1(a) |
 | `GF_DROP_DEGEN=true` | Drop reward-degenerate groups before old_log_prob / ref / update_actor (needs `GF_FILTER_DEGEN=true`); the update is unchanged, the three passes only see the ~30 % kept rows |
-| `REF_PARAM_OFFLOAD=False` | Keep the reference model on GPU (upstream forced CPU offload regardless of the flag); ~2 GB per GPU |
+| `REF_PARAM_OFFLOAD=False` | Keep the reference model on GPU (upstream forced CPU offload regardless of the flag). Measured gain only ~5 s/step, so it stays off |
+| `TOOL_TIMING_DIR=<dir>` | Log every tool call: latency split into thread-pool wait / remote (queue + compute) / post-processing, in-flight counts; summarise with `tool_timing_summary.py` |
 | `infra_drop_check.py` | CPU self-check: gradients on kept rows identical to P1(a); counter-example without micro-batch padding |
-| `stage_timing.py` | Per-stage timing from a training log (`timing_s/*`), incl. the unaccounted remainder |
+| `stage_timing.py` → `stage_timing_p7_85steps.csv` | Per-stage timing from a training log (`timing_s/*`). On the P7 run: gen 321 s, old_log_prob 112 s, ref 117 s, update_actor 352 s per step (median); gen is dominated by tool calls |
+| `tool_timing_check.py` | CPU self-check of the per-tool timing (return values unchanged, split correct) |
 | `preflight_nccl.sh`, `nccl_bw_probe.py` | Machine acceptance: is GPU P2P usable, all-reduce bandwidth |

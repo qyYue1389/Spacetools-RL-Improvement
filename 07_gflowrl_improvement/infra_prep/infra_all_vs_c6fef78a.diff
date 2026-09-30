@@ -215,6 +215,87 @@
  
              fsdp_kwargs = {
                  "mesh": fsdp_mesh,
+--- a/verl/experimental/agent_loop/tool_agent_loop.py
++++ b/verl/experimental/agent_loop/tool_agent_loop.py
+@@ -16,6 +16,8 @@
+ import logging
+ import os
+ import re
++import time
++from collections import Counter
+ from enum import Enum
+ from typing import Any, Optional
+ from uuid import uuid4
+@@ -79,6 +81,27 @@
+     return data
+ 
+ 
++# ---- Infra: per-call tool timing (off unless TOOL_TIMING_DIR is set) ------------------------
++# gen is ~35 % of a P7 step and is dominated by waiting for tools (mean 135 s of tool time vs
++# 20 s of generation per trajectory), but verl only logs the per-turn total.  With
++# TOOL_TIMING_DIR set, every tool call appends one JSON line to
++# $TOOL_TIMING_DIR/tool_calls_<pid>.jsonl:
++#   tool, t_submit, latency, exec_wait (queued for a thread of the default executor),
++#   remote (inside the Toolshed call: router + actor queue + compute), in-flight counts at
++#   submit, executor size, ok.  Nothing else changes.  Summarise with tool_timing_summary.py.
++_TOOL_TIMING_DIR = os.environ.get("TOOL_TIMING_DIR")
++_TOOL_INFLIGHT: Counter = Counter()
++
++
++def _record_tool_call(rec: dict) -> None:
++    try:
++        os.makedirs(_TOOL_TIMING_DIR, exist_ok=True)
++        with open(os.path.join(_TOOL_TIMING_DIR, f"tool_calls_{os.getpid()}.jsonl"), "a") as f:
++            f.write(json.dumps(rec) + "\n")
++    except Exception as e:  # diagnostics must never break a rollout
++        logger.warning(f"tool timing record failed: {e}")
++
++
+ class AgentState(Enum):
+     PENDING = "pending"
+     GENERATING = "generating"
+@@ -476,6 +499,11 @@
+     ) -> tuple[ToolResponse, float, dict]:
+         """Call tool and return tool response."""
+         tool, instance_id = None, None
++        _t0, _ok, _name = time.time(), False, tool_call.name
++        if _TOOL_TIMING_DIR:
++            _TOOL_INFLIGHT[_name] += 1
++            _TOOL_INFLIGHT["__all__"] += 1
++            _inflight_tool, _inflight_all = _TOOL_INFLIGHT[_name], _TOOL_INFLIGHT["__all__"]
+         try:
+             # TODO: append malformed tool_call to the prompt: invalid function name or arguments
+             tool_name = tool_call.name
+@@ -491,6 +519,8 @@
+             tool_execution_response, tool_reward, res = await tool.execute(
+                 instance_id, tool_args, agent_data=agent_data
+             )
++            # ToolshedMethodTool.execute catches its own errors and returns {"error": ...}
++            _ok = not (isinstance(res, dict) and "error" in res)
+         except Exception as e:
+             logger.warning(f"Error when executing tool: {e}")
+             return (
+@@ -501,6 +531,20 @@
+                 {},
+             )
+         finally:
++            if _TOOL_TIMING_DIR:
++                _t1 = time.time()
++                _TOOL_INFLIGHT[_name] -= 1
++                _TOOL_INFLIGHT["__all__"] -= 1
++                _inst = getattr(tool, "_instance_dict", {}).get(instance_id, {}) if tool and instance_id else {}
++                _ts, _te = _inst.get("t_thread_start"), _inst.get("t_thread_end")
++                _ex = getattr(asyncio.get_event_loop(), "_default_executor", None)
++                _record_tool_call({
++                    "tool": _name, "t_submit": _t0, "latency": _t1 - _t0,
++                    "exec_wait": (_ts - _t0) if _ts else None,
++                    "remote": (_te - _ts) if _ts and _te else None,
++                    "inflight_tool": _inflight_tool, "inflight_all": _inflight_all,
++                    "executor_workers": getattr(_ex, "_max_workers", None), "ok": _ok, "pid": os.getpid(),
++                })
+             if tool and instance_id:
+                 await tool.release(instance_id)
+ 
 --- a/examples/toolshed/run_rl.sh
 +++ b/examples/toolshed/run_rl.sh
 @@ -489,7 +489,7 @@

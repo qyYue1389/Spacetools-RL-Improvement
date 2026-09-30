@@ -1,0 +1,31 @@
+--- a/toolshed/integration/verl.py
++++ b/toolshed/integration/verl.py
+@@ -15,6 +15,7 @@
+ """
+ from __future__ import annotations
+ 
++import time
+ import asyncio
+ import inspect
+ import logging
+@@ -354,7 +355,19 @@
+ 
+             # Execute the function (run in thread pool since it's synchronous)
+             loop = asyncio.get_event_loop()
+-            result = await loop.run_in_executor(None, lambda: func(**parameters))
++            # Infra: stamp when a thread of the default executor actually picks the call up and
++            # when the Toolshed call returns, so the agent loop can split its latency into
++            # "waiting for a thread" and "remote" (router + actor queue + compute).
++            _inst = self._instance_dict[instance_id]
++
++            def _timed_call():
++                _inst["t_thread_start"] = time.time()
++                try:
++                    return func(**parameters)
++                finally:
++                    _inst["t_thread_end"] = time.time()
++
++            result = await loop.run_in_executor(None, _timed_call)
+ 
+             # Check if result is an error ToolResult
+             if isinstance(result, ToolResult) and result.is_error:
