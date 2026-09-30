@@ -1,5 +1,5 @@
---- /sessions/rcw-01msvxamn6awxibfjkzvgpcp/mnt/SpaceTools-RL/examples/toolshed/run_rl_gflowrl.sh	2026-09-06 03:02:31.999183379 +0000
-+++ patched/run_rl_gflowrl.sh	2026-09-25 07:44:01.346137942 +0000
+--- a/examples/toolshed/run_rl_gflowrl.sh (c6fef78a)
++++ b/patched/run_rl_gflowrl.sh
 @@ -47,6 +47,7 @@
  GF_EPS_HIGH="${GF_EPS_HIGH:-0.28}"
  GF_EPS_IS="${GF_EPS_IS:-0.2}"

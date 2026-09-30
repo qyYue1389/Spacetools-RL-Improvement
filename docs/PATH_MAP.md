@@ -157,3 +157,4 @@ This table maps each of them to its location here. Paths not listed were intenti
 | `GFlowRL_improve/P0/p0_bundle/scripts/parse_dump.py` | `tools/parse_dump.py (identical)` |
 | `eval/GFlowRL/P7_GFLOWRL_EVAL/scripts/parse_dump.py` | `tools/parse_dump.py (identical)` |
 | `eval/GFlowRL/P7_GFLOWRL_EVAL/dumps/runA-9bench/{blinkdepth,cvb3ddepth,boppose,bopgrasp}` | `not included: invalid (silent tool OOM); use runB-rerun4` |
+| `GFlowRL_improve/infra_prep` | `07_gflowrl_improvement/infra_prep` |

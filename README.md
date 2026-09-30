@@ -90,11 +90,13 @@ docs/                            Full report, design doc, paper notes, path map
 07_gflowrl_improvement/          Optimization work driven by the design doc
   p0_same_machine_reeval/          3 ckpts × 3 runs on one machine: results, scripts, dumps
   p1_prep/                         P1(a) degenerate-group filter patch, monitor scripts
+  infra_prep/                      Training speed-ups (drop degenerate groups, ref on GPU), timing, NCCL pre-flight
 tools/                           Shared: parse_dump.py (dump → trajectory records), unpack_dumps.sh
 ```
 
 Where to find each piece:
 
+| You want | Path |
 |---|---|
 | The whole story in one document | [`docs/full_report_v1.md`](docs/full_report_v1.md) |
 | The current optimization plan | [`docs/design_doc_gflowrl_optimization.md`](docs/design_doc_gflowrl_optimization.md) |
@@ -216,8 +218,8 @@ Apache-2.0 (see [LICENSE](LICENSE)). Files under `04_gflowrl_implementation/spac
 | P1(b) | loss 尺度 / `grad_clip = L̄`,以及交换 ε 的对照臂(确定 Eq. 7 的方向) | 只改配置,计划中 |
 | P1(c) | 增大 G 到 8/16 | 条件触发 |
 | P1(d) | epochs / β | 冻结,设了触发条件 |
-| P3 | SFT 数据线(front/behind 不调深度工具;Vacant 只问锚物体) | 移出,另立排期 |
-| P4 | 动了 G / epochs 时同批重训 GRPO 对照臂 | 条件触发 |
+| P2 | SFT 数据线(front/behind 不调深度工具;Vacant 只问锚物体) | 移出,另立排期 |
+| P3 | 动了 G / epochs 时同批重训 GRPO 对照臂 | 条件触发 |
 
 主判据:Vacant 里调 RoboRefer 时 `obj_name` 只写锚物体的题目占比(`p1_monitor.py` 训练中实时监控)。
 
@@ -239,7 +241,7 @@ Apache-2.0 (see [LICENSE](LICENSE)). Files under `04_gflowrl_implementation/spac
 | 轨迹 / dump | 各目录下 `dumps/**.jsonl.gz`(完整多轮轨迹,含工具真实返回),结构化记录在 `parsed/` |
 | 公用工具 | [`tools/`](tools):`parse_dump.py`(dump → 轨迹记录)、`unpack_dumps.sh` |
 
-**阶段编号说明:** 复现阶段沿用 P0–P7(P4 = 官方 ckpt 全量评测,P5 = accuracy,P6 = 错题归因,P7 = 换成 GFlowRL);design doc 里的优化阶段另有一套 P0–P4,放在 `07_gflowrl_improvement/`。
+**阶段编号说明:** 复现阶段沿用 P0–P7(P4 = 官方 ckpt 全量评测,P5 = accuracy,P6 = 错题归因,P7 = 换成 GFlowRL);design doc 里的优化阶段另有一套 P0–P3,放在 `07_gflowrl_improvement/`。
 
 ## 6. Hugging Face
 

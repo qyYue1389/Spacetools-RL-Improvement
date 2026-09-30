@@ -1,5 +1,5 @@
---- /sessions/rcw-01msvxamn6awxibfjkzvgpcp/mnt/SpaceTools-RL/verl/trainer/ppo/ray_trainer.py	2026-09-14 05:24:19.299267835 +0000
-+++ patched/ray_trainer.py	2026-09-25 07:43:49.437945093 +0000
+--- a/verl/trainer/ppo/ray_trainer.py (c6fef78a)
++++ b/patched/ray_trainer.py
 @@ -265,6 +265,7 @@
      eps_low: float = 0.2,
      eps_high: float = 0.28,
@@ -50,9 +50,9 @@
 +        "gflowrl/g_abs_p90": float(torch.quantile(g_abs, 0.9)),
 +        "gflowrl/g_abs_p99": float(torch.quantile(g_abs, 0.99)),
      }
-     return data, metrics
  
-@@ -1888,12 +1915,27 @@
+     # ---- diagnostics.  No gradient, no effect on what this function returns. ----
+@@ -1933,12 +1960,27 @@
                                      "use_kl_loss=True so ref_log_prob is still computed)."
                                  )
                              _gf = _pl.get("gflowrl", {}) or {}

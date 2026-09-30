@@ -6,7 +6,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `p1a_ray_trainer.diff` | P1-a 补丁:`compute_gflowrl_flow_gap(filter_degenerate=...)` 把组内奖励极差为 0 的组的 g̃ 置 0;driver 守卫(filter 打开时要求 `ppo_mini_batch_size == train_batch_size` 且 `ppo_epochs == 1`);新日志 `gflowrl/kept_groups`、`kept_rollout_frac`、`clip_saturation_kept`、`g_abs_p50/p90/p99` |
+| `p1a_ray_trainer.diff` | P1-a 补丁(基于训练用的 SpaceTools-RL `c6fef78a`;2026-09-30 从 9-14 的旧底重做,旧版缺 β 分解日志):`compute_gflowrl_flow_gap(filter_degenerate=...)` 把组内奖励极差为 0 的组的 g̃ 置 0;driver 守卫(filter 打开时要求 `ppo_mini_batch_size == train_batch_size` 且 `ppo_epochs == 1`);新日志 `gflowrl/kept_groups`、`kept_rollout_frac`、`clip_saturation_kept`、`g_abs_p50/p90/p99` |
 | `p1a_run_rl_gflowrl.diff` | 新开关 `GF_FILTER_DEGEN`(默认 false) |
 | `patched/` | 打好补丁的两个文件(未动 SpaceTools-RL 仓库本身) |
 | `p1a_check.py` | 自检,CPU 上跑,需 torch:`python p1a_check.py patched/ray_trainer.py <原 ray_trainer.py> <core_algos.py>` |
@@ -20,7 +20,7 @@
 2. filter 打开时,退化组 g̃ = 0,其余行不变;kept_groups / kept_rollout_frac 正确。
 3. on-policy(dp_actor 令 `old_log_prob = log_prob.detach()`)下,梯度与「真正的 loss mask、分母保留全部序列」逐位相等(max|diff| = 0)。
 4. 反例:off-policy 时退化组会收到近端项梯度 → 守卫必要。
-5. 另外 `p7_fixedpoint_check.py` 指向补丁后的文件重跑,cprime 仍 PASS。
+5. 另外 `04_gflowrl_implementation/checks/run_checks.sh` 指向打了补丁的完整树(2026-09-30 重做后),六个自检全部 PASS。
 
 ## 训练时怎么开
 

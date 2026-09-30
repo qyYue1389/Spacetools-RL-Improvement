@@ -1,0 +1,112 @@
+--- a/ray_trainer.py
++++ b/ray_trainer.py
+@@ -259,6 +259,60 @@
+     }
+ 
+ 
++def select_nondegenerate_groups(data: DataProto, pad_multiple: int) -> tuple[DataProto, dict]:
++    """Infra: drop reward-degenerate groups BEFORE old_log_prob / ref / update_actor.
++
++    Only meaningful together with gflowrl.filter_degenerate=True (P1-a), under which every
++    row of a degenerate group has g~ = 0 and, on-policy, contributes exactly zero gradient.
++    Removing those rows therefore does not change the update:
++
++      * dp_actor scales each micro-batch loss by 1 / gradient_accumulation, where
++        gradient_accumulation = ppo_mini_batch_size / micro_batch_size comes from the CONFIG
++        (80 / 2 per GPU here), not from the rows actually present.  Summed over micro-batches
++        that is  sum_over_local_rows(seq_loss) / 80, i.e. the denominator stays the full batch
++        -- the same as P1-a's "loss mask with every row kept in the denominator".
++      * FSDP averages gradients over ranks, so the global gradient is  sum_all(seq_loss) / 320
++        either way.
++
++    Two constraints keep that exact:
++      * the kept count is padded to a multiple of dp_size * micro_batch_size, so every rank
++        gets the same number of rows (balance_batch needs equal_size) and no micro-batch is
++        short (a 1-row micro-batch would still be scaled by 2/80 and count double);
++      * padding uses degenerate rows (shortest first, to spend the least compute on them);
++        with the filter on they carry g~ = 0 and add nothing.
++
++    Whole groups are kept, so Z_t (Eq. 4) of every kept group is unchanged.
++    """
++    r = data.batch["rm_scores"].sum(dim=-1).float().cpu()
++    uid = np.asarray(data.non_tensor_batch["uid"])
++    _, gidx_np = np.unique(uid, return_inverse=True)
++    gidx = torch.as_tensor(gidx_np, dtype=torch.long)
++    n_groups = int(gidx.max().item()) + 1
++    gmax = torch.full((n_groups,), float("-inf"), dtype=r.dtype).scatter_reduce(0, gidx, r, reduce="amax")
++    gmin = torch.full((n_groups,), float("inf"), dtype=r.dtype).scatter_reduce(0, gidx, r, reduce="amin")
++    degen = ((gmax - gmin) == 0)[gidx].numpy()
++
++    n = len(degen)
++    if n % pad_multiple != 0:
++        raise ValueError(f"drop_degenerate: batch of {n} rows is not a multiple of {pad_multiple}")
++    keep = np.flatnonzero(~degen)
++    pool = np.flatnonzero(degen)
++    target = max(pad_multiple, -(-len(keep) // pad_multiple) * pad_multiple)
++    n_pad = target - len(keep)
++    if n_pad:
++        resp_len = data.batch["response_mask"].sum(dim=-1).cpu().numpy()
++        pool = pool[np.argsort(resp_len[pool], kind="stable")]
++    idx = np.sort(np.concatenate([keep, pool[:n_pad]])).astype(np.int64)
++    metrics = {
++        "gflowrl_drop/rows_before": float(n),
++        "gflowrl_drop/rows_after": float(len(idx)),
++        "gflowrl_drop/pad_rows": float(n_pad),
++        "gflowrl_drop/kept_rollout_frac": float(len(keep) / n),
++        "gflowrl_drop/score_mean_full": float(r.mean()),
++    }
++    return data.select_idxs(idx), metrics
++
++
+ def compute_gflowrl_flow_gap(
+     data: DataProto,
+     beta: float = 8.0,
+@@ -1797,6 +1851,26 @@
+ 
+                     if "response_mask" not in batch.batch.keys():
+                         batch.batch["response_mask"] = compute_response_mask(batch)
++                    # Infra: drop reward-degenerate groups before the three passes that scale
++                    # with the row count (old_log_prob, ref, update_actor).  See
++                    # select_nondegenerate_groups for why the update is unchanged.
++                    _full_batch = None
++                    _degen_full_metrics = None
++                    _gf_pl = self.config.actor_rollout_ref.actor.get("policy_loss", {}) or {}
++                    _gf = (_gf_pl.get("gflowrl", {}) or {}) if _gf_pl.get("loss_mode", "vanilla") == "gflowrl" else {}
++                    if bool(_gf.get("drop_degenerate", False)):
++                        if not bool(_gf.get("filter_degenerate", False)):
++                            raise ValueError("gflowrl.drop_degenerate=True requires gflowrl.filter_degenerate=True")
++                        if "rm_scores" not in batch.batch.keys():
++                            raise ValueError("gflowrl.drop_degenerate needs rm_scores from the rollout (reward model off)")
++                        _full_batch = batch
++                        _full_batch.batch["token_level_scores"] = batch.batch["rm_scores"]
++                        _degen_full_metrics = compute_group_degeneracy_metrics(_full_batch)
++                        _pad = self._get_dp_size(self.actor_rollout_wg, "actor") * int(
++                            self.config.actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu
++                        )
++                        batch, _drop_metrics = select_nondegenerate_groups(batch, pad_multiple=_pad)
++                        metrics.update(_drop_metrics)
+                     # Balance the number of valid tokens across DP ranks.
+                     # NOTE: This usually changes the order of data in the `batch`,
+                     # which won't affect the advantage calculation (since it's based on uid),
+@@ -1933,6 +2007,8 @@
+                         # 组内奖励简并率。两臂都记,与 loss_mode 无关 —— 放在 gflowrl
+                         # 分支之前就是为了这个:只有一臂有这个数的话它什么也证明不了。
+                         metrics.update(compute_group_degeneracy_metrics(batch))
++                        if _degen_full_metrics is not None:
++                            metrics.update(_degen_full_metrics)   # full batch, not the kept rows
+ 
+                         # GFlowRL replaces the advantage with the flow gap g~ (Eq. 4/6/7).
+                         # compute_advantage still runs first so its metrics stay comparable.
+@@ -2029,7 +2105,11 @@
+                     # Log rollout generations if enabled
+                     rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
+                     if rollout_data_dir:
+-                        self._log_rollout_data(batch, reward_extra_infos_dict, timing_raw, rollout_data_dir)
++                        if _full_batch is not None:
++                            _, _full_extra = extract_reward(_full_batch)
++                            self._log_rollout_data(_full_batch, _full_extra, timing_raw, rollout_data_dir)
++                        else:
++                            self._log_rollout_data(batch, reward_extra_infos_dict, timing_raw, rollout_data_dir)
+ 
+                 # validate
+                 if self.config.trainer.test_freq > 0 and (
