@@ -1,0 +1,58 @@
+From 7c50d8a79c8588ace99453ab0c237bf1ada0051b Mon Sep 17 00:00:00 2001
+From: SpaceTools Repro <qyYue1389@users.noreply.github.com>
+Date: Tue, 25 Aug 2026 06:46:21 +0000
+Subject: [PATCH] build: skip the hardcoded py3.10 flash-attn wheel
+
+env_setup.sh pinned a wheel URL built for Python 3.10 / torch 2.3 / cu122:
+
+    flash_attn-2.5.8+cu122torch2.3cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+
+This environment is Python 3.11, so pip refuses it outright ("not a supported
+wheel on this platform"), and `set -e` then aborts the whole script before line
+24 -- meaning `pip install -e ".[train,eval]"` never runs and llava is never
+installed. flash-attn is installed separately instead, matched to the torch this
+environment actually ends up with (2.5.1+cu124, after VILA's own pins downgrade
+it from 2.9.1).
+
+The `pip install triton==3.1.0` on line 27 is left as upstream wrote it. It was
+briefly patched out on the theory that it would break torch 2.9.1, but that was
+wrong: line 24 already downgrades torch to 2.5.1, whose own pin IS triton 3.1.0,
+so the line is a no-op in the real execution order.
+
+NOTE: the pyproject.toml change (disabling lighteval) is NOT ours.
+install_roborefer.sh applies it via sed because that dependency hangs during
+installation. Committed here only so the working tree is clean.
+---
+ env_setup.sh   | 2 +-
+ pyproject.toml | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/env_setup.sh b/env_setup.sh
+index c0a7901..4d3c778 100755
+--- a/env_setup.sh
++++ b/env_setup.sh
+@@ -18,7 +18,7 @@ fi
+ pip install --upgrade pip setuptools
+ 
+ # Install FlashAttention2
+-pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.8/flash_attn-2.5.8+cu122torch2.3cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
++# patched: flash-attn is installed separately, matched to the torch this env ends up with (2.5.1+cu124, py3.11). Upstream hardcoded a py3.10 / torch2.3 wheel that pip refuses here.
+ 
+ # Install VILA
+ pip install -e ".[train,eval]"
+diff --git a/pyproject.toml b/pyproject.toml
+index da84646..4118718 100755
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -175,7 +175,7 @@ dependencies = [
+     "lark==1.2.2",
+     "latex2sympy2_extended==1.0.6",
+     "liger_kernel==0.5.2",
+-    "lighteval @ git+https://github.com/huggingface/lighteval.git@4f381b352c0e467b5870a97d41cb66b487a2c503",
++    #"lighteval (disabled - hangs during install)",
+     "lm-format-enforcer==0.10.9",
+     "lxml==5.3.1",
+     "marisa-trie==1.2.1",
+-- 
+2.43.0
+

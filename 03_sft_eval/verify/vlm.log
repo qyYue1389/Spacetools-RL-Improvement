@@ -1,0 +1,72 @@
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1789174758.919307  106418 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+Using a slow image processor as `use_fast` is unset and a slow processor was saved with this model. `use_fast=True` will be the default behavior in v4.52, even if the model was saved with a slow processor. This will result in minor differences in outputs. You'll still be able to use a slow processor with `use_fast=False`.
+Loading checkpoint shards:   0%|          | 0/7 [00:00<?, ?it/s]Loading checkpoint shards:  14%|█▍        | 1/7 [00:00<00:05,  1.02it/s]Loading checkpoint shards:  29%|██▊       | 2/7 [00:01<00:04,  1.03it/s]Loading checkpoint shards:  43%|████▎     | 3/7 [00:02<00:03,  1.06it/s]Loading checkpoint shards:  57%|█████▋    | 4/7 [00:03<00:02,  1.08it/s]Loading checkpoint shards:  71%|███████▏  | 5/7 [00:04<00:01,  1.08it/s]Loading checkpoint shards:  86%|████████▌ | 6/7 [00:05<00:00,  1.12it/s]Loading checkpoint shards: 100%|██████████| 7/7 [00:06<00:00,  1.15it/s]Loading checkpoint shards: 100%|██████████| 7/7 [00:06<00:00,  1.10it/s]
+实际 dtype: torch.float32  <- 配置传的是 float16,vlm.py:116 写死 auto
+device_map: {'2', '0', '1'}
+detect_one called with image: [[[165 210  16]
+  [ 38 233 236]
+  [ 93 155  15]
+  ...
+  [ 27 143  97]
+  [206  93 166]
+  [ 63  63  14]]
+
+ [[ 21  42  22]
+  [ 88 193  53]
+  [210  48 132]
+  ...
+  [187 220  69]
+  [112 148  75]
+  [148 168 242]]
+
+ [[180 107  23]
+  [ 33 221 235]
+  [228  54 130]
+  ...
+  [204 197  10]
+  [222 141 184]
+  [208 163 249]]
+
+ ...
+
+ [[ 99 118  47]
+  [119 161 157]
+  [110 211 206]
+  ...
+  [120  17  86]
+  [215  62 250]
+  [ 84 102  89]]
+
+ [[ 35 237  41]
+  [ 25 194  29]
+  [134 119 125]
+  ...
+  [ 22 131  98]
+  [149  18 227]
+  [247 176 123]]
+
+ [[162 143 205]
+  [ 31 224   5]
+  [231 101 210]
+  ...
+  [ 66  83  48]
+  [208  71 153]
+  [205   5 220]]] and obj_name: cup
+VLM prompt:
+Point to the cup in this image.
+Model device: cuda:0
+Moving tensor input_ids with shape torch.Size([329]) from cpu to cuda:0
+Device type mismatch: tensor on cpu, model on cuda
+Moving tensor images with shape torch.Size([2, 576, 588]) from cpu to cuda:0
+Device type mismatch: tensor on cpu, model on cuda
+Moving tensor image_input_idx with shape torch.Size([2, 144]) from cpu to cuda:0
+Device type mismatch: tensor on cpu, model on cuda
+Moving tensor image_masks with shape torch.Size([2, 576]) from cpu to cuda:0
+Device type mismatch: tensor on cpu, model on cuda
+VLM response:
+ There are none.
+detect_one -> Detected 0 instance(s) of 'cup': []
+峰值显存 9.72 GiB
+SMOKE_OK

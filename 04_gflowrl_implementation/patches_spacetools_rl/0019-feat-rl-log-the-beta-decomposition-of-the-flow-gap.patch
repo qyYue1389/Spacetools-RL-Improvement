@@ -1,0 +1,96 @@
+From c6fef78a84f69122a07a79f42f48e9bc02a25a3b Mon Sep 17 00:00:00 2001
+From: qyYue1389 <qyYue1389@users.noreply.github.com>
+Date: Wed, 16 Sep 2026 08:32:33 +0000
+Subject: [PATCH 19/19] feat(rl): log the beta decomposition of the flow gap
+
+z_t is an arithmetic group mean, so Eq. 6 splits exactly and g is linear in
+beta:
+
+    g_i = [mean_group(beta*r) - beta*r_i] + [mean_group(d) - d_i]
+
+Two readings of a training log depend on that split and were not measurable
+before:
+
+  * On a reward-degenerate group the reward term is identically zero, so g is
+    pure drift. The gradient there is flow matching toward pi_ref*exp(beta*r)/Z,
+    not reward learning. 67-70 percent of groups on this dataset are degenerate,
+    so that is the majority of every batch -- worth stating precisely rather
+    than claiming the arm keeps learning reward where GRPO gives zero.
+  * Lowering beta does not cure clip saturation. It shrinks only the reward half
+    and leaves drift untouched, so what survives the clip gets MORE
+    drift-dominated. beta has to be picked on reward_term/drift_term, not on
+    clip_saturation alone.
+
+New metrics: reward_term_abs_mean, drift_term_abs_mean, nondegenerate_frac,
+sign_agree_nondegenerate, sat_at_beta_2/4/8/16. The sweep reuses the same r and
+d, so it costs no forward pass; the whole block is elementwise on tensors
+already in hand, in a function whose share of a 920s step was 0.09s.
+
+sat_at_beta_<configured beta> must equal clip_saturation. That identity is the
+block's own self-check and is now asserted in p7_fixedpoint_check.py, together
+with the split identity and the degenerate-group count. Measured there:
+0.000e+00, 1.192e-07, 0.7500. Fixed point unchanged at 7.389644e-13.
+
+---
+ verl/trainer/ppo/ray_trainer.py | 45 +++++++++++++++++++++++++++++++++
+ 1 file changed, 45 insertions(+)
+
+diff --git a/verl/trainer/ppo/ray_trainer.py b/verl/trainer/ppo/ray_trainer.py
+index c1523258..4df359c2 100644
+--- a/verl/trainer/ppo/ray_trainer.py
++++ b/verl/trainer/ppo/ray_trainer.py
+@@ -356,6 +356,51 @@ def compute_gflowrl_flow_gap(
+         "gflowrl/clip_saturation": float(saturated),
+         "gflowrl/y_len_mean": float(L.mean()),
+     }
++
++    # ---- diagnostics.  No gradient, no effect on what this function returns. ----
++    # z_t is an ARITHMETIC group mean, so Eq. 6 splits exactly into two additive
++    # halves and g is linear in beta:
++    #
++    #     g_i = [mean_group(beta*r) - beta*r_i] + [mean_group(d) - d_i]
++    #            reward term, proportional to beta   drift term, independent of beta
++    #
++    # Two things follow that are easy to misread from a training log:
++    #
++    #   * On a reward-degenerate group the reward term is identically zero, so g is
++    #     pure drift.  The gradient there is flow matching toward pi_ref*exp(beta*r)/Z,
++    #     NOT reward learning -- do not report it as the latter.  On this dataset
++    #     67-70% of groups are degenerate, so this is the majority of the batch.
++    #   * Lowering beta does not cure clip saturation.  It shrinks only the reward
++    #     half and leaves drift untouched, so what survives the clip becomes MORE
++    #     drift-dominated.  Choose beta on reward_term/drift_term, not on
++    #     clip_saturation alone.
++    #
++    # The beta sweep reuses the same r and d, so it costs no forward pass and no
++    # extra memory.  sat_at_beta_<beta> must come out equal to clip_saturation --
++    # that identity is this block's own self-check, visible in every logged step.
++
++    def _group_mean(x):
++        s = torch.zeros(n_groups, dtype=torch.float32, device=x.device)
++        s = s.index_add_(0, gidx, x.float())
++        return (s / cnts.clamp(min=1.0))[gidx]
++
++    reward_term = _group_mean(beta * r) - beta * r
++    drift_term = g - reward_term            # exact by construction, every variant
++    nondeg = reward_term.abs() > 1e-12
++    metrics["gflowrl/reward_term_abs_mean"] = float(reward_term.abs().mean())
++    metrics["gflowrl/drift_term_abs_mean"] = float(drift_term.abs().mean())
++    metrics["gflowrl/nondegenerate_frac"] = float(nondeg.float().mean())
++    if bool(nondeg.any()):
++        # does the clip still preserve the reward ordering where reward exists?
++        metrics["gflowrl/sign_agree_nondegenerate"] = float(
++            (torch.sign(g[nondeg]) == torch.sign(reward_term[nondeg])).float().mean()
++        )
++    for _b in (2.0, 4.0, 8.0, 16.0):
++        _g = _group_mean(_b * r + d_in_z) - d_in_g - _b * r
++        metrics[f"gflowrl/sat_at_beta_{_b:g}"] = float(
++            ((_g < -eps_low) | (_g > eps_high)).float().mean()
++        )
++
+     return data, metrics
+ 
+ 
+-- 
+2.34.1
+

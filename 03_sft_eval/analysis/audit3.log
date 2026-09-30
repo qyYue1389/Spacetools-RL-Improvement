@@ -1,0 +1,17 @@
+=== START 2026-09-11T23:51:01+00:00
+### index=176 acc=1.0
+   call: depth_estimator.estimate_depth_with_pointcloud
+   call: roborefer.detect_one
+   call: roborefer.detect_one
+   call: vision_ops.index_at
+   call: vision_ops.index_at
+   response: Generated 1428x1932 depth map and 2,758,896 3D points. Depth range in point cloud: 1.93m to 5.44m (mean: 3.39m). Use $depth_map (numpy array, 1932x1428), $point_cloud (numpy array, 2758896x3) and $focal_length_px (float) to reference the results.
+   response: Detected 1 instance(s) of 'bed': [(0.336, 0.551)]
+   response: Detected 1 instance(s) of 'table': [(0.844, 0.592)]
+   response: Pixel value at (0.336, 0.551) is 2.7431180477142334
+   response: Pixel value at (0.844, 0.592) is 2.944430351257324
+
+--- sample-weighted RefSpatial
+  simple mean    : 52.58
+  sample-weighted: 53.07  (147 correct / 277)
+=== DONE 2026-09-11T23:51:01+00:00

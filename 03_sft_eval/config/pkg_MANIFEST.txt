@@ -1,0 +1,121 @@
+# SpaceTools eval 环境包
+打包时间(UTC): 2026-09-10T09:59:17Z
+打包机器:      e36968340ba6
+GPU / 驱动:    NVIDIA RTX A6000, 580.159.04
+OS:            Ubuntu 24.04.3 LTS
+系统 nvcc:     12.8
+系统 gcc:      13.3.0
+
+## 还原路径(不可改 —— conda 环境里烧死了绝对路径)
+  /opt/conda-st
+  /opt/spacetools
+
+## 不在包里、必须另外具备的东西
+  /workspace/checkpoints   RoboRefer-8B-SFT 16G · GraspGenModels 7.9G · depth_pro.pt 1.8G
+  /workspace/hf            HuggingFace 缓存 54G(Molmo / Qwen 等)
+
+## 仓库 commit
+  SpaceTools  17d585539b6cc32f2b3c068ea2591762b4583fd9  Update pretrained checkpoint link
+  SpaceTools-RL  54270e82443d3d2a4c2a737c2d3b33314a991fcc  fix: Ray cluster startup, data download, and SLURM resume fo
+  SpaceTools-Toolshed  4f0512d092f53abc1e6c5c934245bf83a211466a  Update requirements, gitignore, README, and integration fixe
+  GraspGen  9b3cfc1e5b664698e047ddd482832f6e7796380c  local: TORCH_CUDA_ARCH_LIST setdefault
+  RoboRefer  d97a995ad28376720a4c8beb64915c58ed16c844
+
+## 关键版本
+# 关键版本  2026-09-10T09:58:48Z
+# 驱动 580.159.04 · GPU NVIDIA RTX A6000
+## spacetools-rl
+  accelerate==1.14.0
+  flashinfer-python==0.5.3
+  numpy==1.26.4
+  nvidia-cudnn-cu12==9.16.0.29
+  ray==2.47.1
+  sglang==0.5.6
+  timm==1.0.16
+  torch==2.9.1+cu128
+  torchaudio==2.9.1+cu128
+  torchvision==0.24.1+cu128
+  transformers==4.57.1
+  (nvcc 12.8)
+## spacetools-tool-vlm
+  accelerate==1.14.0
+  numpy==1.26.4
+  nvidia-cudnn-cu12==9.10.2.21
+  ray==2.47.1
+  timm==1.0.29
+  torch==2.9.1
+  torchvision==0.24.1
+  transformers==4.53.2
+## spacetools-tool-roborefer
+  accelerate==1.3.0
+  numpy==1.26.4
+  nvidia-cudnn-cu12==9.1.0.70
+  ray==2.47.1
+  timm==1.0.29
+  torch==2.5.1
+  torchaudio==2.5.1
+  torchvision==0.20.1
+  transformers==4.49.0
+  (nvcc 12.4)
+## spacetools-tool-bbox
+  numpy==2.4.6
+  ray==2.47.1
+## spacetools-tool-graspgen
+  numpy==2.4.6
+  nvidia-cudnn-cu12==8.9.2.26
+  ray==2.47.1
+  timm==1.0.15
+  torch==2.3.1
+  torchvision==0.18.1
+  transformers==4.48.3
+  (nvcc 12.1)
+
+## 2026-09-12 追加:五个环境的 Python 版本不一致(重要)
+
+  spacetools-rl                3.11.16   ← Ray 集群头节点用这个
+  spacetools-tool-vlm          3.11.0    ← 与头节点不一致
+  spacetools-tool-roborefer    3.11.16
+  spacetools-tool-bbox         3.11.0    ← 与头节点不一致
+  spacetools-tool-graspgen     3.11.16
+
+Ray 的 check_version_info 默认按完整版本串比较(patch 档),3.11.0 != 3.11.16
+会抛 RuntimeError,那两个环境里的 actor 全部入不了 Ray 集群。
+
+影响范围:
+  eval 的四个空间推理 key(robospatial/reflocation/refplacement/refunseen)
+      只用 roborefer + 偶尔 depth/vision_ops,受影响有限,但 8 个 actor 静默缺席
+  依赖全套工具的 key(blinkdepth / cvb3ddepth / boppose / bopgrasp)会受影响
+  RL 阶段有 23 个 actor 在这两个环境里,全部起不来
+
+缓解:bash POSTRESTORE.sh —— 用 Ray 自带的 minor 档放宽该检查。
+      两侧 bytecode magic(3495)与 pickle 协议(4)相同,code object 与 pickle
+      互通,这正是 minor 档的设计场景;该改动不改变任何数值。
+
+根治:重建环境包时把五个环境的 Python 统一到 3.11.16。做到之后
+      POSTRESTORE.sh 的第 ① 项会自动跳过,可以删掉这个脚本。
+      注意:本机上 conda 升级 Python 被 Anaconda 频道的 Terms of Service
+      拦住(CondaToSNonInteractiveError),而且重新求解有动到
+      numpy 1.26.4 / transformers 4.53.2 等钉死版本的风险,所以没有就地升级。
+
+## 2026-09-12 追加:GPU 预算(实测)
+
+这套七工具配置的 Ray 逻辑预留是 2.3 张卡(run_eval.sh:132-142)。
+策略模型(verl,trainer.n_gpus_per_node)要的是**整张卡**,不能是分数。
+
+4 卡机器上必须设 NUM_GPUS=4 EVAL_GPUS=1(默认值是 8 / 4,EVAL_GPUS=4 会让
+2.3+4=6.3 > 4.0,Ray 不报错、actor 无限排队)。即便如此仍然偏紧:需要 Ray
+恰好把 2.3 压成 1.0/1.0/0.3 留一张整卡出来,否则 verl 的 WorkerDict 拿不到
+GPU,会在 fsdp_workers.py:158 抛
+    ValueError: Duplicate device type cpu in backend string: nccl
+      (cpu:gloo,cpu:nccl —— verl/utils/device.py 的 is_cuda_available 是
+       模块导入时求值,无可见 GPU 时 get_device_name() 永久返回 cpu)
+
+实测单卡峰值(4× A6000,全工具存活):
+  Molmo(vlm)      30.2 GiB   ← fp32,vlm.py:116 的 torch_dtype="auto" 吃掉了
+                                 配置里的 dtype: float16
+  与 depth 同卡时  该卡合计 46.3 GiB / 48 GiB   ← 40 GB 的卡装不下
+  roborefer        18.2 GiB
+  策略侧           41.6 GiB(verl FSDP 15310 MiB + sglang scheduler 27292 MiB)
+
+RL 阶段的 actor 数量远大于 eval(roborefer 6、sam2/depth/bbox/graspgen 各 5、
+vision_ops 8),预留约 7 张卡以上,4 卡结构上装不下,必须重新算。

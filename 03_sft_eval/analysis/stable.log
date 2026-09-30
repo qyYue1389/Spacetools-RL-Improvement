@@ -1,0 +1,22 @@
+=== START 2026-09-12T00:36:53+00:00
+### RoboSpatial overall
+  overall  n=350
+     always-right 199   always-wrong 122   flipping 29
+     floor 56.86% (199)   ceiling 65.14% (228)
+     run1 17 of the 29 flips right · run2 12  -> p_flip ~ 0.50
+     expected 61.00% (213.5/350)  sd 2.7 samples (0.77 pp)
+     gate 60% = 210 correct -> needs 11 of 29 flips
+     P(a single run reads BELOW the gate) = 6.8%
+
+### split
+  VQA     n=228
+     always-right 152   always-wrong 55   flipping 21
+     floor 66.67% (152)   ceiling 75.88% (173)
+     run1 9 of the 21 flips right · run2 12  -> p_flip ~ 0.50
+     expected 71.27% (162.5/228)  sd 2.3 samples (1.00 pp)
+  Vacant  n=122
+     always-right 47   always-wrong 67   flipping 8
+     floor 38.52% (47)   ceiling 45.08% (55)
+     run1 8 of the 8 flips right · run2 0  -> p_flip ~ 0.50
+     expected 41.80% (51.0/122)  sd 1.4 samples (1.16 pp)
+=== DONE 2026-09-12T00:36:53+00:00

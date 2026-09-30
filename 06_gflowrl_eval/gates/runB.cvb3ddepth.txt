@@ -1,0 +1,32 @@
+
+=== /workspace/exp/p7_eval_step85_fix2/cvb3ddepth/0.jsonl ===
+  samples             600
+  mean score          0.9650
+  score >= 0.50       579/600 = 96.50%
+  mean turns          3.01
+  --- run health (all should be 0) ---
+  OOM samples         0 (0 events)
+  cut-off generation  0
+  malformed tool_call 0
+  turn-count mismatch n/a  (dump has no verl num_turns)
+  --- infrastructure limits hit ---
+  truncated responses 0
+  hit max turns       0
+  no <answer>         0
+  off-options answer  0 / 600 MC
+  --- tools ---
+  calls               {'roborefer': 1206, 'vision_ops': 1202, 'depth_estimator': 600}
+  tool failures       0 samples, 0 events
+  --- chains (top) ---
+       598  depth_estimatorx1+roboreferx2+vision_opsx2@3t
+         1  depth_estimatorx1+roboreferx6+vision_opsx3@6t
+         1  depth_estimatorx1+roboreferx4+vision_opsx3@5t
+  --- wrong samples: 21 ---
+      tool failure    0
+      truncation      0
+      max turns       0
+      no answer       0
+      OOM             0
+      clean           21   <- real tool-accuracy / reasoning failures
+      chains
+          21  depth_estimatorx1+roboreferx2+vision_opsx2@3t

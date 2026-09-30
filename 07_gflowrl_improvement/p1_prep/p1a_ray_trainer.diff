@@ -1,0 +1,82 @@
+--- /sessions/rcw-01msvxamn6awxibfjkzvgpcp/mnt/SpaceTools-RL/verl/trainer/ppo/ray_trainer.py	2026-09-14 05:24:19.299267835 +0000
++++ patched/ray_trainer.py	2026-09-25 07:43:49.437945093 +0000
+@@ -265,6 +265,7 @@
+     eps_low: float = 0.2,
+     eps_high: float = 0.28,
+     variant: str = "cprime",
++    filter_degenerate: bool = False,
+ ) -> tuple[DataProto, dict]:
+     """GFlowRL (arXiv:2607.13394) Eq. 4 / 6 / 7 -- everything that carries no gradient.
+ 
+@@ -342,10 +343,27 @@
+     g = z_t - d_in_g - beta * r                                   # Eq. 6
+     g_tilde = torch.clamp(g, min=-eps_low, max=eps_high)          # Eq. 7
+ 
++    # ---- P1-a: reward-degenerate groups (in-group reward range == 0, same criterion as
++    # compute_group_degeneracy_metrics) carry no reward signal -- g there is pure drift.
++    # Zero g~ on them.  Only valid on-policy: dp_actor then sets old_log_prob =
++    # log_prob.detach(), so for these rows delta = 0 + 0 and d/dtheta (w * delta^2) = 0
++    # EXACTLY, i.e. bit-identical to a loss mask with the denominator kept at all rows
++    # (same as GRPO, whose zero advantages also stay in the token-mean denominator).
++    # The caller asserts ppo_mini_batch_size == train_batch_size and ppo_epochs == 1.
++    gmax = torch.full((n_groups,), float("-inf"), device=r.device).scatter_reduce(0, gidx, r, reduce="amax")
++    gmin = torch.full((n_groups,), float("inf"), device=r.device).scatter_reduce(0, gidx, r, reduce="amin")
++    degen_group = (gmax - gmin) == 0
++    degen = degen_group[gidx]
++    if filter_degenerate:
++        g_tilde = torch.where(degen, torch.zeros_like(g_tilde), g_tilde)
++
+     data.batch["advantages"] = g_tilde.unsqueeze(-1) * response_mask
+     data.batch["returns"] = data.batch["advantages"]
+ 
+     saturated = ((g < -eps_low) | (g > eps_high)).float().mean()
++    kept = ~degen
++    sat_kept = (((g < -eps_low) | (g > eps_high)) & kept).float().sum() / kept.float().sum().clamp(min=1)
++    g_abs = g.abs().float()
+     metrics = {
+         "gflowrl/variant_is_cprime": float(variant == "cprime"),
+         "gflowrl/beta": float(beta),
+@@ -355,6 +373,15 @@
+         "gflowrl/flow_gap_abs_mean": float(g.abs().mean()),
+         "gflowrl/clip_saturation": float(saturated),
+         "gflowrl/y_len_mean": float(L.mean()),
++        # P1-a
++        "gflowrl/filter_degenerate": float(filter_degenerate),
++        "gflowrl/kept_groups": float((~degen_group).sum()),
++        "gflowrl/kept_rollout_frac": float(kept.float().mean()),
++        "gflowrl/clip_saturation_kept": float(sat_kept),
++        # P1-c: |g| quantiles (reference implementation logs these; basis for choosing eps)
++        "gflowrl/g_abs_p50": float(torch.quantile(g_abs, 0.5)),
++        "gflowrl/g_abs_p90": float(torch.quantile(g_abs, 0.9)),
++        "gflowrl/g_abs_p99": float(torch.quantile(g_abs, 0.99)),
+     }
+     return data, metrics
+ 
+@@ -1888,12 +1915,27 @@
+                                     "use_kl_loss=True so ref_log_prob is still computed)."
+                                 )
+                             _gf = _pl.get("gflowrl", {}) or {}
++                            _filt = bool(_gf.get("filter_degenerate", False))
++                            if _filt:
++                                # P1-a guard: zeroing g~ equals a loss mask only when the whole
++                                # batch is one optimizer step (dp_actor on_policy branch).
++                                _mb = int(_actor_cfg.get("ppo_mini_batch_size"))
++                                _tb = int(self.config.data.train_batch_size)
++                                _ep = int(_actor_cfg.get("ppo_epochs", 1))
++                                if _mb != _tb or _ep != 1:
++                                    raise ValueError(
++                                        f"gflowrl.filter_degenerate=True requires ppo_mini_batch_size == "
++                                        f"train_batch_size and ppo_epochs == 1 (got {_mb} / {_tb} / {_ep}). "
++                                        "Off-policy, a zeroed g~ turns degenerate rows into a proximal "
++                                        "term pulling pi_theta back to pi_old; use a real loss mask instead."
++                                    )
+                             batch, _gf_metrics = compute_gflowrl_flow_gap(
+                                 batch,
+                                 beta=float(_gf.get("beta", 8.0)),
+                                 eps_low=float(_gf.get("eps_low", 0.2)),
+                                 eps_high=float(_gf.get("eps_high", 0.28)),
+                                 variant=str(_gf.get("variant", "cprime")),
++                                filter_degenerate=_filt,
+                             )
+                             metrics.update(_gf_metrics)
+ 

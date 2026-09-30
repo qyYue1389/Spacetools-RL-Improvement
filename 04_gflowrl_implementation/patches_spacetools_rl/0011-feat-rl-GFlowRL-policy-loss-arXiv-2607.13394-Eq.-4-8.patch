@@ -1,0 +1,255 @@
+From 33036a5167b65f3f959d3649d06307da9da63a0d Mon Sep 17 00:00:00 2001
+From: qyYue1389 <qyYue1389@users.noreply.github.com>
+Date: Thu, 3 Sep 2026 04:17:46 +0000
+Subject: [PATCH 11/19] feat(rl): GFlowRL policy loss (arXiv:2607.13394 Eq.
+ 4-8), C-prime variant
+
+Two halves, per P7_ROUTE_C_PLAN:
+
+- ray_trainer.compute_gflowrl_flow_gap(): the gradient-free half. Eq. 4
+  in-batch log Z estimate over the uid group, Eq. 6 flow gap, Eq. 7
+  asymmetric clip. Broadcasts g~ into batch['advantages'].
+- core_algos.compute_policy_loss_gflowrl(): the gradient-carrying half,
+  registered as loss_mode 'gflowrl'. Eq. 8 with a stop-gradient IS weight.
+
+The 'variant' switch selects where |y| normalization is applied:
+  paper      Eq.4 unnormalized, Eq.5/6 normalized (as published)
+  normalized both normalized
+  cprime     neither  <- what we train with
+
+Only cprime has the Prop. B.1 analytic fixed point once lengths are
+ragged; verified to 7.4e-13 by tools/p7/p7_fixedpoint_check.py, which
+extracts these two functions from source rather than reimplementing
+them. paper and normalized both saturate the clip and land at loss
+~4-5e-2 at the exact fixed point. See records/P7_ROUTE_C_GATE.md and
+records/P7_STEP_C12_RESULTS.md.
+
+masked_sum (not masked_mean) in the policy term is load-bearing and
+silent if changed: it is the whole difference between cprime and
+normalized. Guard: run p7_fixedpoint_check.py after touching either
+function.
+
+Also warns (never raises) when response_mask looks like the
+ray_trainer.py:157 attention-mask fallback, which would silently fold
+tool-response tokens into |y|.
+
+Inert unless actor.policy_loss.loss_mode == 'gflowrl'.
+
+---
+ verl/trainer/ppo/core_algos.py  |  57 ++++++++++++++++
+ verl/trainer/ppo/ray_trainer.py | 117 +++++++++++++++++++++++++++++++-
+ 2 files changed, 173 insertions(+), 1 deletion(-)
+
+diff --git a/verl/trainer/ppo/core_algos.py b/verl/trainer/ppo/core_algos.py
+index a78bd400..8a5ea211 100644
+--- a/verl/trainer/ppo/core_algos.py
++++ b/verl/trainer/ppo/core_algos.py
+@@ -2233,6 +2233,63 @@ def compute_policy_loss_reinforce(
+     return pg_loss, pg_metrics
+ 
+ 
++@register_policy_loss("gflowrl")
++def compute_policy_loss_gflowrl(
++    old_log_prob: torch.Tensor,
++    log_prob: torch.Tensor,
++    advantages: torch.Tensor,
++    response_mask: torch.Tensor,
++    loss_agg_mode: str = "token-mean",
++    config: Optional[ActorConfig] = None,
++    rollout_is_weights: torch.Tensor | None = None,
++) -> tuple[torch.Tensor, dict[str, Any]]:
++    """GFlowRL (arXiv:2607.13394) Eq. 8 -- the gradient-carrying half.
++
++        L = (1/G) sum_i  w_i * ( g~_i + [log pi_theta(y_i|x) - log pi_old(y_i|x)] )^2
++        w_i = min( pi_theta(y_i|x) / pi_old(y_i|x), 1 + eps )
++
++    `g~_i` (Eq. 4/6/7) is frozen w.r.t. theta, so it is computed once per step on the
++    driver and arrives here broadcast over the response inside `advantages`.
++    See ray_trainer.compute_gflowrl_flow_gap.
++
++    C-prime variant: the policy-update term is a SEQUENCE SUM (masked_sum), not a
++    per-token mean.  That is the whole difference from the published loss, and it is
++    deliberate -- records/P7_ROUTE_C_GATE.md.  Using masked_mean here would silently
++    turn this into the "normalized" configuration.
++
++    `loss_agg_mode` is ignored: Eq. 8 is a mean over sequences by construction.
++    """
++    eps_is = 0.2
++    if config is not None and hasattr(config, "policy_loss"):
++        _pl = config.policy_loss
++        _cfg = (_pl.get("gflowrl", {}) if hasattr(_pl, "get") else {}) or {}
++        eps_is = float(_cfg.get("eps_is", 0.2))
++
++    # recover the per-sequence g~ that the driver broadcast over the response
++    denom = response_mask.sum(dim=-1).clamp(min=1)
++    g_tilde = (advantages * response_mask).sum(dim=-1) / denom
++
++    # C-prime: sequence SUM, not masked_mean
++    log_ratio = verl_F.masked_sum(log_prob - old_log_prob, response_mask, axis=-1)
++
++    delta = g_tilde + log_ratio
++    # importance-sampling weight, stop-gradient (it corrects the sampler, it is not
++    # part of the objective being differentiated)
++    w = torch.clamp(torch.exp(log_ratio.detach()), max=1.0 + eps_is)
++
++    pg_loss = (w * delta.pow(2)).mean()
++
++    metrics = {
++        "gflowrl/loss": pg_loss.detach().item(),
++        "gflowrl/delta_abs_mean": delta.detach().abs().mean().item(),
++        "gflowrl/log_ratio_abs_mean": log_ratio.detach().abs().mean().item(),
++        "gflowrl/is_weight_mean": w.mean().item(),
++        "gflowrl/is_weight_clipped_frac": (w >= 1.0 + eps_is).float().mean().item(),
++        "actor/ppo_kl": (-log_ratio.detach().mean() / denom.float().mean()).item(),
++    }
++    return pg_loss, metrics
++
++
+ @register_policy_loss("bypass_mode")
+ def compute_policy_loss_bypass_mode(
+     old_log_prob: torch.Tensor,
+diff --git a/verl/trainer/ppo/ray_trainer.py b/verl/trainer/ppo/ray_trainer.py
+index 662ccb99..0e112227 100644
+--- a/verl/trainer/ppo/ray_trainer.py
++++ b/verl/trainer/ppo/ray_trainer.py
+@@ -60,7 +60,7 @@ from verl.utils.metric import reduce_metrics
+ from verl.utils.py_functional import rename_dict
+ from verl.utils.rollout_skip import RolloutSkip
+ from verl.utils.seqlen_balancing import calculate_workload, get_seqlen_balanced_partitions, log_seqlen_unbalance
+-from verl.utils.torch_functional import masked_mean
++from verl.utils.torch_functional import masked_mean, masked_sum
+ from verl.utils.tracking import ValidationGenerationsLogger
+ from verl.workers.config import FSDPEngineConfig
+ from verl.workers.utils.padding import left_right_2_no_padding, no_padding_2_padding
+@@ -218,6 +218,106 @@ def compute_advantage(
+     return data
+ 
+ 
++def compute_gflowrl_flow_gap(
++    data: DataProto,
++    beta: float = 8.0,
++    eps_low: float = 0.2,
++    eps_high: float = 0.28,
++    variant: str = "cprime",
++) -> tuple[DataProto, dict]:
++    """GFlowRL (arXiv:2607.13394) Eq. 4 / 6 / 7 -- everything that carries no gradient.
++
++    The flow gap depends only on pi_old, pi_ref and r, all frozen during the actor
++    update, so it is computed ONCE per step here on the driver, where old_log_probs,
++    ref_log_prob, token_level_scores and uid are all available.  The registered policy
++    loss then only adds the gradient-carrying term (core_algos.compute_policy_loss_gflowrl).
++
++        d_i   = sum over POLICY tokens of (log pi_ref - log pi_old)
++        Z_t   = mean over the uid group of (beta * r_i + d_i)              Eq. 4
++        g_i   = Z_t - d_i - beta * r_i                                     Eq. 6
++        g~_i  = clip(g_i, -eps_low, +eps_high)                             Eq. 7
++
++    variant:
++        "cprime"     -- neither Eq.4 nor Eq.6 length-normalised.  THE DEFAULT.
++                        Chosen by records/P7_ROUTE_C_GATE.md: it is the only one of the
++                        three with both a self-consistent zero-loss fixed point and a
++                        0.0% "whole group clipped to one value" rate.
++        "paper"      -- Eq.4 unnormalised, Eq.6 normalised, exactly as published.
++                        Known-broken here: the drift term becomes a common shift and
++                        erases the reward on 30-49% of groups (P7_GPU_RESULTS.md 6).
++        "normalized" -- both normalised.  Restores an exact fixed point but that fixed
++                        point is a point mass at |y| ~ 334 (reward maximisation).
++
++    Only "cprime" is intended for training; the other two exist so the three
++    configurations can be compared without editing code.
++
++    Returns (data, metrics).  `advantages` is OVERWRITTEN with g~ broadcast over the
++    response: the registered-loss signature has no other per-sequence slot, and GFlowRL
++    has no advantages.  This means the trainer's "advantage" metrics report g~ stats.
++    """
++    response_mask = data.batch["response_mask"]
++    old_lp = data.batch["old_log_probs"]
++    ref_lp = data.batch["ref_log_prob"]
++    r = data.batch["token_level_scores"].sum(dim=-1).float()
++    L = response_mask.sum(dim=-1).clamp(min=1).float()
++
++    # ---- guard: response_mask must be the agent-loop mask, not the attention-mask
++    # fallback (ray_trainer.compute_response_mask), which marks tool tokens as 1 too.
++    # On multi-turn rollouts the policy-token count is strictly smaller.  Warn, never
++    # raise: this is a diagnostic and must not be able to break a run.
++    try:
++        n_resp = response_mask.size(-1)
++        n_nonpad = data.batch["attention_mask"][:, -n_resp:].sum(dim=-1).float()
++        if float((L < n_nonpad).float().mean()) < 0.5:
++            print(
++                "[GFlowRL] WARNING: response_mask looks like the attention-mask fallback "
++                f"(policy tokens < non-pad tokens on only {float((L < n_nonpad).float().mean()):.1%} "
++                "of samples). |y| would then include tool-response tokens."
++            )
++    except Exception as e:  # pragma: no cover - diagnostics only
++        print(f"[GFlowRL] WARNING: could not run the response_mask check: {e}")
++
++    d = masked_sum(ref_lp - old_lp, response_mask, axis=-1).float()
++
++    if variant == "cprime":
++        d_in_z, d_in_g = d, d
++    elif variant == "paper":
++        d_in_z, d_in_g = d, d / L
++    elif variant == "normalized":
++        d_in_z, d_in_g = d / L, d / L
++    else:
++        raise ValueError(f"unknown gflowrl variant: {variant!r}")
++
++    # ---- Eq. 4: in-batch Monte Carlo estimate of log Z, one value per uid group
++    uid = np.asarray(data.non_tensor_batch["uid"])
++    _, gidx_np = np.unique(uid, return_inverse=True)
++    gidx = torch.as_tensor(gidx_np, dtype=torch.long, device=r.device)
++    n_groups = int(gidx.max().item()) + 1 if gidx.numel() else 0
++    per_sample_target = beta * r + d_in_z
++    sums = torch.zeros(n_groups, dtype=torch.float32, device=r.device).index_add_(0, gidx, per_sample_target)
++    cnts = torch.zeros(n_groups, dtype=torch.float32, device=r.device).index_add_(0, gidx, torch.ones_like(r))
++    z_t = (sums / cnts.clamp(min=1.0))[gidx]
++
++    g = z_t - d_in_g - beta * r                                   # Eq. 6
++    g_tilde = torch.clamp(g, min=-eps_low, max=eps_high)          # Eq. 7
++
++    data.batch["advantages"] = g_tilde.unsqueeze(-1) * response_mask
++    data.batch["returns"] = data.batch["advantages"]
++
++    saturated = ((g < -eps_low) | (g > eps_high)).float().mean()
++    metrics = {
++        "gflowrl/variant_is_cprime": float(variant == "cprime"),
++        "gflowrl/beta": float(beta),
++        "gflowrl/Z_t_mean": float(z_t.mean()),
++        "gflowrl/d_seq_abs_mean": float(d.abs().mean()),
++        "gflowrl/d_per_token_abs_mean": float((d / L).abs().mean()),
++        "gflowrl/flow_gap_abs_mean": float(g.abs().mean()),
++        "gflowrl/clip_saturation": float(saturated),
++        "gflowrl/y_len_mean": float(L.mean()),
++    }
++    return data, metrics
++
++
+ class RayPPOTrainer:
+     """Distributed PPO trainer using Ray for scalable reinforcement learning.
+ 
+@@ -1717,6 +1817,21 @@ class RayPPOTrainer:
+                             config=self.config.algorithm,
+                         )
+ 
++                        # GFlowRL replaces the advantage with the flow gap g~ (Eq. 4/6/7).
++                        # compute_advantage still runs first so its metrics stay comparable.
++                        _actor_cfg = self.config.actor_rollout_ref.actor
++                        _pl = _actor_cfg.get("policy_loss", {}) if hasattr(_actor_cfg, "get") else {}
++                        if (_pl.get("loss_mode", "vanilla") if hasattr(_pl, "get") else "vanilla") == "gflowrl":
++                            _gf = _pl.get("gflowrl", {}) or {}
++                            batch, _gf_metrics = compute_gflowrl_flow_gap(
++                                batch,
++                                beta=float(_gf.get("beta", 8.0)),
++                                eps_low=float(_gf.get("eps_low", 0.2)),
++                                eps_high=float(_gf.get("eps_high", 0.28)),
++                                variant=str(_gf.get("variant", "cprime")),
++                            )
++                            metrics.update(_gf_metrics)
++
+                     # update critic
+                     if self.use_critic:
+                         with marked_timer("update_critic", timing_raw, color="pink"):
+-- 
+2.34.1
+

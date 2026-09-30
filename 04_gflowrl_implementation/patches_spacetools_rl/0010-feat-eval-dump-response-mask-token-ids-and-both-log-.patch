@@ -1,0 +1,203 @@
+From f945bb6bd6279b6cf7d2bd4a5ea2b090f0116361 Mon Sep 17 00:00:00 2001
+From: repro <repro@local>
+Date: Thu, 3 Sep 2026 04:05:50 +0000
+Subject: [PATCH 10/19] feat(eval): dump response mask, token ids and both
+ log-prob arms
+
+---
+ verl/trainer/ppo/ray_trainer.py | 148 ++++++++++++++++++++++++++++++++
+ 1 file changed, 148 insertions(+)
+
+diff --git a/verl/trainer/ppo/ray_trainer.py b/verl/trainer/ppo/ray_trainer.py
+index ee596f47..662ccb99 100644
+--- a/verl/trainer/ppo/ray_trainer.py
++++ b/verl/trainer/ppo/ray_trainer.py
+@@ -387,9 +387,124 @@ class RayPPOTrainer:
+         except Exception as e:
+             print(f"Warning: Could not set total_training_steps in config. Structure missing? Error: {e}")
+ 
++    @staticmethod
++    def _rle(row):
++        """Run-length encode a 1-D integer array as [[value, run_length], ...]."""
++        if row.size == 0:
++            return []
++        cut = np.flatnonzero(np.diff(row)) + 1
++        starts = np.concatenate(([0], cut))
++        ends = np.concatenate((cut, [row.size]))
++        return [[int(row[s]), int(e - s)] for s, e in zip(starts, ends)]
++
++    def _collect_token_diagnostics(self, test_batch, token_diag):
++        """Collect |y_i|, the response mask, response token ids and both log-prob
++        arms for one validation batch, appending one entry per sample.
++
++        For P7 (records/P7_GPU_HANDOFF.md §2).  Diagnostics only: every step is
++        guarded, and a failure just leaves the corresponding list short, which
++        _dump_generations then drops with a warning rather than writing a
++        misaligned column.
++        """
++        try:
++            rm = test_batch.batch["response_mask"].detach().to("cpu").numpy()
++        except Exception as e:
++            print(f"Warning [P7]: no response_mask in batch: {e}")
++            return
++        L = rm.shape[1]
++
++        # Guard against the SILENT fallback in compute_response_mask(), which
++        # returns attention_mask[:, -L:] and has the OPPOSITE meaning: tool
++        # response tokens are 1 there, inflating |y| by a benchmark-dependent
++        # 1.14x-2.40x.  On multi-turn samples the policy-token count must be
++        # strictly smaller than the non-padding count.
++        nonpad = None
++        try:
++            nonpad = test_batch.batch["attention_mask"][:, -L:].detach().to("cpu").numpy()
++            turns = test_batch.non_tensor_batch.get("__num_turns__", None)
++            if turns is not None:
++                multi = np.asarray(turns).reshape(-1) > 2
++                if multi.any():
++                    ok = bool((rm[multi].sum(-1) < nonpad[multi].sum(-1)).all())
++                    print(
++                        f"[P7] response_mask semantics check on {int(multi.sum())} "
++                        f"multi-turn samples: {'OK' if ok else 'FAILED'}"
++                    )
++                    if not ok:
++                        print(
++                            "WARNING [P7]: response_mask looks like the attention-mask "
++                            "fallback; |y| would include tool-response tokens"
++                        )
++                else:
++                    print("[P7] no multi-turn samples in this batch; mask check not applicable")
++        except Exception as e:
++            print(f"Warning [P7]: could not run the response_mask semantics check: {e}")
++
++        # Trainer-side (FSDP) log probs.  Under val_only the FSDP model never runs
++        # a forward pass, so ask for one explicitly.  The rollout engine still
++        # holds its weights and KV pool here, so put it to sleep first -- exactly
++        # what fit() does before _compute_old_log_prob.
++        trainer_lp = None
++        try:
++            n_val_batches = len(self.val_dataloader)
++            if n_val_batches != 1:
++                print(
++                    f"Warning [P7]: {n_val_batches} validation batches; skipping the "
++                    "trainer-side log_prob pass (it would sleep the rollout engine "
++                    "mid-loop). Leave data.val_batch_size unset for a single batch."
++                )
++            else:
++                self.checkpoint_manager.sleep_replicas()
++                lp_in = test_batch.select(
++                    batch_keys=["responses", "input_ids", "attention_mask", "position_ids"],
++                    non_tensor_batch_keys=[
++                        k for k in ["multi_modal_inputs"] if k in test_batch.non_tensor_batch
++                    ],
++                )
++                lp_out = self.actor_rollout_wg.compute_log_prob(lp_in)
++                trainer_lp = lp_out.batch["old_log_probs"].detach().to("cpu").float().numpy()
++                print(f"[P7] trainer-side log_probs computed: shape {tuple(trainer_lp.shape)}")
++        except Exception as e:
++            print(f"Warning [P7]: trainer-side compute_log_prob failed: {type(e).__name__}: {e}")
++            trainer_lp = None
++
++        rollout_lp = None
++        try:
++            if "rollout_log_probs" in test_batch.batch.keys():
++                rollout_lp = test_batch.batch["rollout_log_probs"].detach().to("cpu").float().numpy()
++                print(f"[P7] rollout log_probs present: shape {tuple(rollout_lp.shape)}")
++            else:
++                print(
++                    "Warning [P7]: rollout_log_probs absent -- is "
++                    "actor_rollout_ref.rollout.calculate_log_probs=True?"
++                )
++        except Exception as e:
++            print(f"Warning [P7]: could not read rollout_log_probs: {e}")
++
++        try:
++            responses = test_batch.batch["responses"].detach().to("cpu").numpy()
++        except Exception as e:
++            print(f"Warning [P7]: no responses tensor: {e}")
++            responses = None
++
++        for i in range(rm.shape[0]):
++            mask_row = rm[i].astype(np.int64)
++            sel = mask_row.astype(bool)
++            token_diag["response_mask_rle"].append(self._rle(mask_row))
++            token_diag["n_policy_tokens"].append(int(mask_row.sum()))
++            n_valid = int(nonpad[i].sum()) if nonpad is not None else int(L)
++            token_diag["n_response_tokens"].append(n_valid)
++            if responses is not None:
++                token_diag["response_token_ids"].append([int(t) for t in responses[i, :n_valid]])
++            if rollout_lp is not None:
++                token_diag["rollout_log_probs"].append([round(float(x), 6) for x in rollout_lp[i][sel]])
++            if trainer_lp is not None:
++                token_diag["trainer_log_probs"].append([round(float(x), 6) for x in trainer_lp[i][sel]])
++
+     def _dump_generations(
+         self, inputs, outputs, gts, scores, reward_extra_infos_dict, dump_path,
+         messages=None, multi_modal_data=None, turns=None, uids=None,
++        token_diag=None,
+     ):
+         """Dump rollout/validation samples as JSONL, optionally saving images."""
+         os.makedirs(dump_path, exist_ok=True)
+@@ -425,6 +540,20 @@ class RayPPOTrainer:
+         except Exception as e:
+             print(f"Warning: could not dump num_turns: {e}")
+ 
++        # Per-token diagnostics for P7: |y_i| = response_mask.sum(), the run-length
++        # encoded mask itself, the raw response token ids, and the two log-prob arms
++        # (sglang rollout vs FSDP trainer). Collected by the caller; see
++        # records/P7_GPU_HANDOFF.md §2. Same defensive contract as the fields above.
++        try:
++            if token_diag:
++                for k, v in token_diag.items():
++                    if len(v) == n:
++                        base_data[k] = v
++                    else:
++                        print(f"Warning: token_diag['{k}'] has {len(v)} entries, expected {n}; skipped")
++        except Exception as e:
++            print(f"Warning: could not dump token diagnostics: {e}")
++
+         for k, v in reward_extra_infos_dict.items():
+             if len(v) == n:
+                 base_data[k] = v
+@@ -559,6 +688,8 @@ class RayPPOTrainer:
+         sample_scores = []
+         sample_turns = []
+         sample_uids = []
++        # P7 per-token diagnostics, keyed by the field name they get in the dump.
++        token_diag = defaultdict(list)
+         sample_messages = []  # Collect messages for multimodal logging
+         sample_multi_modal_data = []  # Collect multi_modal_data for image saving
+ 
+@@ -673,6 +804,22 @@ class RayPPOTrainer:
+ 
+             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
+ 
++            # ---------------------------------------------------------------
++            # P7: per-token diagnostics.  See records/P7_GPU_HANDOFF.md §2.
++            #
++            # Everything here is diagnostics and is wrapped so that it can never
++            # break an eval -- same contract as the uid/num_turns fields above.
++            # ---------------------------------------------------------------
++            # Two ways to switch it on: the hydra key, or an env var as a fallback
++            # in case `+trainer.dump_token_diagnostics=True` trips over struct mode.
++            want_diag = os.environ.get("VERL_DUMP_TOKEN_DIAGNOSTICS", "").lower() in ("1", "true", "yes")
++            try:
++                want_diag = want_diag or bool(self.config.trainer.get("dump_token_diagnostics", False))
++            except Exception:
++                pass
++            if want_diag:
++                self._collect_token_diagnostics(test_batch, token_diag)
++
+         self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
+ 
+         # dump generations
+@@ -689,6 +836,7 @@ class RayPPOTrainer:
+                 multi_modal_data=sample_multi_modal_data if sample_multi_modal_data else None,
+                 turns=sample_turns if sample_turns else None,
+                 uids=sample_uids if sample_uids else None,
++                token_diag=dict(token_diag) if token_diag else None,
+             )
+ 
+         for key_info, lst in reward_extra_infos_dict.items():
+-- 
+2.34.1
+

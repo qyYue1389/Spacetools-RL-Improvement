@@ -1,0 +1,32 @@
+100,108c100,108
+<     [robospatial]="robospatial_home_multiturn/test.parquet"
+<     [reflocation]="refspatial_bench/location.parquet"
+<     [refplacement]="refspatial_bench/placement.parquet"
+<     [refunseen]="refspatial_bench/unseen.parquet"
+<     [boppose]="bop_ask_bench/pose.parquet"
+<     [bopgrasp]="bop_ask_bench/grasp.parquet"
+<     [blinkdepth]="blink_relative_depth/val.parquet"
+<     [cvb2drelation]="cvbench_2d_relation/test.parquet"
+<     [cvb3ddepth]="cvbench_3d_depth/test.parquet"
+---
+>     [robospatial]="data/robospatial.parquet"
+>     [reflocation]="data/reflocation.parquet"
+>     [refplacement]="data/refplacement.parquet"
+>     [refunseen]="data/refunseen.parquet"
+>     [boppose]="data/boppose.parquet"
+>     [bopgrasp]="data/bopgrasp.parquet"
+>     [blinkdepth]="data/blinkdepth.parquet"
+>     [cvb2drelation]="data/cvb2drelation.parquet"
+>     [cvb3ddepth]="data/cvb3ddepth.parquet"
+134c134
+<     'vlm': {'num_actors': 1, 'resources': {'num_gpus': 0.6}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600,
+---
+>     'vlm': {'num_actors': 1, 'resources': {'num_gpus': 1.0}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600,
+156c156
+<     'vlm': {'num_actors': 1, 'resources': {'num_gpus': 0.6}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600,
+---
+>     'vlm': {'num_actors': 1, 'resources': {'num_gpus': 1.0}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600,
+209c209
+<         actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
+---
+>         actor_rollout_ref.rollout.gpu_memory_utilization=0.545 \

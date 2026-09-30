@@ -1,0 +1,31 @@
+From 77141944ea2febca0675777c17a361c7394abdd2 Mon Sep 17 00:00:00 2001
+From: SpaceTools Repro <qyYue1389@users.noreply.github.com>
+Date: Tue, 25 Aug 2026 01:04:24 +0000
+Subject: [PATCH 06/19] chore(eval): set PYTORCH_ALLOC_CONF as well as the
+ deprecated alias
+
+torch 2.9 renamed PYTORCH_CUDA_ALLOC_CONF to PYTORCH_ALLOC_CONF and warns on
+the old name. The tool environments still run torch 2.3 / 2.5, which only know
+the old name, so set both.
+---
+ examples/toolshed/run_eval.sh | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/examples/toolshed/run_eval.sh b/examples/toolshed/run_eval.sh
+index 1f41a061..d8b7b12e 100755
+--- a/examples/toolshed/run_eval.sh
++++ b/examples/toolshed/run_eval.sh
+@@ -104,6 +104,10 @@ set +u; conda activate spacetools-rl; set -u
+ export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib/python3.11/site-packages/nvidia/cuda_runtime/lib:${CONDA_PREFIX}/lib/python3.11/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH:-}"
+ export HYDRA_FULL_ERROR=1
+ # Reduce allocator fragmentation; the OOM traces explicitly recommend it.
++# torch 2.9 renamed the variable and warns on the old name, so set both:
++# the new one for this torch, the old one for the tool environments that
++# still run torch 2.3 / 2.5.
++export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
+ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+ 
+ # DATA_DIR may be preset to point at an existing (or subset) benchmark tree.
+-- 
+2.34.1
+

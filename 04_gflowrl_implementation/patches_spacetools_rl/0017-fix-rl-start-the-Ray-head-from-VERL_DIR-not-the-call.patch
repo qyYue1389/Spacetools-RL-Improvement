@@ -1,0 +1,45 @@
+From 5fa00d8f99de99f9928fc35c36a181acf03238ca Mon Sep 17 00:00:00 2001
+From: qyYue1389 <qyYue1389@users.noreply.github.com>
+Date: Wed, 16 Sep 2026 05:58:28 +0000
+Subject: [PATCH 17/19] fix(rl): start the Ray head from VERL_DIR, not the
+ caller cwd
+
+The dataset stores image paths relative to cwd, and the script symlinks
+VERL_DIR/images at them. It also cds to VERL_DIR, but only for the driver,
+and only after the Ray head is up. Ray workers inherit the raylet cwd, so
+with any caller cwd other than VERL_DIR every rollout fails to open those
+relative image paths -- and only after some 20 minutes of tool and model
+loading, which is an expensive way to learn it. On SLURM the sbatch script
+happened to start in the repo, so the dependency on the caller cwd was never
+exercised.
+
+Verified on 8xA40: same launcher, same everything else, the run now gets past
+rollout generation and completes step 1 (timing_s/step 920s, 320
+trajectories, degenerate_group_frac 0.672).
+
+---
+ examples/toolshed/run_rl.sh | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/examples/toolshed/run_rl.sh b/examples/toolshed/run_rl.sh
+index e32c6913..522ce217 100755
+--- a/examples/toolshed/run_rl.sh
++++ b/examples/toolshed/run_rl.sh
+@@ -157,6 +157,14 @@ echo "GPU split:      tools $TOOL_GPUS / training $TRAIN_GPUS (per node)"
+ 
+ export RAY_TMPDIR="/tmp/${USER}/ray"
+ 
++# Ray workers inherit the raylet cwd, not the driver cwd.  The dataset stores
++# image paths relative ("images/xxx.png") and the symlink further down is made
++# at $VERL_DIR/images, so unless the raylet itself starts in $VERL_DIR every
++# rollout fails with FileNotFoundError on those paths -- and only after ~20
++# minutes of model loading, which is an expensive way to find out.  On SLURM the
++# sbatch script happened to start in the repo; do not rely on the caller cwd.
++cd "$VERL_DIR"
++
+ # Clean stale Ray state on all nodes
+ CONDA_ROOT="${_CONDA_ROOT:-/lustre/fsw/portfolios/nvr/users/siyic/miniconda3}"
+ RAY_BIN="$CONDA_ROOT/envs/spacetools-rl/bin/ray"
+-- 
+2.34.1
+

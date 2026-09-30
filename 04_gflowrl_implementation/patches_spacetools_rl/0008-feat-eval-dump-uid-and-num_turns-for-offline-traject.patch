@@ -1,0 +1,73 @@
+From 8d193ec3a05443d12ea8d4510414f8b06867be8c Mon Sep 17 00:00:00 2001
+From: repro <repro@local>
+Date: Wed, 26 Aug 2026 05:29:26 +0000
+Subject: [PATCH 08/19] feat(eval): dump uid and num_turns for offline
+ trajectory analysis
+
+verl already dumps the full multi-turn transcript (output is decoded with
+skip_special_tokens=False), so trajectory reconstruction needs no hooks.
+But two fields the validation loop already collects were never written:
+
+  sample_uids  - stable per-sample identity
+  sample_turns - verl's own turn count
+
+The turn count is the useful one: it lets the offline parser cross-check
+its transcript decomposition against verl's count, so a parser bug is
+loud instead of silent. Both are wrapped in try/except -- this is
+diagnostics and must never be able to break an eval.
+
+sample_turns is appended per batch rather than extended, so it arrives as
+a list of arrays and is flattened before use.
+---
+ verl/trainer/ppo/ray_trainer.py | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/verl/trainer/ppo/ray_trainer.py b/verl/trainer/ppo/ray_trainer.py
+index e9331056..ee596f47 100644
+--- a/verl/trainer/ppo/ray_trainer.py
++++ b/verl/trainer/ppo/ray_trainer.py
+@@ -389,7 +389,7 @@ class RayPPOTrainer:
+ 
+     def _dump_generations(
+         self, inputs, outputs, gts, scores, reward_extra_infos_dict, dump_path,
+-        messages=None, multi_modal_data=None,
++        messages=None, multi_modal_data=None, turns=None, uids=None,
+     ):
+         """Dump rollout/validation samples as JSONL, optionally saving images."""
+         os.makedirs(dump_path, exist_ok=True)
+@@ -408,6 +408,23 @@ class RayPPOTrainer:
+         if messages is not None and len(messages) == n:
+             base_data["messages"] = messages
+ 
++        # Per-sample identity and turn count, for offline trajectory analysis.
++        # Both are already collected by the caller but were never dumped.
++        # Wrapped defensively: this is diagnostics, it must never break an eval.
++        try:
++            if uids is not None and len(uids) == n:
++                base_data["uid"] = [str(u) for u in uids]
++        except Exception as e:
++            print(f"Warning: could not dump uids: {e}")
++        try:
++            if turns is not None and len(turns) > 0:
++                # the caller appends one array per batch, so flatten before use
++                flat = np.concatenate([np.asarray(t).reshape(-1) for t in turns])
++                if len(flat) == n:
++                    base_data["num_turns"] = [int(x) for x in flat]
++        except Exception as e:
++            print(f"Warning: could not dump num_turns: {e}")
++
+         for k, v in reward_extra_infos_dict.items():
+             if len(v) == n:
+                 base_data[k] = v
+@@ -670,6 +687,8 @@ class RayPPOTrainer:
+                 dump_path=val_data_dir,
+                 messages=sample_messages if sample_messages else None,
+                 multi_modal_data=sample_multi_modal_data if sample_multi_modal_data else None,
++                turns=sample_turns if sample_turns else None,
++                uids=sample_uids if sample_uids else None,
+             )
+ 
+         for key_info, lst in reward_extra_infos_dict.items():
+-- 
+2.34.1
+

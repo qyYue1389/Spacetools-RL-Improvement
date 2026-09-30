@@ -1,0 +1,178 @@
+==============================================================================
+P4(官方 ckpt · GRPO 之后)  ↔  P7(自训 SFT · GFlowRL C' step85)  逐样本对比
+P4 = p4/parsed(run1) · P7 = 有效运行的 parsed · 按 sample_id 配对
+==============================================================================
+
+### robospatial   n(P4)=350  n(P7)=350  共同样本=350
+  正确率      P4  229  65.43%   P7  215  61.43%
+  配对        都对 192  都错 98  只有 P4 对 37  只有 P7 对 23
+  平均 score  P4 0.6543   P7 0.6143
+  链路签名(P4)                                  链路签名(P7)
+    roboreferx2@2t                      218  62.3%  roboreferx2@2t                      227  64.9%
+    roboreferx1@2t                      131  37.4%  roboreferx1@2t                      122  34.9%
+    roboreferx3@2t                        1   0.3%  @1t                                   1   0.3%
+  主链路覆盖率  P4  62.3%   P7  64.9%   签名种类 P4 3 P7 3
+  工具调用    P4 {'roborefer': 570}
+              P7 {'roborefer': 576}
+  调用次数/样本  P4 1.629   P7 1.646
+  变量        P4 暴露    0 使用    0 未用    0 幻觉   0  有变量的样本 0
+              P7 暴露    0 使用    0 未用    0 幻觉   0  有变量的样本 0
+  错题归因                       P4      P7
+    干净(推理/工具精度)                  121     134
+    未调用工具                          0       1
+
+### reflocation   n(P4)=100  n(P7)=100  共同样本=100
+  正确率      P4   54  54.00%   P7   52  52.00%
+  配对        都对 51  都错 45  只有 P4 对 3  只有 P7 对 1
+  平均 score  P4 0.5400   P7 0.5200
+  链路签名(P4)                                  链路签名(P7)
+    roboreferx1@2t                      100 100.0%  roboreferx1@2t                       98  98.0%
+                                                    roboreferx2@3t                        1   1.0%
+                                                    roboreferx2@2t                        1   1.0%
+  主链路覆盖率  P4 100.0%   P7  98.0%   签名种类 P4 1 P7 3
+  工具调用    P4 {'roborefer': 100}
+              P7 {'roborefer': 102}
+  调用次数/样本  P4 1.000   P7 1.020
+  变量        P4 暴露    0 使用    0 未用    0 幻觉   0  有变量的样本 0
+              P7 暴露    0 使用    0 未用    0 幻觉   0  有变量的样本 0
+  错题归因                       P4      P7
+    干净(推理/工具精度)                   46      48
+
+### refplacement   n(P4)=100  n(P7)=100  共同样本=100
+  正确率      P4   58  58.00%   P7   58  58.00%
+  配对        都对 58  都错 42  只有 P4 对 0  只有 P7 对 0
+  平均 score  P4 0.5800   P7 0.5800
+  链路签名(P4)                                  链路签名(P7)
+    roboreferx1@2t                      100 100.0%  roboreferx1@2t                       99  99.0%
+                                                    roboreferx2@3t                        1   1.0%
+  主链路覆盖率  P4 100.0%   P7  99.0%   签名种类 P4 1 P7 2
+  工具调用    P4 {'roborefer': 100}
+              P7 {'roborefer': 101}
+  调用次数/样本  P4 1.000   P7 1.010
+  变量        P4 暴露    0 使用    0 未用    0 幻觉   0  有变量的样本 0
+              P7 暴露    0 使用    0 未用    0 幻觉   0  有变量的样本 0
+  错题归因                       P4      P7
+    干净(推理/工具精度)                   42      42
+
+### refunseen   n(P4)=77  n(P7)=77  共同样本=77
+  正确率      P4   37  48.05%   P7   37  48.05%
+  配对        都对 37  都错 40  只有 P4 对 0  只有 P7 对 0
+  平均 score  P4 0.4805   P7 0.4805
+  链路签名(P4)                                  链路签名(P7)
+    roboreferx1@2t                       77 100.0%  roboreferx1@2t                       77 100.0%
+  主链路覆盖率  P4 100.0%   P7 100.0%   签名种类 P4 1 P7 1
+  工具调用    P4 {'roborefer': 77}
+              P7 {'roborefer': 77}
+  调用次数/样本  P4 1.000   P7 1.000
+  变量        P4 暴露    0 使用    0 未用    0 幻觉   0  有变量的样本 0
+              P7 暴露    0 使用    0 未用    0 幻觉   0  有变量的样本 0
+  错题归因                       P4      P7
+    干净(推理/工具精度)                   40      40
+
+### blinkdepth   n(P4)=124  n(P7)=124  共同样本=124
+  正确率      P4  107  86.29%   P7  109  87.90%
+  配对        都对 103  都错 11  只有 P4 对 4  只有 P7 对 6
+  平均 score  P4 0.8629   P7 0.8790
+  链路签名(P4)                                  链路签名(P7)
+    depth_estimatorx1+roboreferx2+visi  102  82.3%  depth_estimatorx1+roboreferx2+visi  106  85.5%
+    depth_estimatorx1+roboreferx2+visi    9   7.3%  depth_estimatorx1+roboreferx2+visi   10   8.1%
+    depth_estimatorx1+roboreferx2+visi    3   2.4%  depth_estimatorx1+roboreferx2+visi    2   1.6%
+    @1t                                   2   1.6%  depth_estimatorx1+roboreferx2+visi    1   0.8%
+  主链路覆盖率  P4  82.3%   P7  85.5%   签名种类 P4 11 P7 9
+  工具调用    P4 {'vision_ops': 249, 'roborefer': 244, 'depth_estimator': 122, 'vlm': 22, 'bounding_box': 2, 'sam2': 1}
+              P7 {'vision_ops': 253, 'roborefer': 247, 'depth_estimator': 125, 'vlm': 33}
+  调用次数/样本  P4 5.161   P7 5.306
+  变量        P4 暴露  269 使用  125 未用  146 幻觉   2  有变量的样本 122
+              P7 暴露  275 使用  122 未用  154 幻觉   1  有变量的样本 122
+  错题归因                       P4      P7
+    干净(推理/工具精度)                   17      15
+
+### cvb2drelation   n(P4)=650  n(P7)=650  共同样本=650
+  正确率      P4  615  94.62%   P7  615  94.62%
+  配对        都对 609  都错 29  只有 P4 对 6  只有 P7 对 6
+  平均 score  P4 0.9462   P7 0.9462
+  链路签名(P4)                                  链路签名(P7)
+    roboreferx2@2t                      615  94.6%  roboreferx2@2t                      639  98.3%
+    roboreferx2@3t                       17   2.6%  roboreferx2@3t                        5   0.8%
+    roboreferx1@2t                        8   1.2%  roboreferx3@4t                        3   0.5%
+    depth_estimatorx1+roboreferx2+visi    3   0.5%  roboreferx1@2t                        1   0.2%
+  主链路覆盖率  P4  94.6%   P7  98.3%   签名种类 P4 10 P7 6
+  工具调用    P4 {'roborefer': 1311, 'vision_ops': 6, 'depth_estimator': 3}
+              P7 {'roborefer': 1306}
+  调用次数/样本  P4 2.031   P7 2.009
+  变量        P4 暴露    6 使用    3 未用    3 幻觉   0  有变量的样本 3
+              P7 暴露    0 使用    0 未用    0 幻觉   0  有变量的样本 0
+  错题归因                       P4      P7
+    干净(推理/工具精度)                   35      35
+
+### cvb3ddepth   n(P4)=600  n(P7)=600  共同样本=600
+  正确率      P4  579  96.50%   P7  579  96.50%
+  配对        都对 579  都错 21  只有 P4 对 0  只有 P7 对 0
+  平均 score  P4 0.9650   P7 0.9650
+  链路签名(P4)                                  链路签名(P7)
+    depth_estimatorx1+roboreferx2+visi  577  96.2%  depth_estimatorx1+roboreferx2+visi  598  99.7%
+    depth_estimatorx1+roboreferx2+visi   21   3.5%  depth_estimatorx1+roboreferx6+visi    1   0.2%
+    depth_estimatorx1+roboreferx2+visi    1   0.2%  depth_estimatorx1+roboreferx4+visi    1   0.2%
+    depth_estimatorx1+roboreferx4+visi    1   0.2%  
+  主链路覆盖率  P4  96.2%   P7  99.7%   签名种类 P4 4 P7 3
+  工具调用    P4 {'roborefer': 1202, 'vision_ops': 1200, 'depth_estimator': 600, 'vlm': 4}
+              P7 {'roborefer': 1206, 'vision_ops': 1202, 'depth_estimator': 600}
+  调用次数/样本  P4 5.010   P7 5.013
+  变量        P4 暴露 1203 使用  600 未用  603 幻觉   0  有变量的样本 600
+              P7 暴露 1200 使用  600 未用  600 幻觉   0  有变量的样本 600
+  错题归因                       P4      P7
+    干净(推理/工具精度)                   21      21
+
+### boppose   n(P4)=60  n(P7)=60  共同样本=60
+  正确率      P4   38  63.33%   P7   39  65.00%
+  配对        都对 37  都错 20  只有 P4 对 1  只有 P7 对 2
+  平均 score  P4 0.5336   P7 0.5573
+  链路签名(P4)                                  链路签名(P7)
+    bounding_boxx1+depth_estimatorx1+r   58  96.7%  bounding_boxx1+depth_estimatorx1+r   59  98.3%
+    bounding_boxx1+depth_estimatorx1+r    1   1.7%  bounding_boxx1+depth_estimatorx1+r    1   1.7%
+    bounding_boxx2+depth_estimatorx1+r    1   1.7%  
+  主链路覆盖率  P4  96.7%   P7  98.3%   签名种类 P4 3 P7 2
+  工具调用    P4 {'roborefer': 61, 'bounding_box': 61, 'sam2': 60, 'depth_estimator': 60}
+              P7 {'roborefer': 61, 'sam2': 60, 'depth_estimator': 60, 'bounding_box': 60}
+  调用次数/样本  P4 4.033   P7 4.017
+  变量        P4 暴露  240 使用  180 未用   60 幻觉   0  有变量的样本 60
+              P7 暴露  240 使用  180 未用   60 幻觉   0  有变量的样本 60
+  错题归因                       P4      P7
+    干净(推理/工具精度)                   22      21
+
+### bopgrasp   n(P4)=60  n(P7)=60  共同样本=60
+  正确率      P4   54  90.00%   P7   56  93.33%
+  配对        都对 54  都错 4  只有 P4 对 0  只有 P7 对 2
+  平均 score  P4 1.9354   P7 1.8576
+  链路签名(P4)                                  链路签名(P7)
+    depth_estimatorx1+grasp_generatorx   57  95.0%  depth_estimatorx1+grasp_generatorx   54  90.0%
+    depth_estimatorx1+grasp_generatorx    3   5.0%  depth_estimatorx1+grasp_generatorx    6  10.0%
+  主链路覆盖率  P4  95.0%   P7  90.0%   签名种类 P4 2 P7 2
+  工具调用    P4 {'roborefer': 60, 'sam2': 60, 'depth_estimator': 60, 'grasp_generator': 60}
+              P7 {'roborefer': 60, 'sam2': 60, 'depth_estimator': 60, 'grasp_generator': 60}
+  调用次数/样本  P4 4.000   P7 4.000
+  变量        P4 暴露  240 使用  180 未用   60 幻觉   0  有变量的样本 60
+              P7 暴露  240 使用  180 未用   60 幻觉   0  有变量的样本 60
+  错题归因                       P4      P7
+    工具失败                           5       4
+    干净(推理/工具精度)                    1       0
+
+==============================================================================
+robospatial 细分
+  VQA     n=228   P4 167  73.25%   P7-A 164  71.93%   P7-C 166  72.81%
+  Vacant  n=122   P4  62  50.82%   P7-A  51  41.80%   P7-C  54  44.26%
+  P7 两次:恒对 205 · 翻转 25 · 其中 VQA 20 / Vacant 5
+  P7 恒对 ∩ P4 对 = 188 · P7 恒对但 P4 错 = 17 · P4 对但 P7 两次都错 = 29
+
+==============================================================================
+总表
+benchmark         n   P4对   P7对   仅P4   仅P7    主链路P4    主链路P7    调用P4    调用P7
+robospatial     350   229   215    37    23    62.3%    64.9%   1.629   1.646
+reflocation     100    54    52     3     1   100.0%    98.0%   1.000   1.020
+refplacement    100    58    58     0     0   100.0%    99.0%   1.000   1.010
+refunseen        77    37    37     0     0   100.0%   100.0%   1.000   1.000
+blinkdepth      124   107   109     4     6    82.3%    85.5%   5.161   5.306
+cvb2drelation   650   615   615     6     6    94.6%    98.3%   2.031   2.009
+cvb3ddepth      600   579   579     0     0    96.2%    99.7%   5.010   5.013
+boppose          60    38    39     1     2    96.7%    98.3%   4.033   4.017
+bopgrasp         60    54    56     0     2    95.0%    90.0%   4.000   4.000

@@ -1,0 +1,109 @@
+From 3e1d02c98e22bcef11636fbe1def4949aec72475 Mon Sep 17 00:00:00 2001
+From: qyYue1389 <qyYue1389@users.noreply.github.com>
+Date: Wed, 16 Sep 2026 04:52:41 +0000
+Subject: [PATCH 16/19] fix(rl): scale tool actors to TOOL_GPUS instead of
+ refusing to start
+
+The v1/v2 num_actors were sized for the paper's 2-node run, where the tools
+own a whole 8-GPU node: 6*0.6 + 2*0.6 + 5*0.2 + 5*0.2 + 5*0.1 + 8*0 + 5*0.1
+= 7.8 logical GPUs, just under 8. A single-node run has to leave cards for
+the trainer, so TOOL_GPUS is 4 at most and the assert refused to launch at
+all. Scale the counts to fit rather than hand-editing the dict in two places
+and letting v1 and v2 drift apart.
+
+The 2-node path is untouched: tool_gpus=8, demand 7.8, the block is skipped,
+every count and fraction stays as the paper had it.
+
+Also raise vlm's fraction to 0.7 on the scaled path only. Measured
+single-instance peak is 32.11 GiB (/workspace/smoke/vlm.log) because
+vlm.py:116 pins dtype='auto' and Molmo's config names no dtype, so it loads
+fp32 regardless of the 'float16' passed in args. That is 0.70 of a 46 GB
+A40; at 0.6 Ray may co-schedule vlm with two depth_estimators (0.6+0.2+0.2
+= 1.0 logical, 47.9 GiB physical) and the third OOMs.
+
+On 8 A40s this yields tools on 4 cards / training on 4:
+  roborefer 3 x0.6, vlm 1 x0.7, sam2 2 x0.2, depth 2 x0.2,
+  bbox 2 x0.1, vision_ops 4 x0, grasp 2 x0.1  -> demand 3.70 <= 4
+  worst same-card physical footprint 40.49 GiB <= 46.07  (was 47.99)
+4 training GPUs is also one of the only legal counts (6 and 7 crash on the
+mini-batch divisibility assert) and fits inside one NUMA island.
+
+---
+ examples/toolshed/run_rl.sh | 54 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 54 insertions(+)
+
+diff --git a/examples/toolshed/run_rl.sh b/examples/toolshed/run_rl.sh
+index 875883a0..e32c6913 100755
+--- a/examples/toolshed/run_rl.sh
++++ b/examples/toolshed/run_rl.sh
+@@ -270,6 +270,33 @@ TOOL_CONFIGS = {
+ }
+ print(f"Launching {len(TOOL_CONFIGS)} tool types (V1, no robot)...", flush=True)
+ _demand = sum(c['num_actors'] * c['resources']['num_gpus'] for c in TOOL_CONFIGS.values())
++# The num_actors above were sized for the paper's 2-node run, where the tools own
++# a whole 8-GPU node (demand 7.8 <= 8).  A single-node run has to leave cards for
++# the trainer, so tool_gpus is 4 at most and the assert below simply refused to
++# start.  Scale the counts to fit instead of making the operator hand-edit this
++# dict in two places (v1 and v2) and drift them apart.
++#
++# On the 2-node path tool_gpus=8, _demand=7.8, and this block is not entered --
++# every count and fraction stays exactly as the paper had it.
++if _demand > tool_gpus:
++    # vlm's 0.6 was sized for 80 GB cards.  Measured single-instance peak on this
++    # machine is 32.11 GiB, because vlm.py:116 pins dtype='auto' and Molmo's config
++    # names no dtype, so it loads fp32 regardless of the 'float16' passed above.
++    # That is 0.70 of a 46 GB A40.  At 0.6 Ray is free to put vlm + two
++    # depth_estimators on one card (0.6+0.2+0.2 = 1.0 logical, 47.9 GiB physical)
++    # and the last one OOMs.  0.7 makes the logical fraction match the real
++    # footprint, which is what keeps Ray's packing honest.
++    _vlm = TOOL_CONFIGS.get('vlm')
++    if _vlm is not None:
++        _vlm['resources']['num_gpus'] = max(_vlm['resources']['num_gpus'], 0.7)
++        _demand = sum(c['num_actors'] * c['resources']['num_gpus'] for c in TOOL_CONFIGS.values())
++    _scale = tool_gpus / _demand
++    for _name, _c in TOOL_CONFIGS.items():
++        _c['num_actors'] = max(1, int(_c['num_actors'] * _scale))
++    _demand = sum(c['num_actors'] * c['resources']['num_gpus'] for c in TOOL_CONFIGS.values())
++    print("scaled tool actors by %.3f to fit tool_gpus=%s: %s -> demand %.2f logical GPUs" % (
++        _scale, tool_gpus,
++        {k: v['num_actors'] for k, v in TOOL_CONFIGS.items()}, _demand), flush=True)
+ assert _demand <= tool_gpus, (
+     f"tool actors need {_demand} logical GPUs but the placement group reserves only {tool_gpus}. "
+     f"Raise TOOL_GPUS or cut num_actors -- otherwise the PG goes ready and the actors queue forever.")
+@@ -308,6 +335,33 @@ TOOL_CONFIGS = {
+ }
+ print(f"Launching {len(TOOL_CONFIGS)} tool types (V2, with mock_robot)...", flush=True)
+ _demand = sum(c['num_actors'] * c['resources']['num_gpus'] for c in TOOL_CONFIGS.values())
++# The num_actors above were sized for the paper's 2-node run, where the tools own
++# a whole 8-GPU node (demand 7.8 <= 8).  A single-node run has to leave cards for
++# the trainer, so tool_gpus is 4 at most and the assert below simply refused to
++# start.  Scale the counts to fit instead of making the operator hand-edit this
++# dict in two places (v1 and v2) and drift them apart.
++#
++# On the 2-node path tool_gpus=8, _demand=7.8, and this block is not entered --
++# every count and fraction stays exactly as the paper had it.
++if _demand > tool_gpus:
++    # vlm's 0.6 was sized for 80 GB cards.  Measured single-instance peak on this
++    # machine is 32.11 GiB, because vlm.py:116 pins dtype='auto' and Molmo's config
++    # names no dtype, so it loads fp32 regardless of the 'float16' passed above.
++    # That is 0.70 of a 46 GB A40.  At 0.6 Ray is free to put vlm + two
++    # depth_estimators on one card (0.6+0.2+0.2 = 1.0 logical, 47.9 GiB physical)
++    # and the last one OOMs.  0.7 makes the logical fraction match the real
++    # footprint, which is what keeps Ray's packing honest.
++    _vlm = TOOL_CONFIGS.get('vlm')
++    if _vlm is not None:
++        _vlm['resources']['num_gpus'] = max(_vlm['resources']['num_gpus'], 0.7)
++        _demand = sum(c['num_actors'] * c['resources']['num_gpus'] for c in TOOL_CONFIGS.values())
++    _scale = tool_gpus / _demand
++    for _name, _c in TOOL_CONFIGS.items():
++        _c['num_actors'] = max(1, int(_c['num_actors'] * _scale))
++    _demand = sum(c['num_actors'] * c['resources']['num_gpus'] for c in TOOL_CONFIGS.values())
++    print("scaled tool actors by %.3f to fit tool_gpus=%s: %s -> demand %.2f logical GPUs" % (
++        _scale, tool_gpus,
++        {k: v['num_actors'] for k, v in TOOL_CONFIGS.items()}, _demand), flush=True)
+ assert _demand <= tool_gpus, (
+     f"tool actors need {_demand} logical GPUs but the placement group reserves only {tool_gpus}. "
+     f"Raise TOOL_GPUS or cut num_actors -- otherwise the PG goes ready and the actors queue forever.")
+-- 
+2.34.1
+

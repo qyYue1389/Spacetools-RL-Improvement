@@ -1,0 +1,72 @@
+From f0742338792e0f10f06b4938233207904c17f30a Mon Sep 17 00:00:00 2001
+From: repro <repro@local>
+Date: Thu, 27 Aug 2026 06:04:39 +0000
+Subject: [PATCH 09/19] fix(eval): hold the policy in bf16; the fp32 master
+ does not fit a 40 GB card
+
+verl's FSDP engine defaults model_dtype to fp32, so the 4.066 B policy is a
+16.3 GB master copy and rollout_mode()'s weight push OOMs on a 40 GB A100 with
+19 MiB free. bf16 is 8.1 GB and drops the card's peak from 39.5 to 25.0 GB.
+
+Numerically inert for evaluation: every tensor in the checkpoint is stored BF16,
+verl upcasts to the fp32 master and downcasts again to hand to sglang (which
+runs bf16), and val_only has no optimizer step. Must not be carried into
+training.
+---
+ examples/toolshed/run_eval.sh | 33 +++++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/examples/toolshed/run_eval.sh b/examples/toolshed/run_eval.sh
+index c9a48289..618c11a8 100755
+--- a/examples/toolshed/run_eval.sh
++++ b/examples/toolshed/run_eval.sh
+@@ -65,6 +65,38 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ VERL_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ REPO_DIR="$(cd "$VERL_DIR/.." && pwd)"
+ 
++# actor.fsdp_config.model_dtype: fp32 -> bf16.  EVAL ONLY -- see the warning.
++#
++# On a 40 GB A100 the policy card OOMs during rollout_mode()'s weight push:
++#   sglang_rollout.py:213  get_named_tensor_buckets -> tensor.clone()
++#   "Tried to allocate 20.00 MiB ... 19.12 MiB is free.
++#    Process A 31.42 GiB (FSDP worker)   Process B 8.00 GiB (sglang weights)"
++# verl's FSDP engine defaults model_dtype to fp32, so the 4.066 B-parameter
++# policy is held as a 16.3 GB fp32 master copy; bf16 is 8.1 GB, freeing 8.2 GB.
++#
++# This is numerically inert FOR EVALUATION, and the reason is specific:
++#   - every tensor in siyich/spacetools-ckpt is stored BF16 (825/825 tensors,
++#     8.132 GB / 4.066 B params = 2.00 bytes/param -- checked, not assumed);
++#   - verl upcasts that to the fp32 master, then downcasts it again to hand to
++#     sglang, which runs bf16 (rollout dtype: bfloat16). bf16 -> fp32 -> bf16 is
++#     the identity, so the fp32 master round-trips the same bits it was given;
++#   - trainer.val_only=true, so there is no optimizer step and no gradient
++#     accumulation -- the two things an fp32 master exists for.
++#
++# WARNING: this reasoning does NOT extend to training. If P7 ever runs run_rl.sh,
++# the fp32 master matters and this flag must not be copied across.
++#
++# A 48 GB A6000 held the fp32 master fine, which is why P0-P3 never saw this.
++#
++# Two things that are NOT the knob here, both measured:
++#   - gpu_memory_utilization 0.5 -> 0.35 left the failure byte-identical.
++#     TorchMemorySaver has already released the KV cache by the time the weight
++#     push runs, so sglang is down to 8 GB of weights and the fraction is moot.
++#   - actor.fsdp_config.param_offload=True moved 31.46 -> 31.42 GiB, i.e.
++#     nothing: update_weights gathers the params back onto the GPU regardless.
++#   - update_weights_bucket_megabytes 2048 -> 512 freed its 1.5 GB transient and
++#     the run still filled the card (GPU3 peaked at 39.5 GB). The fp32 master is
++#     the only allocation big enough to matter.
+ VERSION="${VERSION:-v1}"
+ NUM_GPUS="${NUM_GPUS:-4}"
+ EVAL_GPUS="${EVAL_GPUS:-1}"
+@@ -235,6 +267,7 @@ for bench in "${RUN_BENCHMARKS[@]}"; do
+         data.truncation='error' \
+         data.return_raw_chat=True \
+         actor_rollout_ref.model.use_remove_padding=True \
++        actor_rollout_ref.actor.fsdp_config.model_dtype=bf16 \
+         actor_rollout_ref.actor.ppo_mini_batch_size=32 \
+         actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+         actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
+-- 
+2.34.1
+

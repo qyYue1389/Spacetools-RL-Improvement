@@ -1,0 +1,20 @@
+=== START 2026-09-12T00:38:51+00:00
+  recompute vs stored acc (run1 Vacant): agree 122, disagree 0
+
+  CORRECTED: distance from the predicted point to the hull BOUNDARY,
+  over the wrong Vacant samples (n=67):
+     median 0.0761   p25 0.0283   p75 0.1790   min 0.0018   max 0.5157
+     within 0.02 of the hull edge: 11 (16%)
+     within 0.05 of the hull edge: 24 (36%)
+     within 0.10 of the hull edge: 41 (61%)
+
+  the 8 flipping Vacant samples, against the hull:
+      5  run1 in=True   run2 in=False  run2 dist outside hull 0.0684
+     22  run1 in=True   run2 in=False  run2 dist outside hull 0.0169
+     45  run1 in=True   run2 in=False  run2 dist outside hull 0.1004
+     87  run1 in=True   run2 in=False  run2 dist outside hull 0.0011
+    100  run1 in=True   run2 in=False  run2 dist outside hull 0.0456
+    105  run1 in=True   run2 in=False  run2 dist outside hull 0.0460
+    106  run1 in=True   run2 in=False  run2 dist outside hull 0.0477
+    107  run1 in=True   run2 in=False  run2 dist outside hull 0.0188
+=== DONE 2026-09-12T00:39:35+00:00

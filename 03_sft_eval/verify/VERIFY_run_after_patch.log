@@ -1,0 +1,170 @@
+=== START 2026-09-12T00:49:35+00:00
+--- 1. blinkdepth symlink
+  /workspace/eval_out/benchmarks/blink_relative_depth/val.parquet  6127236 bytes
+  rows: 124 (P5 says 124)
+
+--- 2. VERIFY.sh three items
+==== 1. 五环境 import 闸门 + .so 架构实扫 ====
+############ 1. 每个环境的关键 import ############
+  spacetools-rl: torch✓ verl✓ toolshed✓ flash_attn_2_cuda✓ sglang✓ ray✓ transformers✓
+  spacetools-tool-vlm: torch✓ ray✓ toolshed✓ transformers✓ sam2✓ depth_pro✓
+  spacetools-tool-roborefer: torch✓ ray✓ toolshed✓ transformers✓ llava✓ flash_attn_2_cuda✓
+  spacetools-tool-bbox: ray✓ toolshed✓ numpy✓ cv2✓
+  spacetools-tool-graspgen: torch✓ ray✓ toolshed✓ pointnet2_ops✓ grasp_gen✓
+
+############ 2. 架构自检(实扫,不是空集)############
+  spacetools-rl: 扫了 1439 个 .so,其中 37 个含 cubin · 自编扩展缺 sm_8x: 0 · 厂商库缺 sm_8x: 8(不计入)
+  spacetools-tool-vlm: 扫了 591 个 .so,其中 14 个含 cubin · 自编扩展缺 sm_8x: 0 · 厂商库缺 sm_8x: 0(不计入)
+  spacetools-tool-roborefer: 扫了 886 个 .so,其中 21 个含 cubin · 自编扩展缺 sm_8x: 0 · 厂商库缺 sm_8x: 0(不计入)
+  spacetools-tool-bbox: 扫了 519 个 .so,其中 1 个含 cubin · 自编扩展缺 sm_8x: 0 · 厂商库缺 sm_8x: 0(不计入)
+  spacetools-tool-graspgen: 扫了 1184 个 .so,其中 35 个含 cubin · 自编扩展缺 sm_8x: 0 · 厂商库缺 sm_8x: 7(不计入)
+  合计:扫了 4619 个 .so,自编扩展缺 sm_8x 共 0 个
+
+############ 3. 冻结版本 ############
+  spacetools-rl: 226 个包
+  spacetools-tool-vlm: 166 个包
+  spacetools-tool-roborefer: 371 个包
+  spacetools-tool-bbox: 150 个包
+  spacetools-tool-graspgen: 236 个包
+# 关键版本  2026-09-12T00:53:18Z
+# 驱动 580.173.02 · GPU NVIDIA RTX A6000
+## spacetools-rl
+  accelerate==1.14.0
+  flashinfer-python==0.5.3
+  numpy==1.26.4
+  nvidia-cudnn-cu12==9.16.0.29
+  ray==2.47.1
+  sglang==0.5.6
+  timm==1.0.16
+  torch==2.9.1+cu128
+  torchaudio==2.9.1+cu128
+  torchvision==0.24.1+cu128
+  transformers==4.57.1
+  (nvcc 12.8)
+## spacetools-tool-vlm
+  accelerate==1.14.0
+  numpy==1.26.4
+  nvidia-cudnn-cu12==9.10.2.21
+  ray==2.47.1
+  timm==1.0.29
+  torch==2.9.1
+  torchvision==0.24.1
+  transformers==4.53.2
+## spacetools-tool-roborefer
+  accelerate==1.3.0
+  numpy==1.26.4
+  nvidia-cudnn-cu12==9.1.0.70
+  ray==2.47.1
+  timm==1.0.29
+  torch==2.5.1
+  torchaudio==2.5.1
+  torchvision==0.20.1
+  transformers==4.49.0
+  (nvcc 12.4)
+## spacetools-tool-bbox
+  numpy==2.4.6
+  ray==2.47.1
+## spacetools-tool-graspgen
+  numpy==2.4.6
+  nvidia-cudnn-cu12==8.9.2.26
+  ray==2.47.1
+  timm==1.0.15
+  torch==2.3.1
+  torchvision==0.18.1
+  transformers==4.48.3
+  (nvcc 12.1)
+
+############ 4. 和上一台机器的 freeze 对比(如果还在)############
+  (没有 KEY_VERSIONS.prev.txt)
+
+✓ 五个环境全部通过
+
+==== 2. 七工具冒烟(真加载权重、真出结果)====
+
+########## vision_ops  (spacetools-tool-bbox) ##########  00:54:05
+  index_at(0.5,0.5) -> Pixel value at (0.500, 0.500) is 0.44999998807907104
+  SMOKE_OK
+  ✓ vision_ops
+
+########## bounding_box  (spacetools-tool-bbox) ##########  00:54:10
+  compute_bbox -> Oriented bounding box computed from 443/2000 points.Corners in 3D: [[-0.039, 0.052, 0.706], [-0.036, 0.068, 0.502], [0.069, 0.052, 0.708], [-0.039, -0.055, 0.698], [0.072, -0.04, 0.496], [0.068, -0.056, 0.699], [-0.036, 
+  SMOKE_OK
+  ✓ bounding_box
+
+########## sam2  (spacetools-tool-vlm) ##########  00:54:55
+  device_map: (该工具未暴露)
+  segment_from_point -> Segmented object at normalized coords (0.500, 0.500) with IoU score: 0.980. Use $segmentation_mask (boolean array, 240x240) to reference it.
+  峰值显存 0.61 GiB
+  SMOKE_OK
+  ✓ sam2
+
+########## depth_estimator  (spacetools-tool-vlm) ##########  00:55:44
+  device_map: (该工具未暴露)
+  estimate_depth -> Estimated depth map for 240x240 image. Focal length: 550.6px. Depth range: 0.37m to 0.40m (mean: 0.37m). Use $depth_map (numpy array, 240x240) to reference the depth data and $foca
+  峰值显存 7.94 GiB
+  SMOKE_OK
+  ✓ depth_estimator
+
+########## grasp_generator  (spacetools-tool-graspgen) ##########  00:57:16
+    warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+  pointnet2_ops._ext OK
+  2026-09-12 00:58:01,766 - OpenGL.acceleratesupport - INFO - No OpenGL_accelerate module loaded: No module named 'OpenGL_accelerate'
+  2026-09-12 00:58:03,227 - grasp_gen.models.discriminator - INFO - Pose representation is mlp
+  2026-09-12 00:58:03,234 - grasp_gen.models.discriminator - INFO - Object encoder checkpoints not found at location ../../checkpoints/GraspGenModels/checkpoints/graspgen_franka_panda_gen.pth
+  2026-09-12 00:58:03,234 - grasp_gen.models.grasp_gen - INFO - Loading generator checkpoint from /opt/spacetools/SpaceTools-Toolshed/toolshed/tools/../../checkpoints/GraspGenModels/checkpoints/graspgen_franka_panda_gen.pth
+  2026-09-12 00:58:04,076 - grasp_gen.models.grasp_gen - INFO - Loading discriminator checkpoint from /opt/spacetools/SpaceTools-Toolshed/toolshed/tools/../../checkpoints/GraspGenModels/checkpoints/graspgen_franka_panda_dis.pth
+  GraspGeneratorTool 构建 OK
+  2026-09-12 00:58:04,665 - grasp_gen.utils.point_cloud_utils - INFO - Removed 443 points from point cloud
+  compute_grasp 抛 RuntimeError(随机点云上属正常): cannot reshape tensor of 0 elements into shape [-1, 0, 3] because the unspecified dimension size -1 can be any value and
+  峰值显存 0.44 GiB
+  SMOKE_OK
+  ✓ grasp_generator
+
+########## roborefer  (spacetools-tool-roborefer) ##########  00:58:06
+  WARNING: RoboRefer forcing no_output_vars to True
+  [2026-09-12 00:58:52,980] [INFO] [real_accelerator.py:219:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+  /opt/spacetools/SpaceTools-Toolshed/RoboRefer/llava/model/qlinear_te.py:95: FutureWarning: `torch.cuda.amp.custom_fwd(args...)` is deprecated. Please use `torch.amp.custom_fwd(args..., device_type='cuda')` instead.
+    @amp.custom_fwd(cast_inputs=torch.bfloat16)
+  /opt/spacetools/SpaceTools-Toolshed/RoboRefer/llava/model/qlinear_te.py:146: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.
+    @amp.custom_bwd
+  Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.80s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:04<00:04,  2.07s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:06<00:02,  2.02s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.52s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.69s/it]
+  You are attempting to use Flash Attention 2.0 with a model not initialized on GPU. Make sure to move the model to GPU after initializing it on CPU with `model.to('cuda')`.
+  device_map: (该工具未暴露)
+  detect_one -> Detected 1 instance(s) of 'cup': [(0.502, 0.498)]
+  峰值显存 7.01 GiB
+  SMOKE_OK
+  ✓ roborefer
+
+########## vlm  (spacetools-tool-vlm) ##########  00:59:09
+  Device type mismatch: tensor on cpu, model on cuda
+  Moving tensor images with shape torch.Size([2, 576, 588]) from cpu to cuda:0
+  Device type mismatch: tensor on cpu, model on cuda
+  Moving tensor image_input_idx with shape torch.Size([2, 144]) from cpu to cuda:0
+  Device type mismatch: tensor on cpu, model on cuda
+  Moving tensor image_masks with shape torch.Size([2, 576]) from cpu to cuda:0
+  Device type mismatch: tensor on cpu, model on cuda
+  VLM response:
+   There are none.
+  detect_one -> Detected 0 instance(s) of 'cup': []
+  峰值显存 9.72 GiB
+  SMOKE_OK
+  ✓ vlm
+
+############ 冒烟:7 通过 / 0 失败 ############
+
+==== 3. Ray 跨环境工具链(变量跨 conda 环境传递)====
+############ 跨环境工具链测试 ############  00:59:42
+--- 结果 ---
+  DRIVER numpy 1.26.4
+
+--- 判据 ---
+  链上失败环数: 0
+  ✗ 链没通
+
+==== 汇总 ====
+  环境验收   退出码 0  (0=五环境 import 全通 且 自编扩展都含 sm_8x)
+  七工具冒烟 退出码 0  (0=七个都真出了结果,且结果里没有 Error:)
+  跨环境链   退出码 0  (0=ndarray 跨 conda 环境双向传递正确)
+✓ 三项全过,环境可用
+VERIFY_EXIT=0
+=== DONE 2026-09-12T00:59:43+00:00

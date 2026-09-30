@@ -1,0 +1,31 @@
+
+=== /workspace/exp/p7_eval_step85/refplacement/0.jsonl ===
+  samples             100
+  mean score          0.5800
+  score >= 0.50       58/100 = 58.00%
+  mean turns          2.01
+  --- run health (all should be 0) ---
+  OOM samples         0 (0 events)
+  cut-off generation  0
+  malformed tool_call 0
+  turn-count mismatch n/a  (dump has no verl num_turns)
+  --- infrastructure limits hit ---
+  truncated responses 0
+  hit max turns       0
+  no <answer>         0
+  --- tools ---
+  calls               {'roborefer': 101}
+  tool failures       0 samples, 0 events
+  --- chains (top) ---
+        99  roboreferx1@2t
+         1  roboreferx2@3t
+  --- wrong samples: 42 ---
+      tool failure    0
+      truncation      0
+      max turns       0
+      no answer       0
+      OOM             0
+      clean           42   <- real tool-accuracy / reasoning failures
+      chains
+          41  roboreferx1@2t
+           1  roboreferx2@3t

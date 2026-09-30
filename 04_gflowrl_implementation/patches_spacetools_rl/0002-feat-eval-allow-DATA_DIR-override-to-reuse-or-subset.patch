@@ -1,0 +1,43 @@
+From 10037a43ffce5fc4de0a82d3d4be6939567b4acf Mon Sep 17 00:00:00 2001
+From: SpaceTools Repro <qyYue1389@users.noreply.github.com>
+Date: Mon, 24 Aug 2026 22:25:47 +0000
+Subject: [PATCH 02/19] feat(eval): allow DATA_DIR override to reuse or subset
+ the benchmark tree
+
+Without this every run re-downloads the full 292 MB benchmark set into the
+timestamped EVAL_DIR, since snapshot_download receives a cache_dir there too.
+Presetting DATA_DIR also makes P2 smoke runs on truncated parquets possible,
+as run_eval.sh has no sample-count option.
+---
+ examples/toolshed/run_eval.sh | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/examples/toolshed/run_eval.sh b/examples/toolshed/run_eval.sh
+index 5024d05f..e2061ac6 100755
+--- a/examples/toolshed/run_eval.sh
++++ b/examples/toolshed/run_eval.sh
+@@ -85,6 +85,11 @@ set +u; conda activate spacetools-rl; set -u
+ export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib/python3.11/site-packages/nvidia/cuda_runtime/lib:${CONDA_PREFIX}/lib/python3.11/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH:-}"
+ export HYDRA_FULL_ERROR=1
+ 
++# DATA_DIR may be preset to point at an existing (or subset) benchmark tree.
++# Without it every run re-downloads the full 292 MB into the timestamped EVAL_DIR,
++# because snapshot_download is given a cache_dir inside EVAL_DIR as well.
++# Presetting it also allows running a truncated parquet for smoke tests.
++if [ -z "${DATA_DIR:-}" ]; then
+ python3 - "$EVAL_DIR" <<'DL_PY'
+ import sys, os
+ from huggingface_hub import snapshot_download
+@@ -95,6 +100,9 @@ print(f"Downloaded eval benchmarks to {path}")
+ DL_PY
+ 
+ DATA_DIR="$EVAL_DIR/benchmarks"
++else
++    echo "Using preset DATA_DIR=$DATA_DIR (skipping benchmark download)"
++fi
+ 
+ declare -A BENCHMARKS=(
+     [robospatial]="data/robospatial.parquet"
+-- 
+2.34.1
+

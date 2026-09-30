@@ -1,0 +1,16 @@
+# pip constraints for the four Toolshed tool environments.
+#
+# Purpose: the host driver caps at CUDA 12.8, so no tool env may pull a cu130 torch.
+#
+# DOES NOT APPLY to spacetools-tool-graspgen: GraspGen upstream pins torch>=2.3,<2.4,
+# and the PyG wheels (torch-cluster / torch-scatter) only exist for 2.3.0+cu121.
+# Unset PIP_CONSTRAINT when building that env.
+#
+# Also for graspgen: build pointnet2_ops against the SYSTEM CUDA (/usr/local/cuda, 12.8),
+# not the env's. install_graspgen.sh runs `conda install cuda-toolkit=12.1` but the env
+# actually receives 13.3 components (metapackage records 12.1.1, nvcc reports 13.3);
+# major 12 -> 13 makes torch raise. 12.8 shares torch's major, so it only warns.
+# Host compiler must be gcc <= 14 (system gcc-13); conda injects
+# NVCC_PREPEND_FLAGS=-ccbin=<conda gcc 15.3>, which must be overridden.
+torch==2.9.1
+torchvision==0.24.1

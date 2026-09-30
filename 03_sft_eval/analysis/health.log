@@ -1,0 +1,20 @@
+=== START 2026-09-12T00:00:14+00:00
+### robospatial   n=350  no_answer=0   multi_answer=0   turn_exhausted=0   truncated=0   malformed_call=0
+      tool_calls per sample: {1: 124, 2: 225, 5: 1}
+### reflocation   n=100  no_answer=0   multi_answer=0   turn_exhausted=0   truncated=0   malformed_call=0
+      tool_calls per sample: {1: 98, 2: 2}
+### refplacement  n=100  no_answer=0   multi_answer=0   turn_exhausted=0   truncated=0   malformed_call=0
+      tool_calls per sample: {1: 100}
+### refunseen     n=77   no_answer=0   multi_answer=0   turn_exhausted=0   truncated=0   malformed_call=0
+      tool_calls per sample: {1: 77}
+
+--- two wrong answers from robospatial, verbatim, to see what the errors look like
+=== index=1 acc=0.0
+--- gt: [(0.757, 0.615), (0.743, 0.629), (0.701, 0.635), (0.737, 0.627), (0.742, 0.649), (0.721, 0.640), (0.733, 0.636), (0.738, 0.637), (0.725, 0.630), (0.751, 0.628)]
+--- output: <think> I need to find a point within the vacant space suitable for placing an object close to and to the left of the vacuum. The vacuum is likely on the floor, and I should look for an area that is clear and not obstructed by other objects. I will use the roborefer tool to detect the vacuum and then find a suitable point left of it. </think> <tool_call> {"name": "roborefer.detect_one", "arguments": {"obj_name": "point within the vacant space suitable for placing an object close to and to the left of the vacuum", "image_index": 0}} </tool_call><|im_end|><|im_start|>user <tool_response> Detected 1 instance(s) of 'point within the vacant space suitable for placing an object close to and to the
+
+=== index=3 acc=0.0
+--- gt: [(0.251, 0.438), (0.302, 0.426), (0.379, 0.430), (0.367, 0.446), (0.274, 0.455), (0.319, 0.446), (0.344, 0.416), (0.281, 0.439), (0.344, 0.432), (0.400, 0.420)]
+--- output: <think> I need to find a point close to and behind the speaker. The speaker is likely to be on the left side of the image, and I should look for a space behind it. I will use the roborefer tool to detect the speaker and then find a suitable point behind it. </think> <tool_call> {"name": "roborefer.detect_one", "arguments": {"obj_name": "point close to and behind the speaker", "image_index": 0}} </tool_call><|im_end|><|im_start|>user <tool_response> Detected 1 instance(s) of 'point close to and behind the speaker': [(0.329, 0.478)] </tool_response><|im_end|> <|im_start|>assistant <think> The tool detected a point at (0.329, 0.478) which is close to and behind the speaker. This point is suitab
+
+=== DONE 2026-09-12T00:00:14+00:00

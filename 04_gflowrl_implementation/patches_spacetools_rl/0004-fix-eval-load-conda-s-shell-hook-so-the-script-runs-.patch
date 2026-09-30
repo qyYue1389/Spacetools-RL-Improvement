@@ -1,0 +1,48 @@
+From a71f20f1241edd802f9842c2da812d8812f00ccd Mon Sep 17 00:00:00 2001
+From: SpaceTools Repro <qyYue1389@users.noreply.github.com>
+Date: Tue, 25 Aug 2026 00:01:08 +0000
+Subject: [PATCH 04/19] fix(eval): load conda's shell hook so the script runs
+ under plain bash
+
+run_eval.sh calls `conda activate`, which is a shell function. A non-interactive
+`bash run_eval.sh` inherits exported variables but not shell functions, so the
+call failed with "Run 'conda init' before 'conda activate'" unless the user had
+run conda init in that shell. Load the hook from CONDA_ROOT (or the conda on
+PATH) at the top of the script instead.
+---
+ examples/toolshed/run_eval.sh | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/examples/toolshed/run_eval.sh b/examples/toolshed/run_eval.sh
+index 587f2fd9..2604759e 100755
+--- a/examples/toolshed/run_eval.sh
++++ b/examples/toolshed/run_eval.sh
+@@ -36,6 +36,25 @@
+ 
+ set -euxo pipefail
+ 
++# `conda activate` is a shell function, and a non-interactive `bash run_eval.sh`
++# does not inherit shell functions from the caller -- only exported variables.
++# Load conda's hook here so the script works when invoked as `bash ...` rather
++# than sourced. CONDA_ROOT is honoured if set, otherwise fall back to the conda
++# on PATH.
++if ! declare -F conda >/dev/null 2>&1; then
++    _conda_base="${CONDA_ROOT:-}"
++    if [ -z "$_conda_base" ] && command -v conda >/dev/null 2>&1; then
++        _conda_base="$(conda info --base)"
++    fi
++    if [ -n "$_conda_base" ] && [ -f "$_conda_base/etc/profile.d/conda.sh" ]; then
++        # shellcheck disable=SC1091
++        . "$_conda_base/etc/profile.d/conda.sh"
++    else
++        echo "ERROR: cannot locate conda.sh; set CONDA_ROOT or run 'conda init'." >&2
++        exit 1
++    fi
++fi
++
+ : "${ROBOREFER_MODEL:?Set ROBOREFER_MODEL to path of RoboRefer-8B-SFT model}"
+ : "${DEPTH_CHECKPOINT:?Set DEPTH_CHECKPOINT to path of depth_pro.pt}"
+ 
+-- 
+2.34.1
+

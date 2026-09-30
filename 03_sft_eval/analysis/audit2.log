@@ -1,0 +1,24 @@
+=== START 2026-09-11T23:50:28+00:00
+### robospatial   rows=350  rows_with_error_text=0   rows_with_no_tool_call=0
+      roborefer        rows_calling=350   of_which_error=0
+      depth_estimator  rows_calling=1     of_which_error=0
+      vision_ops       rows_calling=1     of_which_error=0
+### reflocation   rows=100  rows_with_error_text=0   rows_with_no_tool_call=0
+      roborefer        rows_calling=100   of_which_error=0
+### refplacement  rows=100  rows_with_error_text=0   rows_with_no_tool_call=0
+      roborefer        rows_calling=100   of_which_error=0
+### refunseen     rows=77   rows_with_error_text=0   rows_with_no_tool_call=0
+      roborefer        rows_calling=77    of_which_error=0
+
+--- one sample output, to eyeball what a tool response looks like
+<think> I need to find the orange box in the image. Looking at the image, I can see a box with "Nature Valley" and "GRANOOLA" text on it, which appears to be a Nature Valley granola bar box. This box is in the upper right area of the image. I will use the roborefer.detect_one tool to locate this box. </think>
+<tool_call>
+{"name": "roborefer.detect_one", "arguments": {"obj_name": "orange box", "image_index": 0}}
+</tool_call><|im_end|><|im_start|>user
+<tool_response>
+Detected 1 instance(s) of 'orange box': [(0.95, 0.247)]
+</tool_response><|im_end|>
+<|im_start|>assistant
+<think> I have successfully located the orange box at the coordinates (0.95, 0.247). Now, I can format this as a list of tuples as requested. The orange box is in the upper right area of the image. </think>
+<answer> [(0.95, 0.247)] </answer><|im_end|>
+=== DONE 2026-09-11T23:50:28+00:00

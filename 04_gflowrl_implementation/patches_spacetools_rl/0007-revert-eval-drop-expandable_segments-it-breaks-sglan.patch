@@ -1,0 +1,45 @@
+From ef2c7580f80d4df6f97e154d75db8eb03c5016da Mon Sep 17 00:00:00 2001
+From: SpaceTools Repro <qyYue1389@users.noreply.github.com>
+Date: Tue, 25 Aug 2026 01:13:16 +0000
+Subject: [PATCH 07/19] revert(eval): drop expandable_segments; it breaks
+ sglang's TorchMemorySaver
+
+sglang's HYBRID rollout mode releases and rebuilds the KV cache through
+TorchMemorySaver, which refuses to run when expandable_segments is enabled:
+  RuntimeError: TorchMemorySaver is disabled for the current process because
+  expandable_segments is not supported yet.
+
+The fragmentation saving was marginal anyway now that the tools have three
+cards with ~62 GB of headroom. The substantive fix was EVAL_GPUS=1 plus the
+re-balanced fractional budget.
+---
+ examples/toolshed/run_eval.sh | 13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/examples/toolshed/run_eval.sh b/examples/toolshed/run_eval.sh
+index d8b7b12e..c9a48289 100755
+--- a/examples/toolshed/run_eval.sh
++++ b/examples/toolshed/run_eval.sh
+@@ -103,12 +103,13 @@ echo "=== Downloading eval benchmarks ==="
+ set +u; conda activate spacetools-rl; set -u
+ export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib/python3.11/site-packages/nvidia/cuda_runtime/lib:${CONDA_PREFIX}/lib/python3.11/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH:-}"
+ export HYDRA_FULL_ERROR=1
+-# Reduce allocator fragmentation; the OOM traces explicitly recommend it.
+-# torch 2.9 renamed the variable and warns on the old name, so set both:
+-# the new one for this torch, the old one for the tool environments that
+-# still run torch 2.3 / 2.5.
+-export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
+-export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
++# NOTE: do not set expandable_segments here. The OOM traces recommend it, but
++# sglang's HYBRID rollout mode uses TorchMemorySaver to release and rebuild the
++# KV cache, and that refuses to run under expandable_segments:
++#   RuntimeError: TorchMemorySaver is disabled for the current process because
++#   expandable_segments is not supported yet.
++# The fragmentation it would save is marginal now that the tools have three
++# cards; the real fix was EVAL_GPUS=1 plus the re-balanced fractions.
+ 
+ # DATA_DIR may be preset to point at an existing (or subset) benchmark tree.
+ # Without it every run re-downloads the full 292 MB into the timestamped EVAL_DIR,
+-- 
+2.34.1
+

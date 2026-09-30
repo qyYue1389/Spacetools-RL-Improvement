@@ -1,0 +1,122 @@
+From 712e557a75d4e38d082d9065ec44eefc9bc4813c Mon Sep 17 00:00:00 2001
+From: SpaceTools Repro <qyYue1389@users.noreply.github.com>
+Date: Tue, 25 Aug 2026 06:46:21 +0000
+Subject: [PATCH] fix(tools): honour the vlm dtype argument, cast inputs,
+ absolutise grasp paths
+
+vlm.py, two bugs that were masking each other:
+
+  1. The non-quantised path hardcoded torch_dtype="auto" and ignored the dtype
+     constructor argument, so the 'float16' in run_eval.sh was dead code. "auto"
+     loads Molmo-7B-D at its stored precision, which is fp32 on the Hub: 33 GB of
+     VRAM instead of the ~15 GB the config implies. On a 48 GB card that alone
+     exhausts the device once RoboRefer shares it.
+
+  2. Input tensors were only moved to the model's device, never cast to its
+     dtype. Harmless while the model was always fp32; with a float16 model the
+     fp32 image tensors fail matmul with "expected mat1 and mat2 to have the same
+     dtype". Only floating tensors are cast, so input_ids stays integer.
+
+Neither changes behaviour under the current config: run_eval.sh passes
+dtype='auto', which takes the same branch as upstream, and the input cast is a
+no-op when model and inputs are both fp32. Fixing them makes a precision
+ablation a one-string change instead of a rediscovery.
+
+graspgen_franka_panda.yml: the three checkpoint paths were relative
+(../../checkpoints/...), which is unusable from a Ray actor whose working
+directory is not under our control. Upstream is also self-contradictory about
+the location: this yml says ../../checkpoints/, requirements/tool-graspgen.txt
+says toolshed/data/, and install_graspgen.sh uses $MODELS_DIR. Absolutised to
+where install_graspgen.sh actually puts them.
+---
+ toolshed/tools/graspgen_franka_panda.yml |  6 ++---
+ toolshed/tools/vlm.py                    | 28 +++++++++++++++++++-----
+ 2 files changed, 26 insertions(+), 8 deletions(-)
+
+diff --git a/toolshed/tools/graspgen_franka_panda.yml b/toolshed/tools/graspgen_franka_panda.yml
+index 817cb8b..45feebe 100644
+--- a/toolshed/tools/graspgen_franka_panda.yml
++++ b/toolshed/tools/graspgen_franka_panda.yml
+@@ -167,8 +167,8 @@ diffusion:
+   ptv3:
+     grid_size: 0.01
+ discriminator:
+-  checkpoint: ../../checkpoints/GraspGenModels/checkpoints/graspgen_franka_panda_dis.pth 
+-  checkpoint_object_encoder_pretrained: ../../checkpoints/GraspGenModels/checkpoints/graspgen_franka_panda_gen.pth 
++  checkpoint: /workspace/models/GraspGenModels/checkpoints/graspgen_franka_panda_dis.pth 
++  checkpoint_object_encoder_pretrained: /workspace/models/GraspGenModels/checkpoints/graspgen_franka_panda_gen.pth 
+   obs_backbone: ptv3
+   num_embed_dim: 256
+   num_obs_dim: 512
+@@ -214,7 +214,7 @@ eval:
+   last_scene: 1000
+   scene: null
+   acronym_dir: ''
+-  checkpoint: ../../checkpoints/GraspGenModels/checkpoints/graspgen_franka_panda_gen.pth 
++  checkpoint: /workspace/models/GraspGenModels/checkpoints/graspgen_franka_panda_gen.pth 
+   output_dir: null
+   exp_name: null
+   cam_coord: false
+diff --git a/toolshed/tools/vlm.py b/toolshed/tools/vlm.py
+index 4d46cfe..f75b45b 100644
+--- a/toolshed/tools/vlm.py
++++ b/toolshed/tools/vlm.py
+@@ -112,8 +112,15 @@ class VLMTool(BaseTool):
+         if quantization_config:
+             model_kwargs["quantization_config"] = quantization_config
+         else:
+-            # Only set torch_dtype if not using quantization
+-            model_kwargs["torch_dtype"] = "auto"
++            # Honour the configured dtype. Upstream hardcoded "auto", which loads
++            # the checkpoint at its stored precision -- Molmo-7B-D ships fp32 on
++            # the Hub, so "auto" costs ~30 GB of VRAM instead of the ~15 GB the
++            # configured float16 implies. On a 48 GB card that alone exhausts the
++            # device as soon as RoboRefer shares it (Ray packs both 0.5-GPU actors
++            # onto GPU 0).
++            model_kwargs["torch_dtype"] = (
++                "auto" if dtype == "auto" else getattr(torch, dtype)
++            )
+ 
+         self._model = AutoModelForCausalLM.from_pretrained(
+             model_name,
+@@ -319,7 +326,12 @@ class VLMTool(BaseTool):
+             # Fallback: get device from model parameters
+             model_device = next(self._model.parameters()).device
+         
+-        print(f"Model device: {model_device}")
++        # Floating-point inputs must match the model's dtype. Upstream loaded the
++        # model with torch_dtype="auto" (fp32 for Molmo), so moving inputs to the
++        # device was enough; with the model in float16 the fp32 image tensors
++        # otherwise fail matmul with "expected mat1 and mat2 to have the same dtype".
++        model_dtype = next(self._model.parameters()).dtype
++        print(f"Model device: {model_device} dtype: {model_dtype}")
+ 
+         # Move inputs to the correct device and make a batch of size 1
+         try:
+@@ -334,7 +346,10 @@ class VLMTool(BaseTool):
+                     # Validate device compatibility before transfer
+                     if v.device.type != model_device.type:
+                         print(f"Device type mismatch: tensor on {v.device.type}, model on {model_device.type}")
+-                    inputs_on_device[k] = v.to(model_device, non_blocking=True).unsqueeze(0)
++                    v = v.to(model_device, non_blocking=True)
++                    if v.is_floating_point() and v.dtype != model_dtype:
++                        v = v.to(model_dtype)
++                    inputs_on_device[k] = v.unsqueeze(0)
+                 else:
+                     inputs_on_device[k] = v
+             inputs = inputs_on_device
+@@ -349,7 +364,10 @@ class VLMTool(BaseTool):
+                 inputs_on_device = {}
+                 for k, v in inputs.items():
+                     if torch.is_tensor(v):
+-                        inputs_on_device[k] = v.to(model_device, non_blocking=False).unsqueeze(0)
++                        v = v.to(model_device, non_blocking=False)
++                        if v.is_floating_point() and v.dtype != model_dtype:
++                            v = v.to(model_dtype)
++                        inputs_on_device[k] = v.unsqueeze(0)
+                     else:
+                         inputs_on_device[k] = v
+                 inputs = inputs_on_device
+-- 
+2.43.0
+

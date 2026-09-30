@@ -1,0 +1,4 @@
+device_map: (该工具未暴露)
+segment_from_point -> Segmented object at normalized coords (0.500, 0.500) with IoU score: 0.980. Use $segmentation_mask (boolean array, 240x240) to reference it.
+峰值显存 0.61 GiB
+SMOKE_OK

@@ -1,0 +1,33 @@
+
+=== /workspace/exp/p7_eval_step85/robospatial/0.jsonl ===
+  samples             350
+  mean score          0.6143
+  score >= 0.50       215/350 = 61.43%
+  mean turns          2.00
+  --- run health (all should be 0) ---
+  OOM samples         0 (0 events)
+  cut-off generation  0
+  malformed tool_call 0
+  turn-count mismatch n/a  (dump has no verl num_turns)
+  --- infrastructure limits hit ---
+  truncated responses 0
+  hit max turns       0
+  no <answer>         0
+  --- tools ---
+  calls               {'roborefer': 576}
+  tool failures       0 samples, 0 events
+  --- chains (top) ---
+       227  roboreferx2@2t
+       122  roboreferx1@2t
+         1  @1t
+  --- wrong samples: 135 ---
+      tool failure    0
+      truncation      0
+      max turns       0
+      no answer       0
+      OOM             0
+      clean           135   <- real tool-accuracy / reasoning failures
+      chains
+          71  roboreferx1@2t
+          63  roboreferx2@2t
+           1  @1t

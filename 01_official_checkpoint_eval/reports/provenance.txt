@@ -1,0 +1,448 @@
+=== SpaceTools reproduction provenance @ 2026-08-27T10:00:00+00:00 ===
+=== (P4 complete: 9 benchmark keys, 2121 samples, on 4x A100-SXM4-40GB) ===
+=== Phases M and V complete; see records/P4_RESULTS.md for the numbers ===
+
+--- submodule commits ---
++8d193ec3 SpaceTools-RL (heads/repro-4xa6000)  <- was ef2c7580 on this host until Phase M pulled
+ b7ebbf320bb130c230856e61107a566bc119e4d8 SpaceTools-SFT (heads/main)
++712e557a75d4e38d082d9065ec44eefc9bc4813c SpaceTools-Toolshed (heads/repro-4xa6000)
+SpaceTools-RL branch: repro-4xa6000
+8d193ec3 feat(eval): dump uid and num_turns for offline trajectory analysis
+ef2c7580 revert(eval): drop expandable_segments; it breaks sglang's TorchMemorySaver
+77141944 chore(eval): set PYTORCH_ALLOC_CONF as well as the deprecated alias
+910f6f5d fix(eval): give the tools three GPUs; DepthPro needs 12.5 GB per actor
+a71f20f1 fix(eval): load conda's shell hook so the script runs under plain bash
+f68fd4c6 fix(eval): keep Molmo in fp32 and stop Ray co-locating the two large tools
+
+--- local deviations from upstream ---
+  [1]  run_eval.sh          BENCHMARKS parquet paths corrected      upstream bug (committed)
+  [2]  GraspGen pyproject   drop pickle5 (uncompilable on Py3.11)   upstream bug
+       + requirements.txt
+  [3]  pointnet2_ops build  compiled with system CUDA 12.8 and         upstream bug
+                            gcc-13, TORCH_CUDA_ARCH_LIST=8.6.
+                            NOTE: the LINK still resolved to the
+                            env's libcudart.so.13 (LIBRARY_PATH
+                            pointed at .../lib64/stubs, which has
+                            no libcudart). Harmless: the kernels
+                            are sm_86 cubins fixed at compile
+                            time, and cudart only launches them.
+                            SUPERSEDED BY [16] on 2026-08-27: the sm_86-only
+                            build does NOT run on the A100's sm_80, and the
+                            cudart diagnosis above was wrong. See [16].
+  [4]  graspgen_franka_     absolute checkpoint paths (3 lines)     upstream docs contradict
+       panda.yml                                                    themselves
+  [5]  RoboRefer            skip the hardcoded py3.10 flash-attn      upstream bug
+       env_setup.sh         wheel (pip refuses cp310 on py3.11, and
+                            set -e then aborts before llava installs)
+  [6]  run_eval.sh          DATA_DIR override                       our improvement (committed)
+  [7]  vlm.py               honour the dtype argument               upstream bug
+  [8]  vlm.py               cast float inputs to the model dtype    upstream bug (masked by [7])
+  [9]  run_eval.sh          dtype: 'auto' keeps Molmo in fp32       FIDELITY
+                                                                    (matches upstream behaviour;
+                                                                    the fractions once set here
+                                                                    were superseded by [14])
+  [10] run_eval.sh          load conda shell hook                   portability only (committed)
+  [11] spacetools-rl env    install cachetools                      undeclared verl dependency
+  [12] spacetools-rl env    nvidia-cudnn-cu12==9.16.0.29            sglang runtime requirement;
+                                                                    deliberately breaks torch's pin.
+                                                                    docs/SETUP.md:88 already
+                                                                    documents this, same version
+  [13] OFFICIAL CHECKPOINT  drop text_config, set                   upstream bug: docs/SETUP.md
+                            tie_word_embeddings=True, replace       documents both fixes and
+                            preprocessor_config.json with the       run_sft.sh applies them, but
+                            base model's                            the released weights ship unfixed.
+                                                                    NOT a numeric suspect: see note
+  [14] run_eval.sh + env.sh EVAL_GPUS=1, fractional budget          HARDWARE ADAPTATION
+                            re-balanced to measured sizes           (committed 910f6f5d)
+  [15] run_eval.sh          expandable_segments NOT set             sglang's TorchMemorySaver
+                                                                    refuses to run under it
+                                                                    (committed ef2c7580)
+
+  Notes:
+   - [9] is the only deviation that is not a bug fix. Molmo runs in fp32, exactly
+     as upstream did (vlm.py ignored its own dtype field), but RoboRefer and Molmo
+     are forced onto separate GPUs because 17 GB + 30 GB fits an 80 GB A100 and not
+     a 48 GB A6000. Ray packs fractional GPUs, so 0.5 + 0.5 co-located them.
+     All replica counts remain at the upstream defaults.
+   - [10] changes no computation.
+   - verl declares numpy<2.0.0; we deliberately run numpy 2.x because Ray cannot
+     unpickle numpy-2 arrays from the tool environments into a numpy-1 driver
+     (ModuleNotFoundError: numpy._core.numeric). toolshed itself requires >=2.0.0.
+     If verl fails at P4 with a numpy-related error, this is the first suspect.
+   - cachetools was missing from spacetools-rl and installed manually; it is an
+     undeclared dependency of verl.experimental.agent_loop.
+   - [14] replaced the earlier 0.55 split. Measured footprints: Molmo fp32 33.0 GB,
+     RoboRefer 18.6 GB, DepthPro 12.5 GB PER ACTOR, SAM2 1.2 GB each; ~80 GB of
+     tools against 94.8 GB on two cards left no headroom and OOMed 68 times in a
+     124-sample run. Ray PACKS fractional GPUs rather than spreading them, so
+     0.5 + 0.5 co-located the two large models. All replica counts unchanged.
+   - [13] is the only deviation that modifies the released weights rather than
+     code. Originals are kept as config.json.orig / preprocessor_config.json.orig.
+     tie_word_embeddings was set only after verifying that lm_head.weight is
+     bit-identical to model.embed_tokens.weight (max abs diff 0.0); an untied
+     head would have been silently discarded.
+   - Both [3] and [12] were re-reviewed by tracing the actual execution order
+     rather than inferring from a component's current state. [12] holds: sglang
+     reads torch.backends.cudnn.version() at startup and refuses below 9.15, and
+     the installed 9.16.0.29 reports 91600. [3] holds too, but its description
+     above was corrected: the intent was "avoid CUDA 13", and only the compile
+     half achieved that. That is the half that matters.
+   - A deviation was reverted after analysis: RoboRefer's
+     `pip install triton==3.1.0` had been patched out on the theory that it
+     would break torch 2.9.1. Wrong: the preceding `pip install -e ".[train,eval]"`
+     already downgrades torch to 2.5.1, whose own pin IS triton 3.1.0, so the
+     line is a no-op in the real execution order. Restored to upstream.
+   - [13]'s preprocessor swap is settled and is NOT a source of numeric deviation.
+     The file we installed is byte-identical to the one on the Hub
+     (sha256 f2058c716eef96cc..., 350 bytes), and Qwen has not touched
+     preprocessor_config.json since commit 1b989f2c on 2025-02-15 -- the later
+     commits only changed tokenizer_config, generation_config and the README.
+     The paper is arXiv 2512.04069 (December 2025), so the authors necessarily
+     fetched the same file. run_sft.sh line 289 also downloads it without
+     pinning a revision, i.e. exactly the way we did.
+
+     That leaves only two deviations that could plausibly move a number: the
+     cudnn upgrade [12] and running numpy 2.x in spacetools-rl. Neither can be
+     avoided -- sglang refuses to start below cudnn 9.15, and Ray cannot
+     deserialise numpy-2 arrays from the tool environments into a numpy-1 driver.
+     ([20] remains one of these. An end-to-end exclusion was claimed on
+     2026-08-30 and RETRACTED the same day when two further fp32 runs put that
+     arm at {107,105,105} against bf16's {108,109}. See its entry.)
+
+     SCOPE, added 2026-08-30: the sentence above is about the numbers P4 actually
+     produced, on 4xA100-SXM4-40GB. Deviation [23] -- gpu_memory_utilization on
+     the 80 GB machine -- DOES move numbers, but only for policy runs made on
+     that machine during the P6 session; it cannot reach P4's results, which
+     predate it. Any figure quoted from an 80 GB policy run must name its
+     gpu_memory_utilization.
+
+   - Operational constraint introduced by us: all four repos now sit on a local
+     branch `repro-4xa6000` with NO upstream tracking. That matters in exactly
+     one place. install_graspgen.sh line 79 runs `git pull` when the GraspGen
+     directory already exists, and with `set -e` at line 17 the script aborts
+     there, because `git pull` on an untracked branch fails with "no upstream
+     configured". Check out `main` first if that script ever needs re-running:
+
+         git -C SpaceTools-Toolshed/GraspGen checkout main
+
+     The other repos are unaffected: install_roborefer.sh SKIPS the clone when
+     the directory exists rather than pulling, and nothing pulls Toolshed or
+     SpaceTools-RL.
+
+   - P2 results and the P4 wall-clock budget: /workspace/P2_RESULTS.md
+   - The checkpoint reports model_type "qwen2_5_vl_text" rather than "qwen2_5_vl",
+     so verl's MFU accounting is always zero. This does not affect eval results,
+     but relates to the SFT config contamination noted in docs/SETUP.md.
+
+--- GraspGen working tree ---
+HEAD: 2dd8852e1be60f5f9d277fafcc621835cdf59110
+ pyproject.toml   | 9 ++++-----
+ requirements.txt | 1 -
+ 2 files changed, 4 insertions(+), 6 deletions(-)
+
+--- model weights (HF cache) ---
+Zhoues/RoboRefer-8B-SFT @ bd04070786084c624156194d89333c375b274b28
+allenai/Molmo-7B-D-0924 @ cab33fb7f1a40091911f81165f8481920621948f
+facebook/sam2.1-hiera-small @ ee5bba1d82bb8749febdf90f45e84b687142ba03
+siyich/spacetools-ckpt @ f953b1a130a74d5fca78d779dc1a686c892b239f
+
+--- model weights (local-dir) ---
+RoboRefer-8B-SFT @ bd04070786084c624156194d89333c375b274b28
+spacetools-ckpt @ f953b1a130a74d5fca78d779dc1a686c892b239f
+GraspGenModels @ ec1ccbb5eec0680db669246ac312a3636f16ee43
+
+--- depth_pro.pt (plain wget, checksum is the only identifier) ---
+3eb35ca68168ad3d14cb150f8947a4edf85589941661fdb2686259c80685c0ce  /workspace/models/depth_pro.pt
+
+--- per-environment stacks ---
+spacetools-rl                torch=2.9.1 numpy=2.4.6 transformers=4.57.1
+spacetools-tool-roborefer    torch=2.5.1 numpy=1.26.4 transformers=4.49.0
+spacetools-tool-vlm          torch=2.9.1 numpy=2.4.6 transformers=4.53.2
+spacetools-tool-bbox         torch=- numpy=2.4.6 transformers=-
+spacetools-tool-graspgen     torch=2.3.1 numpy=2.4.6 transformers=4.48.3
+
+--- hardware / driver ---
+CURRENT (P4, from 2026-08-27):
+  4x NVIDIA A100-SXM4-40GB, 40960 MiB each, driver 580.159.03, compute cap 8.0
+  system CUDA: Cuda compilation tools, release 12.8, V12.8.93
+  host gcc: gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+  128 cores / 2015 GB RAM / /dev/shm 503 GB / volume /dev/md0 199 GB (141 used)
+  NVLink present but unused: tools are independent Ray actors,
+  tensor_model_parallel_size=1, no collectives.
+
+PREVIOUS (P0-P3, through 2026-08-25):
+  4x NVIDIA RTX A6000, 49140 MiB, driver 580.173.02, compute cap 8.6
+  system CUDA: Cuda compilation tools, release 12.8, V12.8.93
+  host gcc: gcc-13
+  44 cores / 774 GB RAM
+
+  EVERY measured number in P2_RESULTS.md was taken on the A6000 and is not
+  comparable to anything measured on the A100 until Phase V re-establishes a
+  baseline.
+
+--- Phase M migration, A6000 (sm_86) -> A100-SXM4-40GB (sm_80), 2026-08-27 ---
+  [16] pointnet2_ops       rebuilt for TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9"    HARDWARE ADAPTATION
+                           Supersedes the sm_86-only build in [3]. Verified
+                           before: 4 sm_86 cubins, no PTX, and
+                           furthest_point_sample() aborting with "no kernel
+                           image is available for execution on the device".
+                           Verified after: 4 cubins each for sm_80/86/89 and
+                           the op returning correctly.
+                           Also fixes [3]'s cudart half: the .so now links
+                           /usr/local/cuda/lib64/libcudart.so.12 (12.8.90)
+                           instead of the env's libcudart.so.13 (13.3.29).
+                           CORRECTION to [3]: the cause was never LIBRARY_PATH
+                           pointing at stubs. conda's LDFLAGS injects
+                           -L$CONDA_PREFIX/lib AHEAD of torch's
+                           -L/usr/local/cuda/lib64, and LIBRARY_PATH is only
+                           searched after explicit -L. Unsetting LDFLAGS is what
+                           fixed it; /usr/local/cuda/lib64 is on the system
+                           ldconfig path so nothing is lost at runtime.
+                           Build recipe: /workspace/rebuild_pointnet2_sm80.sh
+
+  [17] p2_tool_chain.py    GPU fractions synced to run_eval.sh              OUR BUG
+                           The script's TOOL_CONFIGS still carried the
+                           SUPERSEDED interim split (vlm/roborefer 0.55,
+                           sam2/depth 0.15) even though its docstring claims to
+                           be copied verbatim from run_eval.sh; it was never
+                           updated when 910f6f5d moved to the final split.
+                           On 48 GB this was survivable (Molmo 33 + DepthPro
+                           12.5 + SAM2 1.2 just fits 48), so it passed through
+                           all of P2 unnoticed. On 40 GB it OOMs on the first
+                           depth call. Now 0.6/1.0/0.2/0.4/0.05/0/0.1 = 3.0,
+                           identical to run_eval.sh.
+
+  [18] NOT a deviation      the P3 dump patch was already on the remote;     STALE CHECKOUT
+       -- a stale checkout  this host's checkout was one commit behind.
+                            On arrival SpaceTools-RL's local branch ended at
+                            ef2c7580 (patch 0007) and ray_trainer.py was
+                            byte-identical to upstream 54270e82, so the P3
+                            uid/num_turns dump was NOT in the working tree.
+                            It had in fact been committed AND pushed from the
+                            A6000 host as 8d193ec3 -- the same SHA that heads
+                            patches/rl/0008. The volume's copy simply lagged
+                            the remote by that commit.
+                            The P4 handoff's very first repo instruction is
+                            "git pull all of them first". That could not run:
+                            the remotes were https:// and this host had no
+                            GitHub credentials (see [19]), so `git pull` died
+                            with "could not read Username" and the stale
+                            checkout went unnoticed until Phase M looked.
+                            Resolved by switching remotes to SSH and resetting
+                            the branch onto mine/repro-4xa6000. Branch head is
+                            now 8d193ec3, 8 commits, tree identical to remote.
+                            NOTE for anyone reading ray_trainer.py: sample_uids
+                            and sample_turns appear throughout it even WITHOUT
+                            the patch -- they are verl's own variables, used for
+                            val-aux/num_turns metrics. What 0008 adds is passing
+                            them into _dump_generations. Grep says "applied";
+                            `git diff 54270e82..HEAD -- ray_trainer.py` and
+                            `git apply --check` are the checks that tell truth.
+
+  [19] git remotes          https:// -> git@github.com: on all five repos   HOST ADAPTATION
+                            GitHub credentials lived on the previous host's
+                            CONTAINER disk, which a recycle wipes, so every
+                            fetch/pull/push failed with "could not read
+                            Username". No token was needed in the end:
+                            /root/.ssh/id_ed25519 (key comment
+                            vast-instance-c17760dabb09) is already authorised on
+                            the qyYue1389 account, so only the remote scheme was
+                            wrong. All five repos now fetch.
+                            CAVEAT: that key is on /root, i.e. CONTAINER disk.
+                            It does not survive a recycle. If this instance is
+                            recycled the same failure returns.
+
+  [20] run_eval.sh          actor.fsdp_config.model_dtype=bf16          HARDWARE ADAPTATION
+                            EVAL ONLY. verl defaults the FSDP master copy to
+                            fp32 (workers/config/engine.py:238); at 4.066 B
+                            params that is 16.3 GB, and the policy card OOMed at
+                            rollout_mode()'s weight push with 19 MiB free.
+                            bf16 is 8.1 GB; GPU3 peak fell 39.5 -> 25.0 GB.
+                            Numerically inert for eval: the checkpoint is stored
+                            BF16 (825/825 tensors, 2.00 bytes/param, read from
+                            the safetensors headers), verl upcasts it to the
+                            fp32 master and downcasts it again to hand to sglang
+                            which runs bf16, and val_only has no optimizer step.
+                            bf16 -> fp32 -> bf16 is the identity -- VERIFIED
+                            on the actual weights, not argued: applying both
+                            paths to all 825 tensors / 4.066 B elements gives 0
+                            differing elements, max abs diff 0.000e+00.
+                            Also verified that the FSDP model never runs a
+                            forward pass in eval (calculate_log_probs: False,
+                            recompute_log_prob: False; sglang does all
+                            generation), so holding the weights is its only role
+                            and model_dtype cannot reach the numbers.
+                            RULED OUT END-TO-END 2026-08-30 (A100-80GB, P6 exp F).
+                            Until now this was argued plus a weight-level check;
+                            40 GB could not hold the fp32 master, so the run had
+                            never been done. It has now: blinkdepth with the flag
+                            simply removed (model_dtype falling through to the
+                            engine/fsdp.yaml:33 default fp32 -- confirmed in the
+                            resolved config, in the absence of any bf16 string in
+                            the log, and by FlashAttention warning that the model
+                            is torch.float32) scored 107/124. That is inside the
+                            107-109 band and inside the 106-109 spread the bf16
+                            runs themselves show. All 12 of the always-wrong hard
+                            core reproduced under fp32; the six-run stable ceiling
+                            stayed 112/124 = 90.32%. Both arms ran at
+                            gpu_memory_utilization=0.25 so dtype was the only
+                            variable that moved.
+                            *** THE PARAGRAPH ABOVE IS RETRACTED. Same day, two
+                            more fp32 runs. Keeping the wrong version in place so
+                            the correction is legible. ***
+                            NOT RULED OUT. fp32 {107, 105, 105} against bf16
+                            {108, 109} at the same gpu_memory_utilization=0.25.
+                            The two ranges DO NOT OVERLAP. The single 107 that the
+                            paragraph above generalised from was the TOP of fp32's
+                            own range, and it was read as "inside the band" and
+                            written up as an end-to-end exclusion.
+                            What the data supports, stated at its real strength:
+                              - five values {105,105,107,108,109}; if they came
+                                from one distribution the chance the two bf16 runs
+                                take the top two places is 1/C(5,2) = 0.1.
+                                Suggestive, NOT significant.
+                              - structurally weak: exactly ONE sample (49) is
+                                always-right under bf16 and always-wrong under
+                                fp32; zero go the other way. Not a block of
+                                samples, one sample.
+                              - fp32 is not deterministic either: its three runs
+                                differ from each other by 4-6 samples.
+                            So the honest statement is not "fp32 is worse", it is
+                            "the exclusion claimed above is not supported and is
+                            withdrawn". Settling it needs several more runs on
+                            both arms -- a separate budget decision.
+                            The weight-level argument still stands: the checkpoint
+                            is BF16, bf16 -> fp32 -> bf16 is the identity, 825/825
+                            tensors verified. What that argument assumed, and what
+                            the measurement now questions, is that WEIGHTS ARE THE
+                            ONLY PATH from model_dtype to the numbers. Leading
+                            hypothesis for a second path, UNVERIFIED: the fp32
+                            master occupies ~8 GB more (GPU3 peak 33.8 vs 30.4 GB),
+                            allocation and fragmentation differ, sglang's batch
+                            composition changes, near-tie samples flip -- the same
+                            mechanism as [23], not a weight-level effect.
+                            MUST NOT be carried into training (P7).
+                            NOT the knob, all measured: gpu_memory_utilization
+                            0.5->0.35 (byte-identical failure; TorchMemorySaver
+                            has already released the KV cache by then),
+                            param_offload=True (31.46->31.42 GiB),
+                            update_weights_bucket_megabytes 2048->512 (freed
+                            1.5 GB, card still filled at 39.5 GB).
+
+  [21] FOUND, NOT FIXED       analysis/analyze_grasp_result.py:248        UPSTREAM BUG
+                            classifies a bopgrasp sample as a tool error with
+                            ONE exact substring match:
+                              "Error: RuntimeError: No collision-free grasps found."
+                            and never checks for the grasp tool's other failure
+                            exit, "Top-down filtering removed all grasps.".
+                            11 of 60 samples were silently counted as successes
+                            in P4 run1. Almost certainly the origin of P2's
+                            27/33 split, which V1 had already shown to be wrong
+                            (the truth is 19/41) without knowing why.
+                            LEFT UNPATCHED ON PURPOSE: the paper's MACE/SR come
+                            from this script's OVERALL figures, which the bug
+                            does not touch -- it only mis-splits the succeeded /
+                            errored groups. Patching it would change a number
+                            P5 has to compare against the paper. The corrected
+                            split is computed separately in P4_RESULTS.md and
+                            the headroom lead restated there (SR ~90% for the
+                            succeeded group, not 74%).
+
+  [22] Phase M / P4 tooling  tools/p4_run.sh, tools/p4_check.sh,          OURS, ADDITIVE
+                            tools/gputrace.sh,
+                            tools/rebuild_pointnet2_sm80.sh
+                            The scripts P4 was actually executed with and the
+                            recipe that rebuilt pointnet2_ops for sm_80. They
+                            assume this instance's /workspace layout (env.sh,
+                            eval-benchmarks, SpaceTools/, experiments/p4).
+                            p4_run.sh refuses to overwrite an existing dump and
+                            refuses a run label that is not run<N> -- both guards
+                            were added after the mistakes they prevent.
+
+  [23] run_eval.sh          rollout.gpu_memory_utilization 0.5 -> 0.25  HARDWARE ADAPTATION
+                            P6 GPU SESSION ONLY, A100-SXM4-80GB, 2026-08-30.
+                            Applies to policy runs made on the 80 GB machine.
+                            P4's own numbers were produced at 0.5 on 40 GB cards
+                            and are untouched by this.
+                            The knob is a STATIC FRACTION OF TOTAL CARD MEMORY,
+                            so the same 0.5 means a 20 GB KV cache pool on a
+                            40 GB card and a 40 GB pool on an 80 GB one. Measured
+                            policy-card peak: 25.6 GB (40G, 0.5) -> 46.8 GB
+                            (80G, 0.5) -> 30.4 GB (80G, 0.25). The three tool
+                            cards were byte-identical across all of these (Molmo
+                            34.6, DepthPro card 25.7, roborefer card ~21), so the
+                            policy card is the only thing the hardware move
+                            touched.
+                            WHY IT MATTERS: pool size changes how many sequences
+                            batch together, which changes floating-point reduction
+                            order -- the mechanism this project had already
+                            identified as the sole source of run-to-run movement
+                            on near-tie samples. The 80 GB card is therefore NOT
+                            a numerically neutral swap on the policy side, which
+                            P6_GPU_HANDOFF.md §1.5 did not anticipate (it says
+                            the knob "只是更宽松", true for fitting, silent on
+                            the numerical consequence).
+                            EVIDENCE: blinkdepth scored 106/124 at 80G/0.5 --
+                            below the 107-109 band the 40 GB machine produced --
+                            and 108 and 109 at 80G/0.25, inside it. Samples 32,
+                            72 and 100 were wrong only in the 0.5 run and correct
+                            in all four other runs. Sample 69 hit the 8-turn
+                            ceiling in BOTH 0.25 runs and in NEITHER 0.5 run: a
+                            reproducible, config-linked difference that the score
+                            alone does not show.
+                            DECISION: policy runs on 80 GB use 0.25 because that
+                            reproduces P4's POOL SIZE. It does not rest on 0.5
+                            having been shown worse.
+                            HONEST LIMITS: causality is NOT established -- n=1 at
+                            80G/0.5, n=2 at 80G/0.25, and the near-tie population
+                            is ~12 samples, so single runs can land anywhere in
+                            106-109. And 0.25 does NOT restore 40 GB behaviour
+                            exactly: P4's full 2121 samples had hit_max_turns=0 at
+                            40G/0.5, while blinkdepth alone showed 1-2 at 80G/0.25,
+                            so sglang's other derived sizings evidently do not
+                            track the pool alone. Bit-exact reproduction across
+                            card sizes was never on offer; what reproduces is the
+                            stable ceiling (see P5_RESULTS.md §4).
+                            EVAL_GPUS deliberately NOT raised to 2 -- that would
+                            require recomputing the tool fractions, and Ray
+                            bin-packs rather than spreads, which is the failure
+                            mode behind the 68 OOMs. See handoff §1.5.
+
+  NOT changed, and deliberately so:
+   - run_eval.sh needs NO edit. The fractional budget the P4 handoff specifies
+     for 40 GB cards (vlm 1.0 | roborefer 0.6 + sam2 2x0.2 | depth 2x0.4 +
+     bbox 2x0.05 + grasp 0.1 | vision_ops 0; tools 3.0 + policy 1.0 = 4.0) is
+     byte-identical to what 910f6f5d already committed for the A6000.
+   - EVAL_GPUS stays 1, NUM_GPUS stays 4 (env.sh).
+   - No num_actors touched; all replica counts remain at upstream defaults.
+   - dtype stays 'auto' (Molmo fp32). See [9]: buying headroom with fp16 would
+     be a fidelity deviation, not a fix.
+   - flash-attn in spacetools-rl needed NO rebuild. The A6000 source build
+     produced 72 sm_80 cubins (not sm_86 as the handoff feared), which is this
+     machine's native arch. spacetools-tool-roborefer uses the official
+     multi-arch wheel (sm_80/90/100/120).
+
+  Verified across all five environments: 66 compiled extensions scanned with
+  cuobjdump; every one carries an sm_80 cubin. pointnet2_ops was the only
+  sm_80-incapable extension on the machine.
+
+  Phase M measurements (Toolshed up, all GPU tools warmed, otherwise idle):
+    GPU0  21020 MiB (20.5 GB)  RoboRefer 18.4 + SAM2 1.3 + SAM2 0.8
+    GPU1  35337 MiB (34.5 GB)  Molmo, alone on the card  -> 86.3% of 40 GB
+    GPU2  17931 MiB (17.5 GB)  DepthPro 12.2 + 4.0 + 1.3
+    GPU3      4 MiB            free, reserved for the policy
+    ray status: 3.0/4.0 GPU
+  Component footprints match P2's A6000 table one-to-one (RoboRefer 18.6,
+  Molmo 33.0, DepthPro 12.5, SAM2 1.2), so the grouping is as designed.
+  CAVEAT ON METHOD: nvidia-smi reports HOST pids and this container cannot see
+  its own host pids (/proc/<pid>/status NSpid has a single entry), so per-process
+  rows cannot be joined to Ray actors from inside. Placement is therefore
+  established from three agreeing lines of evidence -- ray status 3.0/4.0, three
+  occupied cards with process counts 3/1/3 matching the three groups, and
+  per-process footprints that identify each model uniquely -- not from a direct
+  pid join and not from the fractions alone.
+  OPEN, for V3: Molmo sits at 34.5 GB after ONE detect_one on a 1.36 MP image.
+  That is above the 33.0 GB in P2's table and leaves 5.6 GB. robospatial images
+  are 2.76 MP. Note PyTorch's caching allocator does not return freed blocks, so
+  nvidia-smi reads a high-water mark of allocator reservation -- which is exactly
+  the right instrument for V3, but means 33.0 was never a pure resting figure.

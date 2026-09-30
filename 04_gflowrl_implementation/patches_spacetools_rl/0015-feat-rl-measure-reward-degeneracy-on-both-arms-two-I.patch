@@ -1,0 +1,132 @@
+From 3e935091cac94897ab84749989327941384a972c Mon Sep 17 00:00:00 2001
+From: qyYue1389 <qyYue1389@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 05:37:20 +0000
+Subject: [PATCH 15/19] feat(rl): measure reward degeneracy on both arms; two
+ IS-weight guards
+
+Reward degeneracy is the whole reason C-prime might beat GRPO, and we have
+never measured it where it matters.  The 56.9% / 75.8% figures P7 keeps quoting
+come from p6/passk, i.e. three EVAL benchmarks sampled from the SFT checkpoint.
+Step 4 trains on spacetools-rlfulltools, where the rate may differ and will
+drift as training proceeds.  It cannot be extrapolated from what we have.
+
+compute_group_degeneracy_metrics() reports the group fraction, the rollout
+fraction (the sampling budget actually thrown away), and the mean within-group
+reward range.  The call site sits after compute_advantage and BEFORE the
+gflowrl branch, so both arms record it -- a number from one arm alone proves
+nothing about the difference between them.  p7_config_check.py asserts that
+placement.  Degeneracy is tested as an exact within-group range of zero rather
+than a variance, since pointing and IoU rewards are continuous.
+
+Read-only: no gradient, no effect on training.
+
+Two additions to the GFlowRL loss metrics, neither changing the math:
+
+- is_weight_min and is_weight_collapsed_frac.  Eq. 8's w is a WHOLE-SEQUENCE
+  ratio, exp() of a sum over ~1e3 tokens, clipped on one side only.  With the
+  current batch configuration on_policy holds, old_log_prob is log_prob
+  detached, and w is identically 1 -- so these read 1.0 and 0.0 and are an
+  ASSERTION, not a diagnostic.  Lowering ppo_mini_batch_size to save memory
+  flips on_policy, and then a per-token drift of -3e-3 puts a sequence's w near
+  0.02: still in the batch, contributing nothing, effective batch shrinking
+  silently.  These two are how that gets noticed.
+
+- actor/ppo_kl was a ratio of two means (mean sequence log-ratio over mean
+  length), which is biased when length correlates with drift and is not what
+  every other registered loss in core_algos reports under that key.  Now the
+  same per-token masked mean they use, so the two arms are comparable on it.
+
+---
+ verl/trainer/ppo/core_algos.py  | 11 +++++++-
+ verl/trainer/ppo/ray_trainer.py | 45 +++++++++++++++++++++++++++++++++
+ 2 files changed, 55 insertions(+), 1 deletion(-)
+
+diff --git a/verl/trainer/ppo/core_algos.py b/verl/trainer/ppo/core_algos.py
+index 8a5ea211..0d75b16d 100644
+--- a/verl/trainer/ppo/core_algos.py
++++ b/verl/trainer/ppo/core_algos.py
+@@ -2284,8 +2284,17 @@ def compute_policy_loss_gflowrl(
+         "gflowrl/delta_abs_mean": delta.detach().abs().mean().item(),
+         "gflowrl/log_ratio_abs_mean": log_ratio.detach().abs().mean().item(),
+         "gflowrl/is_weight_mean": w.mean().item(),
++        # `w` is a WHOLE-SEQUENCE ratio, exp() of a sum over ~1e3 tokens, and Eq. 8
++        # clips it on one side only.  A per-token drift of -1e-3 already puts it near
++        # 0.3 at |y|=1258, -3e-2 puts it at ~0.02: the sequence stays in the batch and
++        # contributes nothing.  clipped_frac only sees the upper side, so watch these
++        # two for the silent collapse of the effective batch.
+         "gflowrl/is_weight_clipped_frac": (w >= 1.0 + eps_is).float().mean().item(),
+-        "actor/ppo_kl": (-log_ratio.detach().mean() / denom.float().mean()).item(),
++        "gflowrl/is_weight_min": w.min().item(),
++        "gflowrl/is_weight_collapsed_frac": (w < 0.1).float().mean().item(),
++        # same definition as every other registered loss in this file: a per-token
++        # mean, not a ratio of two means, so the two arms stay comparable.
++        "actor/ppo_kl": verl_F.masked_mean(-(log_prob - old_log_prob).detach(), response_mask).item(),
+     }
+     return pg_loss, metrics
+ 
+diff --git a/verl/trainer/ppo/ray_trainer.py b/verl/trainer/ppo/ray_trainer.py
+index b331bbff..c1523258 100644
+--- a/verl/trainer/ppo/ray_trainer.py
++++ b/verl/trainer/ppo/ray_trainer.py
+@@ -218,6 +218,47 @@ def compute_advantage(
+     return data
+ 
+ 
++def compute_group_degeneracy_metrics(data: DataProto) -> dict:
++    """组内奖励简并率 —— 两臂都记,与 loss_mode 无关。
++
++    简并组 = 组内每条 rollout 的 r 完全相同。GRPO 在这些组上 advantage 恒为 0
++    (r - mean = 0),整组的采样与工具调用白花;C-prime 在这些组上仍出梯度,
++    信号来自 drift 项而非 reward(records/P7_STEP_C12_RESULTS.md 3)。
++
++    为什么必须两臂都记:P7 此前引用的 56.9% / 75.8% 是在**三个 eval benchmark**
++    上、用 SFT 起点测的,训练分布 spacetools-rlfulltools 上的真实值从未测过,
++    也无法外推。这几个指标把那个盲点变成实测值,而且顺便是 C-prime 机制论证的
++    直接证据:"C-prime 在这 X% 的组上出梯度而 GRPO 不出",X 从这里读。
++
++    判据用组内极差 == 0,不是方差 —— 连续奖励(pointing / IoU)下极差是精确判据。
++    """
++    if "token_level_scores" not in data.batch or "uid" not in data.non_tensor_batch:
++        return {}
++    r = data.batch["token_level_scores"].sum(dim=-1).float()
++    uid = np.asarray(data.non_tensor_batch["uid"])
++    _, gidx_np = np.unique(uid, return_inverse=True)
++    gidx = torch.as_tensor(gidx_np, dtype=torch.long, device=r.device)
++    n_groups = int(gidx.max().item()) + 1 if gidx.numel() else 0
++    if n_groups == 0:
++        return {}
++
++    gmax = torch.zeros(n_groups, dtype=torch.float32, device=r.device).scatter_reduce_(
++        0, gidx, r, reduce="amax", include_self=False)
++    gmin = torch.zeros(n_groups, dtype=torch.float32, device=r.device).scatter_reduce_(
++        0, gidx, r, reduce="amin", include_self=False)
++    degen = (gmax - gmin) == 0                      # 每组一个 bool
++    cnts = torch.zeros(n_groups, dtype=torch.float32, device=r.device).index_add_(
++        0, gidx, torch.ones_like(r))
++
++    return {
++        # 简并组占全部组的比例（P7 此前在 eval 上测到 robospatial 56.9% / blinkdepth 75.8%）
++        "reward/degenerate_group_frac": float(degen.float().mean()),
++        # 落在简并组里的 rollout 占比 —— 这才是"白花掉的采样预算"
++        "reward/degenerate_rollout_frac": float((cnts * degen.float()).sum() / cnts.sum()),
++        "reward/group_range_mean": float((gmax - gmin).mean()),
++    }
++
++
+ def compute_gflowrl_flow_gap(
+     data: DataProto,
+     beta: float = 8.0,
+@@ -1817,6 +1858,10 @@ class RayPPOTrainer:
+                             config=self.config.algorithm,
+                         )
+ 
++                        # 组内奖励简并率。两臂都记,与 loss_mode 无关 —— 放在 gflowrl
++                        # 分支之前就是为了这个:只有一臂有这个数的话它什么也证明不了。
++                        metrics.update(compute_group_degeneracy_metrics(batch))
++
+                         # GFlowRL replaces the advantage with the flow gap g~ (Eq. 4/6/7).
+                         # compute_advantage still runs first so its metrics stay comparable.
+                         _actor_cfg = self.config.actor_rollout_ref.actor
+-- 
+2.34.1
+

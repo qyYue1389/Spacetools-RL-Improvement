@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# P7 C' 冒烟:3 步,不存 checkpoint,不跑 validation。
+# 目的是拿四个数(交接 §9 阶段 A):
+#   1) 每步墙钟时间   2) rollout<->update 之间显存是否真被释放
+#   3) 工具排队占比   4) reward/degenerate_group_frac 的真实值
+#
+# 输出目录单独一个 p7_cprime_smoke,但 rl_data / eval_data 软链到正式目录,
+# 这样 run_rl.sh 里那段 os.path.isfile 检查会直接命中,不会又去 HF 重下 5425 个文件
+# (HF 是 5000 resolve/5min 的配额,重下一定撞 429)。
+set -uo pipefail
+mkdir -p /root/logs
+exec >> /root/logs/full_train.log 2>&1
+mark(){ echo "$1" > /root/logs/status_full; }
+say(){ echo "[$(date +%H:%M:%S)] $*"; }
+
+EXP=/workspace/exp/p7_cprime
+SMOKE=/workspace/exp/p7_cprime
+
+mark FULL_START
+say "════════ P7 C-prime 全量 86 步(单 seed) ════════"
+
+mkdir -p "$SMOKE"
+say "数据软链: $(ls -l "$SMOKE" | tail -2)"
+
+eval "$(grep -E '^[[:space:]]*export[[:space:]]+HF_TOKEN=' /root/.bashrc | tail -1)"
+export HF_HOME=/workspace/hf
+export _CONDA_ROOT=/opt/conda-st
+source /opt/conda-st/etc/profile.d/conda.sh
+# run_rl.sh 是用 bash 另起进程跑的,shell 函数传不过去(conda activate 是函数),
+# 所以靠 BASH_ENV 让那个非交互 bash 自己 source 一遍 conda.sh。
+export BASH_ENV=/opt/conda-st/etc/profile.d/conda.sh
+
+# ── NCCL:这台机的 PCIe P2P 是坏的 ──────────────────────────────────────
+# 症状:trainer 起来后第一个 collective 就永远不完成,10 分钟后 watchdog 报
+#   "Last enqueued NCCL work: 1, last completed NCCL work: -1"
+# 用 4 卡 all-reduce 最小探针(/root/nprobe.sh)逐个试出来的:
+#   A 默认                        -> 40s 超时
+#   B NCCL_IB_DISABLE=1           -> 40s 超时   (所以不是 IB/RoCE 的事)
+#   C B + NCCL_SOCKET_IFNAME=eth0 -> 40s 超时
+#   D B + NCCL_P2P_DISABLE=1      -> 7 秒 ALLREDUCE_OK   <<<< 就是它
+#   E B + NCCL_SHM_DISABLE=1      -> 40s 超时   (所以 SHM 正是能用的那条路)
+# nvidia-smi topo -p2p r 全是 OK,但实际 P2P 传输挂死 —— 容器里 ACS/IOMMU
+# 没关的典型表现。关掉 P2P 后 NCCL 走共享内存(过主机内存中转),能用但更慢,
+# 所以冒烟第 1 个数(每步墙钟)必须在这个前提下读。
+# IB_DISABLE 保留:/sys/class/infiniband 有 RoCE 设备而 /dev/infiniband 不存在,
+# B 证明它不是本次的病因,但留着不花钱。
+export NCCL_P2P_DISABLE=1
+export NCCL_IB_DISABLE=1
+export NCCL_DEBUG=WARN
+
+export SFT_CHECKPOINT=/workspace/checkpoints/sft-ckpt
+export ROBOREFER_MODEL=/workspace/checkpoints/RoboRefer-8B-SFT
+export DEPTH_CHECKPOINT=/workspace/checkpoints/depth_pro.pt
+export OUTPUT_DIR="$SMOKE"
+export VERSION=v1
+export GPUS_PER_NODE=8
+export TOOL_GPUS=4
+export TRAIN_GPUS=4
+export SAVE_FREQ=5
+export GF_VARIANT=cprime
+
+say "SFT_CHECKPOINT  = $SFT_CHECKPOINT"
+say "ROBOREFER_MODEL = $ROBOREFER_MODEL"
+say "DEPTH_CHECKPOINT= $DEPTH_CHECKPOINT"
+say "OUTPUT_DIR      = $OUTPUT_DIR"
+say "GPU 划分         = 工具 $TOOL_GPUS / 训练 $TRAIN_GPUS  (共 $GPUS_PER_NODE)"
+say "变体             = $GF_VARIANT  (beta 8.0 · eps 0.2/0.28 · eps_is 0.2)"
+
+mark FULL_RUN
+say "──── 启动 ────"
+bash /opt/spacetools/SpaceTools-RL/examples/toolshed/run_rl_gflowrl.sh \
+    trainer.test_freq=-1 \
+    trainer.val_before_train=False
+RC=$?
+say "run_rl_gflowrl.sh 退出码 = $RC"
+
+mark FULL_REPORT
+say "════════ 四个数 ════════"
+say "── 1. 每步墙钟(timing/step 或 step 行)"
+grep -oE "step:[0-9]+ - .*" /root/logs/full_train.log | tail -5
+grep -oE "timing_s/step:[0-9.]+" /root/logs/full_train.log | tail -5
+say "── 2. 显存(perf/max_memory_allocated_gb 等)"
+grep -oE "perf/[a-z_]*memory[a-z_]*:[0-9.]+" /root/logs/full_train.log | tail -12
+say "── 3. 工具排队 / rollout 占比"
+grep -oE "timing_s/(gen|rollout|tool[a-z_]*):[0-9.]+" /root/logs/full_train.log | tail -12
+say "── 4. 简并组比例(GRPO 会在这些组上给 0 梯度,C-prime 不会)"
+grep -oE "reward/degenerate_(group|rollout)_frac:[0-9.]+" /root/logs/full_train.log | tail -8
+grep -oE "reward/group_range_mean:[0-9.]+" /root/logs/full_train.log | tail -4
+say "── 附:gflowrl 自己的指标"
+grep -oE "gflowrl/[a-z_]+:[0-9.e+-]+" /root/logs/full_train.log | tail -20
+say "── 附:工具 actor 缩放那行(应为 demand 3.70)"
+grep -m2 "scaled tool actors by" /root/logs/full_train.log | cat
+say "── 附:GPU 划分确认"
+grep -m2 "GPU split:" /root/logs/full_train.log | cat
+
+if [ "$RC" -eq 0 ]; then mark FULL_DONE_PASS; else mark FULL_DONE_FAIL; fi
+say "════════ 冒烟结束(退出码 $RC)════════"

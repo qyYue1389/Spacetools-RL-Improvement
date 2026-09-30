@@ -1,0 +1,9 @@
+============================================================
+FILE: /workspace/exp/p7_eval_step85_fix2/bopgrasp/0.jsonl
+============================================================
+Overall mean centre-angle score: 44.7875 over 60 samples
+Overall > 40 ratio: 55.00%
+
+Grouped statistics:
+  Non-error samples: 28 | mean: 49.6112 | >40 ratio: 78.57%
+  Error samples    : 32 | mean: 40.5668 | >40 ratio: 34.38%

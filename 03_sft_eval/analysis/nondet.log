@@ -1,0 +1,8 @@
+=== START 2026-09-12T00:36:03+00:00
+  n=350
+  fully identical (call+response+answer) : 289
+  C different tool_call    (policy, pre-tool)  : 11
+  B same call, diff response (roborefer side)  : 0
+  A same call+response, diff answer (policy)   : 50
+  B sample indices (first 10): []
+=== DONE 2026-09-12T00:36:03+00:00

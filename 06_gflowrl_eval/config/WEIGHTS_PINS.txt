@@ -1,0 +1,40 @@
+# 权重版本钉死表  2026-09-10T10:16:45Z
+# 权重不在环境包里(79G,压不动、搬比下慢),用 FETCH_WEIGHTS.sh 按这些版本重下。
+
+## HF 缓存里的 repo(kind / repo / revision / GiB)
+  dataset	siyich/spacetools-eval-benchmarks	1d539ac935872c7aa712c85a77bf4b0cb469c8e8	0.5
+  model	Qwen/Qwen2.5-VL-3B-Instruct	66285546d2b821cf421d4f5eb2576359d3770cd3	14.0
+  model	Zhoues/RoboRefer-8B-SFT	bd04070786084c624156194d89333c375b274b28	31.9
+  model	allenai/Molmo-7B-D-0924	cab33fb7f1a40091911f81165f8481920621948f	59.8
+  model	facebook/sam2.1-hiera-small	ee5bba1d82bb8749febdf90f45e84b687142ba03	0.3
+
+## GraspGenModels(git-lfs)
+  origin: https://huggingface.co/adithyamurali/GraspGenModels
+  commit: ec1ccbb5eec0680db669246ac312a3636f16ee43
+
+## depth_pro.pt(Apple CDN)
+  url:    https://ml-site.cdn-apple.com/models/depth-pro/depth_pro.pt
+  sha256: 3eb35ca68168ad3d14cb150f8947a4edf85589941661fdb2686259c80685c0ce
+  bytes:  1904446787
+
+## 注意
+  · RoboRefer-8B-SFT 在 hf 缓存和 checkpoints/ 里各有一份(共 32G),重下只需一份
+  · 你自己训练的 SFT ckpt 不在这台机器上,要单独填进 FETCH_WEIGHTS.sh 的 MY_SFT_REPO
+
+## 体积更正(2026-09-10)
+#  上面 PIN 那几行的 GiB 列是**错的,约为真实值的两倍**:
+#  HF 缓存里 snapshots/ 全是指向 blobs/ 的符号链接,我的扫描脚本用
+#  os.path.getsize 遍历,而它跟随符号链接,于是每个 blob 被算了两遍。
+#  revision 列是读 refs/ 文件拿的,不受影响,可以照用。
+#  下面是 du 给出的真实占用:
+#    283M	/workspace/hf/hub/datasets--siyich--spacetools-eval-benchmarks
+#    7.1G	/workspace/hf/hub/models--Qwen--Qwen2.5-VL-3B-Instruct
+#    16G	/workspace/hf/hub/models--Zhoues--RoboRefer-8B-SFT
+#    30G	/workspace/hf/hub/models--allenai--Molmo-7B-D-0924
+#    180M	/workspace/hf/hub/models--facebook--sam2.1-hiera-small
+#    512	/workspace/hf/hub/version.txt
+#    ---
+#    54G	/workspace/hf
+#    26G	/workspace/checkpoints
+#  注:RoboRefer-8B-SFT 在 hf 缓存和 checkpoints/ 里各有一份(共约 32G),
+#      新机器上重下只需要一份,FETCH_WEIGHTS.sh 已经是这么做的。

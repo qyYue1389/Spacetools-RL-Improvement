@@ -1,0 +1,39 @@
+=== START 2026-09-12T01:02:19+00:00
+--- stale ray temp state
+total 48
+drwxrwxrwx   8 root root  4096 Sep 12 01:01 .
+drwxr-xr-x 230 root root 12288 Sep 12 01:01 ..
+-rw-r--r--   1 root root   113 Sep 12 01:01 prom_metrics_service_discovery.json
+-rw-r--r--   1 root root    19 Sep 12 00:04 ray_current_cluster
+drwxrwxrwx   5 root root  4096 Sep 11 22:54 session_2026-09-11_22-53-57_641369_39312
+drwxrwxrwx   5 root root  4096 Sep 11 23:04 session_2026-09-11_23-03-51_492238_42570
+drwxrwxrwx   5 root root  4096 Sep 11 23:07 session_2026-09-11_23-06-06_237658_44318
+--- RAY_ADDRESS in env?
+  (unset)
+
+--- clearing /root/tmp/ray
+tmp036cvtdo
+tmp04mmtdv4
+tmp05y2sh7s
+tmp0dbdskchwandb-artifacts
+tmp0k7_7b4x
+
+--- re-running item 3
+############ 跨环境工具链测试 ############  01:02:19
+--- 结果 ---
+  DRIVER numpy 1.26.4
+  ROUTER_OK 33.2 秒 · 工具: ['vision_ops', 'bounding_box', 'sam2', 'grasp_generator', 'depth_estimator']
+  STEP_OK   sam2             (spacetools-tool-vlm) -> Segmented object at normalized coords (0.500, 0.500) with IoU score: 0.784. Use $segmentation_mask (boolean array, 240x240) to reference it.
+     sam2 产出的 mask: ndarray (240, 240) bool
+  STEP_OK   depth_estimator  (spacetools-tool-vlm) -> Estimated depth map for 240x240 image. Focal length: 600.0px. Depth range: 0.39m to 0.44m (mean: 0.40m). Use $depth_map (numpy array, 240x240) to refe
+     depth 产出的 depth_map: ndarray (240, 240) float32 · focal: 599.982177734375
+  STEP_OK   bounding_box     (spacetools-tool-bbox) -> Oriented bounding box computed from 1994/2000 points.Corners in 3D: [[0.1, 0.101, 0.699], [0.1, 0.099, 0.498], [0.1, -0.1, 0.701], [-0.1, 0.101, 0.699
+  STEP_OK   vision_ops       (spacetools-tool-bbox) -> Pixel value at (0.500, 0.500) is 0.3959848880767822
+  STEP_INFO grasp_generator (spacetools-tool-graspgen) -> RuntimeError: cannot reshape tensor of 0 elements into shape [-1, 0, 3] because the unspecified dimension size -1 can be any value and is ambiguous
+  CHAIN_RESULT OK
+
+--- 判据 ---
+  链上失败环数: 0
+  ✓ 跨环境工具链通了
+CHAIN_EXIT=0
+=== DONE 2026-09-12T01:04:25+00:00

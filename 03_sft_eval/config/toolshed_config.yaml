@@ -1,0 +1,357 @@
+tools:
+- class_name: toolshed.integration.verl.ToolshedMethodTool
+  config:
+    type: native
+    router_name: toolshed_router
+    namespace: toolshed
+    function_name: vision_ops.index_at
+    timeout: 30
+  tool_schema:
+    type: function
+    function:
+      name: vision_ops.index_at
+      description: 'Get the pixel value in the numpy ndarray `data` at the given normalized
+        coordinates (u,v).
+
+        Note the input arguments are called `data`, `u`, `v`.
+
+
+        Text output: Information about the pixel value at the given coordinates.'
+      parameters:
+        type: object
+        properties:
+          data:
+            type: string
+            description: Numpy ndarray of shape (H, W) or (H, W, C), or PIL Image
+          u:
+            type: number
+            description: Normalized x-coordinate in [0, 1]
+          v:
+            type: number
+            description: Normalized y-coordinate in [0, 1]
+        required:
+        - data
+        - u
+        - v
+- class_name: toolshed.integration.verl.ToolshedMethodTool
+  config:
+    type: native
+    router_name: toolshed_router
+    namespace: toolshed
+    function_name: bounding_box.compute_bbox
+    timeout: 30
+  tool_schema:
+    type: function
+    function:
+      name: bounding_box.compute_bbox
+      description: "Compute an oriented bounding box for a masked subset of a point\
+        \ cloud.\nText output: Summary containing number of input points, the point\
+        \ coordinates in 3d and 2d,\nmask shape, box extents, and edges.\nStored variables:\n\
+        \ - $obb_corners_3d (8\xD73 list of lists, meters in opencv camera frame)\n\
+        \ - $obb_corners_2d (8\xD72 list of lists, normalized image coordinates)\n\
+        \ - $extent (3-element ndarray, extent of the bounding box in meters)\n -\
+        \ $edges (list of pairs of integers, edges of the bounding box defined by\
+        \ the indices of the corners)"
+      parameters:
+        type: object
+        properties:
+          point_cloud:
+            type: string
+            description: scene point cloud, np.ndarray of shape (N, 3) with float
+              values.
+          mask:
+            type: string
+            description: np.ndarray of shape (H, W) with boolean values segmenting
+              the target object. Dimensions are used for camera projection.
+          focal_length_px:
+            type: number
+            description: Camera focal length in pixels (square pixels assumed).
+        required:
+        - point_cloud
+        - mask
+        - focal_length_px
+- class_name: toolshed.integration.verl.ToolshedMethodTool
+  config:
+    type: native
+    router_name: toolshed_router
+    namespace: toolshed
+    function_name: sam2.segment_from_point
+    timeout: 30
+  tool_schema:
+    type: function
+    function:
+      name: sam2.segment_from_point
+      description: 'Segment the object at normalized coordinates.
+
+        Text output: Summary of segmentation including mask dimensions and IoU (Intersection
+        over Union) confidence score.
+
+        Stored variables: $segmentation_mask: Boolean array of shape (H, W) where
+        True indicates segmented pixels'
+      parameters:
+        type: object
+        properties:
+          x:
+            type: number
+            description: X-coordinate in normalized range [0, 1].
+          y:
+            type: number
+            description: Y-coordinate in normalized range [0, 1].
+          image_index:
+            type: integer
+            description: 0-based index of an image already present in the conversation.
+              Use this to reference an inline image by its order (0 = first, 1 = second,
+              ...).
+        required:
+        - x
+        - y
+        - image_index
+- class_name: toolshed.integration.verl.ToolshedMethodTool
+  config:
+    type: native
+    router_name: toolshed_router
+    namespace: toolshed
+    function_name: sam2.segment_from_points
+    timeout: 30
+  tool_schema:
+    type: function
+    function:
+      name: sam2.segment_from_points
+      description: 'Segment an object using multiple normalized coordinates.
+
+        Text output: Summary of segmentation including mask dimensions and IoU scores
+        for candidate masks.
+
+        Stored variables: $segmentation_mask: Boolean array of shape (H, W) where
+        True indicates segmented pixels'
+      parameters:
+        type: object
+        properties:
+          points:
+            type: string
+            description: Sequence of (x, y) normalized coordinates in [0, 1] range.
+          image_index:
+            type: integer
+            description: 0-based index of an image already present in the conversation.
+              Use this to reference an inline image by its order (0 = first, 1 = second,
+              ...).
+        required:
+        - points
+        - image_index
+- class_name: toolshed.integration.verl.ToolshedMethodTool
+  config:
+    type: native
+    router_name: toolshed_router
+    namespace: toolshed
+    function_name: grasp_generator.compute_grasp
+    timeout: 30
+  tool_schema:
+    type: function
+    function:
+      name: grasp_generator.compute_grasp
+      description: "Generate a single grasp pose for a masked subset of a point cloud.\n\
+        Text output: Confidence score, number of masked points used, projected 2D\
+        \ gripper points in normalize image coordinates.\nStored variables: $grasp_pose\
+        \ (4\xD74 ndarray, OpenCV camera frame)."
+      parameters:
+        type: object
+        properties:
+          point_cloud:
+            type: string
+            description: Nx3 numpy float array. Full scene point cloud.
+          mask:
+            type: string
+            description: Boolean mask aligning with *image*; accepts ndarray. Indicates
+              object points.
+          focal_length_px:
+            type: number
+            description: Camera focal length in pixels (square pixels assumed).
+          image_index:
+            type: integer
+            description: 0-based index of an image already present in the conversation.
+              Use this to reference an inline image by its order (0 = first, 1 = second,
+              ...).
+        required:
+        - point_cloud
+        - mask
+        - focal_length_px
+        - image_index
+- class_name: toolshed.integration.verl.ToolshedMethodTool
+  config:
+    type: native
+    router_name: toolshed_router
+    namespace: toolshed
+    function_name: vlm.detect_all
+    timeout: 30
+  tool_schema:
+    type: function
+    function:
+      name: vlm.detect_all
+      description: 'Detect *all* instances of *obj_name* in *image*.
+
+        Text output: List of point coordinates for the detected objects, in normalized
+        pixel space in range [0, 1].
+
+        Stored variables: Coordinates in ${obj_name}_detections variable of list of
+        (x, y) point coordinates in normalized pixel space [0, 1] for use in subsequent
+        operations.'
+      parameters:
+        type: object
+        properties:
+          obj_name:
+            type: string
+            description: Name or description of the object to detect.
+          image_index:
+            type: integer
+            description: 0-based index of an image already present in the conversation.
+              Use this to reference an inline image by its order (0 = first, 1 = second,
+              ...).
+        required:
+        - obj_name
+        - image_index
+- class_name: toolshed.integration.verl.ToolshedMethodTool
+  config:
+    type: native
+    router_name: toolshed_router
+    namespace: toolshed
+    function_name: vlm.detect_one
+    timeout: 30
+  tool_schema:
+    type: function
+    function:
+      name: vlm.detect_one
+      description: 'Detect *one* instance of *obj_name* in *image*.
+
+        Text output: coordinates of a single point for the first instance of the object,
+        in normalized pixel space in range [0, 1].
+
+        Stored variables: Coordinates in ${obj_name}_detections variable of list of
+        (x, y) point coordinates in normalized pixel space [0, 1] for use in subsequent
+        operations.'
+      parameters:
+        type: object
+        properties:
+          obj_name:
+            type: string
+            description: Parameter obj_name
+          image_index:
+            type: integer
+            description: 0-based index of an image already present in the conversation.
+              Use this to reference an inline image by its order (0 = first, 1 = second,
+              ...).
+        required:
+        - obj_name
+        - image_index
+- class_name: toolshed.integration.verl.ToolshedMethodTool
+  config:
+    type: native
+    router_name: toolshed_router
+    namespace: toolshed
+    function_name: depth_estimator.estimate_depth
+    timeout: 30
+  tool_schema:
+    type: function
+    function:
+      name: depth_estimator.estimate_depth
+      description: 'Estimate depth map from a single image.
+
+        Text output: Summary of depth estimation including image dimensions, focal
+        length, and depth statistics.
+
+        Stored variables: $depth_map: 2D array of depth values in meters, $focal_length_px:
+        Estimated focal length in pixels'
+      parameters:
+        type: object
+        properties:
+          image_index:
+            type: integer
+            description: 0-based index of an image already present in the conversation.
+              Use this to reference an inline image by its order (0 = first, 1 = second,
+              ...).
+        required:
+        - image_index
+- class_name: toolshed.integration.verl.ToolshedMethodTool
+  config:
+    type: native
+    router_name: toolshed_router
+    namespace: toolshed
+    function_name: depth_estimator.estimate_depth_with_pointcloud
+    timeout: 30
+  tool_schema:
+    type: function
+    function:
+      name: depth_estimator.estimate_depth_with_pointcloud
+      description: "Estimate depth and generate 3D point cloud from a single image.\n\
+        Text output: Summary of depth estimation and point cloud generation including\
+        \ dimensions, focal length, depth statistics, and point cloud size.\nStored\
+        \ variables:\n - $depth_map: 2D array of depth values in meters\n - $point_cloud:\
+        \ Nx3 array of 3D points (x, y, z) in camera coordinates\n - $focal_length_px:\
+        \ Estimated focal length in pixels"
+      parameters:
+        type: object
+        properties:
+          image_index:
+            type: integer
+            description: 0-based index of an image already present in the conversation.
+              Use this to reference an inline image by its order (0 = first, 1 = second,
+              ...).
+        required:
+        - image_index
+- class_name: toolshed.integration.verl.ToolshedMethodTool
+  config:
+    type: native
+    router_name: toolshed_router
+    namespace: toolshed
+    function_name: roborefer.detect_all
+    timeout: 30
+  tool_schema:
+    type: function
+    function:
+      name: roborefer.detect_all
+      description: 'Detect *all* instances of *obj_name* in *image*.
+
+        Text output: List of point coordinates for the detected objects, in normalized
+        pixel space in range [0, 1].'
+      parameters:
+        type: object
+        properties:
+          obj_name:
+            type: string
+            description: Name or description of the object to detect.
+          image_index:
+            type: integer
+            description: 0-based index of an image already present in the conversation.
+              Use this to reference an inline image by its order (0 = first, 1 = second,
+              ...).
+        required:
+        - obj_name
+        - image_index
+- class_name: toolshed.integration.verl.ToolshedMethodTool
+  config:
+    type: native
+    router_name: toolshed_router
+    namespace: toolshed
+    function_name: roborefer.detect_one
+    timeout: 30
+  tool_schema:
+    type: function
+    function:
+      name: roborefer.detect_one
+      description: 'Detect *one* instance of *obj_name* in *image*.
+
+        Text output: coordinates of a single point for the first instance of the object,
+        in normalized pixel space in range [0, 1].'
+      parameters:
+        type: object
+        properties:
+          obj_name:
+            type: string
+            description: Parameter obj_name
+          image_index:
+            type: integer
+            description: 0-based index of an image already present in the conversation.
+              Use this to reference an inline image by its order (0 = first, 1 = second,
+              ...).
+        required:
+        - obj_name
+        - image_index

@@ -1,0 +1,98 @@
+From 910f6f5da867d193f40e52e0148d3df621857c64 Mon Sep 17 00:00:00 2001
+From: SpaceTools Repro <qyYue1389@users.noreply.github.com>
+Date: Tue, 25 Aug 2026 00:59:10 +0000
+Subject: [PATCH 05/19] fix(eval): give the tools three GPUs; DepthPro needs
+ 12.5 GB per actor
+
+Measured footprints during a blinkdepth run: Molmo fp32 33.0 GB, RoboRefer
+18.6 GB, DepthPro 12.5 GB PER ACTOR (two actors = 25 GB), SAM2 1.2 GB each.
+That is ~80 GB of tools against the 94.8 GB of two A6000s, i.e. 84% occupancy
+with no headroom, so concurrent tool calls (max_parallel_calls=8) OOMed 68
+times in 124 samples. The affected samples scored 38.5% against 88.3% for the
+clean ones, dragging the benchmark from 88.3% to 83.1%.
+
+Drop EVAL_GPUS to 1 so the tools get three cards, and re-balance the fractional
+budget around the measured sizes: Molmo alone on one card, RoboRefer + SAM2 on
+another, DepthPro + bbox + grasp on a third. Every upstream replica count is
+preserved; only EVAL_GPUS, which is ours to choose, changes. The cost is one
+data-parallel policy replica instead of two.
+
+Also enable expandable_segments, which the OOM traces recommend directly.
+---
+ examples/toolshed/run_eval.sh | 26 ++++++++++++++------------
+ 1 file changed, 14 insertions(+), 12 deletions(-)
+
+diff --git a/examples/toolshed/run_eval.sh b/examples/toolshed/run_eval.sh
+index 2604759e..1f41a061 100755
+--- a/examples/toolshed/run_eval.sh
++++ b/examples/toolshed/run_eval.sh
+@@ -24,7 +24,7 @@
+ #   VERSION           — v1 or v2 (default: v1); controls tool config
+ #   OUTPUT_DIR        — eval output dir
+ #   NUM_GPUS          — total GPUs (default: 4)
+-#   EVAL_GPUS         — GPUs for eval inference (default: 2)
++#   EVAL_GPUS         — GPUs for eval inference (default: 1)
+ #
+ # Usage:
+ #   ROBOREFER_MODEL=/path/to/model DEPTH_CHECKPOINT=/path/to/depth_pro.pt \
+@@ -67,7 +67,7 @@ REPO_DIR="$(cd "$VERL_DIR/.." && pwd)"
+ 
+ VERSION="${VERSION:-v1}"
+ NUM_GPUS="${NUM_GPUS:-4}"
+-EVAL_GPUS="${EVAL_GPUS:-2}"
++EVAL_GPUS="${EVAL_GPUS:-1}"
+ 
+ if [[ "$VERSION" == "v1" ]]; then
+     TOOL_CONFIG="$SCRIPT_DIR/toolshed_v1_config.yaml"
+@@ -103,6 +103,8 @@ echo "=== Downloading eval benchmarks ==="
+ set +u; conda activate spacetools-rl; set -u
+ export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${CONDA_PREFIX}/lib/python3.11/site-packages/nvidia/cuda_runtime/lib:${CONDA_PREFIX}/lib/python3.11/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH:-}"
+ export HYDRA_FULL_ERROR=1
++# Reduce allocator fragmentation; the OOM traces explicitly recommend it.
++export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+ 
+ # DATA_DIR may be preset to point at an existing (or subset) benchmark tree.
+ # Without it every run re-downloads the full 292 MB into the timestamped EVAL_DIR,
+@@ -156,14 +158,14 @@ ray.init(address="auto")
+ from toolshed import start_toolkit
+ roborefer_model, depth_checkpoint = sys.argv[1], sys.argv[2]
+ TOOL_CONFIGS = {
+-    'roborefer': {'num_actors': 1, 'resources': {'num_gpus': 0.55}, 'conda_env': 'spacetools-tool-roborefer', 'timeout': 600,
++    'roborefer': {'num_actors': 1, 'resources': {'num_gpus': 0.6}, 'conda_env': 'spacetools-tool-roborefer', 'timeout': 600,
+         'args': {'model_path': roborefer_model, 'no_output_image': True, 'no_output_vars': False, 'exclude_methods': ['general_query'], 'exclude_behavior': 'error'}},
+-    'vlm': {'num_actors': 1, 'resources': {'num_gpus': 0.55}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600,
++    'vlm': {'num_actors': 1, 'resources': {'num_gpus': 1.0}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600,
+         'args': {'no_output_image': True, 'no_output_vars': False, 'model_name': 'allenai/Molmo-7B-D-0924', 'dtype': 'auto', 'exclude_methods': ['general_query'], 'exclude_behavior': 'error'}},
+-    'sam2': {'num_actors': 2, 'resources': {'num_gpus': 0.15}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600, 'args': {'no_output_image': True, 'no_output_vars': False}},
+-    'depth_estimator': {'num_actors': 2, 'resources': {'num_gpus': 0.15}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600,
++    'sam2': {'num_actors': 2, 'resources': {'num_gpus': 0.2}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600, 'args': {'no_output_image': True, 'no_output_vars': False}},
++    'depth_estimator': {'num_actors': 2, 'resources': {'num_gpus': 0.4}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600,
+         'args': {'checkpoint_path': depth_checkpoint, 'no_output_image': True, 'no_output_vars': False}},
+-    'bounding_box': {'num_actors': 2, 'resources': {'num_gpus': 0.1}, 'conda_env': 'spacetools-tool-bbox', 'timeout': 600, 'args': {'no_output_image': True, 'no_output_vars': False}},
++    'bounding_box': {'num_actors': 2, 'resources': {'num_gpus': 0.05}, 'conda_env': 'spacetools-tool-bbox', 'timeout': 600, 'args': {'no_output_image': True, 'no_output_vars': False}},
+     'vision_ops': {'num_actors': 1, 'resources': {'num_gpus': 0}, 'conda_env': 'spacetools-tool-bbox', 'timeout': 600,
+         'args': {'no_output_image': True, 'no_output_vars': False, 'exclude_methods': ['mask_crop', 'point_crop', 'project_2d_points_to_3d', 'project_3d_points_to_2d', 'draw_polygon'], 'exclude_behavior': 'error'}},
+     'grasp_generator': {'num_actors': 1, 'resources': {'num_gpus': 0.1}, 'conda_env': 'spacetools-tool-graspgen', 'timeout': 600, 'args': {'no_output_image': True, 'no_output_vars': False}},
+@@ -178,14 +180,14 @@ ray.init(address="auto")
+ from toolshed import start_toolkit
+ roborefer_model, depth_checkpoint = sys.argv[1], sys.argv[2]
+ TOOL_CONFIGS = {
+-    'roborefer': {'num_actors': 1, 'resources': {'num_gpus': 0.55}, 'conda_env': 'spacetools-tool-roborefer', 'timeout': 600,
++    'roborefer': {'num_actors': 1, 'resources': {'num_gpus': 0.6}, 'conda_env': 'spacetools-tool-roborefer', 'timeout': 600,
+         'args': {'model_path': roborefer_model, 'no_output_image': True, 'no_output_vars': False, 'exclude_methods': ['general_query'], 'exclude_behavior': 'error'}},
+-    'vlm': {'num_actors': 1, 'resources': {'num_gpus': 0.55}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600,
++    'vlm': {'num_actors': 1, 'resources': {'num_gpus': 1.0}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600,
+         'args': {'no_output_image': True, 'no_output_vars': False, 'model_name': 'allenai/Molmo-7B-D-0924', 'dtype': 'auto', 'exclude_methods': ['general_query'], 'exclude_behavior': 'error'}},
+-    'sam2': {'num_actors': 2, 'resources': {'num_gpus': 0.15}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600, 'args': {'no_output_image': True, 'no_output_vars': False}},
+-    'depth_estimator': {'num_actors': 2, 'resources': {'num_gpus': 0.15}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600,
++    'sam2': {'num_actors': 2, 'resources': {'num_gpus': 0.2}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600, 'args': {'no_output_image': True, 'no_output_vars': False}},
++    'depth_estimator': {'num_actors': 2, 'resources': {'num_gpus': 0.4}, 'conda_env': 'spacetools-tool-vlm', 'timeout': 600,
+         'args': {'checkpoint_path': depth_checkpoint, 'no_output_image': True, 'no_output_vars': False}},
+-    'bounding_box': {'num_actors': 2, 'resources': {'num_gpus': 0.1}, 'conda_env': 'spacetools-tool-bbox', 'timeout': 600, 'args': {'no_output_image': True, 'no_output_vars': False}},
++    'bounding_box': {'num_actors': 2, 'resources': {'num_gpus': 0.05}, 'conda_env': 'spacetools-tool-bbox', 'timeout': 600, 'args': {'no_output_image': True, 'no_output_vars': False}},
+     'vision_ops': {'num_actors': 1, 'resources': {'num_gpus': 0}, 'conda_env': 'spacetools-tool-bbox', 'timeout': 600,
+         'args': {'no_output_image': True, 'no_output_vars': False, 'exclude_methods': ['mask_crop', 'point_crop', 'project_2d_points_to_3d', 'project_3d_points_to_2d', 'draw_polygon'], 'exclude_behavior': 'error'}},
+     'grasp_generator': {'num_actors': 1, 'resources': {'num_gpus': 0.1}, 'conda_env': 'spacetools-tool-graspgen', 'timeout': 600, 'args': {'no_output_image': True, 'no_output_vars': False}},
+-- 
+2.34.1
+

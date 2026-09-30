@@ -1,0 +1,11 @@
+=== START 2026-09-12T00:19:57+00:00
+--- per-card peak / mean over the trace window (MiB, util%)
+  GPU0  peak  20525 MiB (20.0 GiB)  mean  20525 MiB  |  util peak 100%  mean  80%  (n=75)
+  GPU1  peak  47441 MiB (46.3 GiB)  mean  47441 MiB  |  util peak   0%  mean   0%  (n=75)
+  GPU2  peak    725 MiB (0.7 GiB)  mean    725 MiB  |  util peak   0%  mean   0%  (n=75)
+  GPU3  peak  42616 MiB (41.6 GiB)  mean  42615 MiB  |  util peak 100%  mean  44%  (n=75)
+
+--- process attribution
+
+--- uuid map
+=== DONE 2026-09-12T00:19:57+00:00

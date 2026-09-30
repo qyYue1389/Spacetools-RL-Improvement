@@ -1,0 +1,46 @@
+From 4474e67012200df6ca28e275747325fa4abb5a75 Mon Sep 17 00:00:00 2001
+From: qyYue1389 <qyYue1389@users.noreply.github.com>
+Date: Wed, 16 Sep 2026 08:18:39 +0000
+Subject: [PATCH 18/19] fix(rl): stop cleanup from aborting itself under set -e
+
+cleanup kills its own background jobs and then waits on them. wait on a job
+the script just signalled returns 128+SIGTERM, set -e applies inside an EXIT
+trap too, and cleanup dies right there -- before ray stop --force.
+
+Two consequences, one cosmetic and one not:
+
+  1. A successful run reports failure. The 3-step smoke ran all three steps,
+     printed RL TRAINING COMPLETE, and still exited 15. A signal that fails
+     for a reason unrelated to what it guards is worse than no signal.
+  2. The real one: the abort happens on wait, so ray stop --force never runs
+     and every finished run leaves a live Ray cluster behind for the next
+     launch to trip over.
+
+Minimal repro of the same shape is exitprobe.sh in the run notes: set -e,
+trap cleanup EXIT, cleanup kills a background sleep and waits on it. Before:
+the commands after wait never run, exit code non-zero. After adding set +e as
+the first line of cleanup: they run, exit code 0.
+
+---
+ examples/toolshed/run_rl.sh | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/examples/toolshed/run_rl.sh b/examples/toolshed/run_rl.sh
+index 522ce217..1c4491dc 100755
+--- a/examples/toolshed/run_rl.sh
++++ b/examples/toolshed/run_rl.sh
+@@ -73,6 +73,11 @@ TOOLSHED_PID=""
+ GPU_KEEPALIVE_PID=""
+ WORKER_SRUN_PIDS=()
+ cleanup() {
++    # set -e must not apply in here.  This function kills its own background
++    # jobs and then waits on them, so wait returns 128+SIGTERM and set -e aborts
++    # cleanup halfway -- before "ray stop --force" -- leaving a live Ray cluster
++    # behind and handing a successful run a non-zero exit code.
++    set +e
+     echo "Cleaning up..."
+     [ -n "$GPU_KEEPALIVE_PID" ] && kill $GPU_KEEPALIVE_PID 2>/dev/null
+     [ -n "$TOOLSHED_PID" ] && kill $TOOLSHED_PID 2>/dev/null && wait $TOOLSHED_PID 2>/dev/null
+-- 
+2.34.1
+

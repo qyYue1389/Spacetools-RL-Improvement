@@ -1,0 +1,15 @@
+=== START 2026-09-12T00:01:03+00:00
+### robospatial, split by task type and correctness
+  Vacant  correct        n=55   mean_objname_len= 54.0  samples_with_a_>30char_objname=44 (80%)
+  Vacant  wrong          n=67   mean_objname_len= 38.0  samples_with_a_>30char_objname=34 (51%)
+  VQA     correct        n=161  mean_objname_len=  6.8  samples_with_a_>30char_objname=0 (0%)
+  VQA     wrong          n=67   mean_objname_len=  6.2  samples_with_a_>30char_objname=0 (0%)
+
+### Vacant: how close are the misses? (min distance to any GT point)
+  wrong Vacant samples with a parseable point: 67
+  min dist to nearest acceptable point:
+     median 0.076   p25 0.040   p75 0.179   min 0.006   max 0.516
+     within 0.05 of an acceptable point: 20 (30%)
+     within 0.10 of an acceptable point: 40 (60%)
+     within 0.20 of an acceptable point: 53 (79%)
+=== DONE 2026-09-12T00:01:03+00:00

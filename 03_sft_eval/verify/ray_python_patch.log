@@ -1,0 +1,21 @@
+=== START 2026-09-12T00:48:57+00:00
+  spacetools-tool-vlm: patched (backup at node.py.orig)
+           removed stale node.cpython-311.pyc
+  spacetools-tool-bbox: patched (backup at node.py.orig)
+           removed stale node.cpython-311.pyc
+
+--- verify the patch is live in each env (import ray, read the source back)
+  spacetools-tool-vlm        minor-level active
+  spacetools-tool-bbox       minor-level active
+
+--- unit-check the relaxed comparison itself, in a 3.11.0 env
+2026-09-12 00:48:59,035	WARNING utils.py:1565 -- Python patch version mismatch: The cluster was started with:
+    Ray: 2.47.1
+    Python: 3.11.16
+This process on unit-test was started with:
+    Ray: 2.47.1
+    Python: 3.11.0
+
+  minor: accepted 3.11.0 vs 3.11.16 (warning only)  OK
+  patch: still rejects (default unchanged)  OK
+=== DONE 2026-09-12T00:48:59+00:00

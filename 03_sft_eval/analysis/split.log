@@ -1,0 +1,6 @@
+=== START 2026-09-11T23:52:12+00:00
+VQA     n=228  acc=70.61%  (161 correct)
+Vacant  n=122  acc=45.08%  (55 correct)
+other   n=0
+total   n=350  overall=61.71%
+=== DONE 2026-09-11T23:52:12+00:00

@@ -1,0 +1,78 @@
+From dfbde8ef3fdc0532fc265aceaf496fd53dec8197 Mon Sep 17 00:00:00 2001
+From: qyYue1389 <qyYue1389@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 05:36:55 +0000
+Subject: [PATCH 13/19] fix(rl): declare policy_loss.gflowrl so the config path
+ actually works
+
+Without this, run_rl_gflowrl.sh does not start.  PolicyLossConfig is a
+structured dataclass instantiated through omega_conf_to_dataclass ->
+hydra.utils.instantiate (fsdp_workers.py:935), which passes every key under
+policy_loss as a kwarg.  A key it has never heard of is not ignored:
+
+    TypeError: PolicyLossConfig.__init__() got an unexpected keyword
+               argument 'gflowrl'
+
+and it raises inside a Ray worker, minutes after Toolshed is already up.
+
+Declaring it in both places also fixes a quieter half of the same bug: the
+driver reads beta/eps_low/eps_high/variant off the raw DictConfig in
+compute_gflowrl_flow_gap, but core_algos reads eps_is off the dataclass.
+Before this commit the dataclass had no such field, so GF_EPS_IS was
+silently dropped while the other four took effect -- two config sources
+disagreeing about the same loss.
+
+A plain mapping rather than a nested dataclass, so the two readers cannot
+drift apart on the key names.
+
+Guarded by tools/p7/p7_config_check.py in the repro repo, which also checks
+that every key the wrapper passes is one the code reads, and vice versa.
+
+---
+ verl/trainer/config/actor/actor.yaml | 6 ++++++
+ verl/workers/config/actor.py         | 6 ++++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/verl/trainer/config/actor/actor.yaml b/verl/trainer/config/actor/actor.yaml
+index bffe8aec..fced9ad7 100644
+--- a/verl/trainer/config/actor/actor.yaml
++++ b/verl/trainer/config/actor/actor.yaml
+@@ -75,6 +75,12 @@ policy_loss:
+   # KL divergence penalty coefficient
+   ppo_kl_coef: 0.1
+ 
++  # GFlowRL (arXiv:2607.13394) knobs -- only read when loss_mode == "gflowrl".
++  # Declared here so hydra can set policy_loss.gflowrl.* ; PolicyLossConfig is a
++  # structured dataclass and rejects keys it has never heard of.
++  # Set by examples/toolshed/run_rl_gflowrl.sh: beta / eps_low / eps_high / eps_is / variant
++  gflowrl: {}
++
+ # Constant C in Dual-clip PPO; clips when advantage < 0 and ratio > C
+ clip_ratio_c: 3.0
+ 
+diff --git a/verl/workers/config/actor.py b/verl/workers/config/actor.py
+index 66071e8e..ec465085 100644
+--- a/verl/workers/config/actor.py
++++ b/verl/workers/config/actor.py
+@@ -80,6 +80,7 @@ class PolicyLossConfig(BaseConfig):
+         clip_cov_ub (float): Upper bound for clip-cov loss.
+         kl_cov_ratio (float): Ratio of tokens to be applied KL penalty for kl-cov loss.
+         ppo_kl_coef (float): KL divergence penalty coefficient.
++        gflowrl (dict): GFlowRL knobs; only read when loss_mode == "gflowrl".
+         rollout_correction (RolloutCorrectionConfig): Configuration for rollout correction.
+     """
+ 
+@@ -90,6 +91,11 @@ class PolicyLossConfig(BaseConfig):
+     kl_cov_ratio: float = 0.0002
+     ppo_kl_coef: float = 0.1
+     rollout_correction: RolloutCorrectionConfig = field(default_factory=RolloutCorrectionConfig)
++    # GFlowRL (arXiv:2607.13394) knobs, used only when loss_mode == "gflowrl".
++    # A plain mapping rather than a nested dataclass: the driver reads the same keys
++    # off the raw DictConfig in ray_trainer.compute_gflowrl_flow_gap, and the two must
++    # not drift.  Keys: beta, eps_low, eps_high, eps_is, variant.
++    gflowrl: dict[str, Any] = field(default_factory=dict)
+ 
+ 
+ @dataclass
+-- 
+2.34.1
+

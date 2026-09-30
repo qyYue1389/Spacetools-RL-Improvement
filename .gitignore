@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.DS_Store
+# Raw dumps are tracked as *.jsonl.gz; tools/unpack_dumps.sh creates the plain .jsonl next to them.
+*.jsonl
+!**/parsed/*.jsonl
+!**/parsed_runC/*.jsonl

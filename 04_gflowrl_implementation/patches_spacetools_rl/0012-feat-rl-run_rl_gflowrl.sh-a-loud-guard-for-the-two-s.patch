@@ -1,0 +1,201 @@
+From 0b5098ae37502b3ae331782288d039d654c72950 Mon Sep 17 00:00:00 2001
+From: qyYue1389 <qyYue1389@users.noreply.github.com>
+Date: Sun, 6 Sep 2026 03:02:45 +0000
+Subject: [PATCH 12/19] feat(rl): run_rl_gflowrl.sh + a loud guard for the two
+ silent misconfigs
+
+run_rl_gflowrl.sh is a thin wrapper, not a copy of run_rl.sh. P7 compares
+two arms and the comparison is only worth something if everything else is
+identical; duplicating 400 lines would let them drift apart silently. The
+whole delta is one seven-line overrides array, appended through run_rl.sh's
+existing "$@" passthrough. Verified that hydra takes the last value for a
+repeated key, so kl_loss_coef=0 here beats the =0.01 in run_rl.sh.
+
+The guard in ray_trainer.py covers the two mistakes that otherwise produce
+no error at all, only a different objective:
+
+  kl_loss_coef != 0  double-counts the reference term, since
+                     d = log pi_ref - log pi_old already IS the KL-like
+                     quantity inside Eq. 4/6
+  use_kl_loss False  means dp_actor never appends ref_log_prob
+
+Both now raise with the fix in the message. tools/p7/p7_guard_check.py
+extracts the guard from the real source and checks it fires on all three
+bad combinations and passes the good one.
+
+The wrapper also routes output to its own experiments/rl_gflowrl_* dir so a
+GFlowRL run cannot resume from a GRPO checkpoint, warns when variant is not
+cprime, and prints the three metrics to watch from step 1.
+
+rollout.n stays at 5 rather than the paper's G=16: raising it would make
+the arms incomparable. Recorded in P7_STEP_C12_RESULTS.md section 4.
+
+---
+ examples/toolshed/run_rl_gflowrl.sh | 123 ++++++++++++++++++++++++++++
+ verl/trainer/ppo/ray_trainer.py     |  20 +++++
+ 2 files changed, 143 insertions(+)
+ create mode 100755 examples/toolshed/run_rl_gflowrl.sh
+
+diff --git a/examples/toolshed/run_rl_gflowrl.sh b/examples/toolshed/run_rl_gflowrl.sh
+new file mode 100755
+index 00000000..8d13ed73
+--- /dev/null
++++ b/examples/toolshed/run_rl_gflowrl.sh
+@@ -0,0 +1,123 @@
++#!/bin/bash
++# =============================================================================
++# SpaceTools Step 4 with GFlowRL instead of GRPO
++#
++# This is a THIN WRAPPER around run_rl.sh, not a copy of it.
++#
++# Why a wrapper: P7 compares two arms — GRPO and GFlowRL — and the comparison is
++# only worth anything if EVERYTHING ELSE is identical.  Duplicating run_rl.sh
++# would let the two arms drift apart silently over time.  Here the entire delta
++# is the OVERRIDES block below, and you can read it in ten seconds.
++#
++# run_rl.sh ends its python invocation with "$@", so anything this script passes
++# is appended to the hydra command line.  Hydra takes the LAST value for a
++# repeated key (verified), so kl_loss_coef=0 here overrides the =0.01 in
++# run_rl.sh.
++#
++# Required environment variables (same as run_rl.sh):
++#   SFT_CHECKPOINT    — path to SFT checkpoint directory
++#   ROBOREFER_MODEL   — path to RoboRefer-8B-SFT model
++#   DEPTH_CHECKPOINT  — path to depth_pro.pt checkpoint
++#
++# Optional (same as run_rl.sh):
++#   VERSION / OUTPUT_DIR / GPUS_PER_NODE / SAVE_FREQ
++#
++# Optional (GFlowRL only — defaults are the C-prime configuration):
++#   GF_BETA       — beta in pi_ref * exp(beta*r)             (default 8.0)
++#   GF_EPS_LOW    — Eq. 7 lower clip bound                   (default 0.2)
++#   GF_EPS_HIGH   — Eq. 7 upper clip bound                   (default 0.28)
++#   GF_EPS_IS     — Eq. 8 importance-sampling clip           (default 0.2)
++#   GF_VARIANT    — cprime | paper | normalized              (default cprime)
++#
++# Usage (identical to run_rl.sh, 2 nodes / 16 GPUs):
++#   sbatch --nodes=2 --gpus-per-node=8 --exclusive your_wrapper.sh
++#     ... where the wrapper activates conda and then runs this script.
++#
++# See: records/P7_STEP_C12_RESULTS.md   (why cprime; fixed-point self-check)
++#      records/P7_ROUTE_C_GATE.md       (the gate that chose cprime)
++#      records/P7_GPU_ACCOUNTING.md     (why this needs 16 GPUs, not 8)
++# =============================================================================
++
++set -euo pipefail
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++
++GF_BETA="${GF_BETA:-8.0}"
++GF_EPS_LOW="${GF_EPS_LOW:-0.2}"
++GF_EPS_HIGH="${GF_EPS_HIGH:-0.28}"
++GF_EPS_IS="${GF_EPS_IS:-0.2}"
++GF_VARIANT="${GF_VARIANT:-cprime}"
++
++# Keep the two arms' outputs apart.  run_rl.sh defaults to experiments/rl_<ver>_<ts>;
++# without this a GFlowRL run could resume from a GRPO checkpoint and nobody would notice.
++VERSION="${VERSION:-v1}"
++REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
++export OUTPUT_DIR="${OUTPUT_DIR:-$REPO_DIR/experiments/rl_gflowrl_${GF_VARIANT}_${VERSION}_$(date +%Y%m%d_%H%M%S)}"
++
++# -----------------------------------------------------------------------------
++# THE ENTIRE DELTA FROM THE GRPO ARM IS THESE SEVEN LINES
++# -----------------------------------------------------------------------------
++#
++#   loss_mode=gflowrl   switches BOTH halves at once:
++#                         - ray_trainer.py  overwrites batch["advantages"] with g~
++#                         - core_algos.py   uses Eq. 8 instead of the PPO clip loss
++#
++#   kl_loss_coef=0      MUST be zero.  d = log pi_ref - log pi_old is already the
++#                       KL-like term inside Eq. 4/6; an explicit KL penalty on top
++#                       double-counts it and changes the objective.
++#
++#   use_kl_loss stays True (set by run_rl.sh, NOT overridden here) because
++#   dp_actor.py only appends ref_log_prob to the batch under that flag, and
++#   GFlowRL needs it.  Looks contradictory, isn't: the switch is what computes
++#   ref_log_prob, the coefficient is what penalizes with it.
++#
++#   Both mistakes are caught at runtime by the guard in ray_trainer.py — it
++#   raises rather than training a wrong objective quietly.  Belt and braces.
++#
++GFLOWRL_OVERRIDES=(
++  actor_rollout_ref.actor.policy_loss.loss_mode=gflowrl
++  actor_rollout_ref.actor.kl_loss_coef=0
++  +actor_rollout_ref.actor.policy_loss.gflowrl.beta="$GF_BETA"
++  +actor_rollout_ref.actor.policy_loss.gflowrl.eps_low="$GF_EPS_LOW"
++  +actor_rollout_ref.actor.policy_loss.gflowrl.eps_high="$GF_EPS_HIGH"
++  +actor_rollout_ref.actor.policy_loss.gflowrl.eps_is="$GF_EPS_IS"
++  +actor_rollout_ref.actor.policy_loss.gflowrl.variant="$GF_VARIANT"
++)
++# -----------------------------------------------------------------------------
++
++cat <<BANNER
++
++===============================================================================
++  Step 4 — GFlowRL arm (arXiv:2607.13394 Eq. 4-8)
++===============================================================================
++  variant        $GF_VARIANT   $( [ "$GF_VARIANT" = cprime ] \
++        && echo "(no length normalization — the only variant with the Prop. B.1 fixed point)" \
++        || echo "*** NOT cprime — this variant has NO analytic fixed point on ragged lengths ***" )
++  beta           $GF_BETA
++  eps_low/high   $GF_EPS_LOW / $GF_EPS_HIGH   (asymmetric, per Eq. 7)
++  eps_is         $GF_EPS_IS
++  kl_loss_coef   0            (use_kl_loss stays True — see comments above)
++  output         $OUTPUT_DIR
++
++  Everything else is inherited from run_rl.sh unchanged, including
++  rollout.n=5, train_batch_size=64, lr=1e-6, clip_ratio, and the tool config.
++  rollout.n is deliberately NOT raised to the paper's G=16: it would make the
++  two arms incomparable.  See P7_STEP_C12_RESULTS.md section 4.
++
++  Watch these metrics from step 1:
++    gflowrl/clip_saturation   measured 77.9% offline; if it sits near 1.0 the
++                              flow gap is pinned and only its SIGN survives
++    gflowrl/Z_t_mean          Var = O(1/G); at G=5 this is ~3.2x noisier than
++                              the paper's G=16
++    gflowrl/variant_is_cprime must be 1.0
++===============================================================================
++
++BANNER
++
++if [ "$GF_VARIANT" != "cprime" ]; then
++  echo "WARNING: variant='$GF_VARIANT' is a diagnostic arm, not the training arm." >&2
++  echo "         Its fixed-point loss is ~4-5e-2, not 0. Continuing in 5s..." >&2
++  sleep 5
++fi
++
++exec bash "$SCRIPT_DIR/run_rl.sh" "${GFLOWRL_OVERRIDES[@]}" "$@"
+diff --git a/verl/trainer/ppo/ray_trainer.py b/verl/trainer/ppo/ray_trainer.py
+index 0e112227..b331bbff 100644
+--- a/verl/trainer/ppo/ray_trainer.py
++++ b/verl/trainer/ppo/ray_trainer.py
+@@ -1822,6 +1822,26 @@ class RayPPOTrainer:
+                         _actor_cfg = self.config.actor_rollout_ref.actor
+                         _pl = _actor_cfg.get("policy_loss", {}) if hasattr(_actor_cfg, "get") else {}
+                         if (_pl.get("loss_mode", "vanilla") if hasattr(_pl, "get") else "vanilla") == "gflowrl":
++                            # Two misconfigurations here are otherwise SILENT: they do not crash,
++                            # they just train a different objective.  Make them loud.
++                            _kl_on = bool(_actor_cfg.get("use_kl_loss", False))
++                            _kl_c = float(_actor_cfg.get("kl_loss_coef", 0.0))
++                            if not _kl_on:
++                                raise ValueError(
++                                    "loss_mode=gflowrl requires ref_log_prob in the batch, and "
++                                    "dp_actor only appends it when actor.use_kl_loss=True. "
++                                    "Set actor_rollout_ref.actor.use_kl_loss=True together with "
++                                    "actor_rollout_ref.actor.kl_loss_coef=0."
++                                )
++                            if _kl_c != 0.0:
++                                raise ValueError(
++                                    f"actor.kl_loss_coef={_kl_c} together with loss_mode=gflowrl "
++                                    "double-counts the reference term: d = log pi_ref - log pi_old "
++                                    "is already the KL-like quantity inside Eq. 4/6, so an explicit "
++                                    "KL penalty on top changes the objective. "
++                                    "Set actor_rollout_ref.actor.kl_loss_coef=0 (keep "
++                                    "use_kl_loss=True so ref_log_prob is still computed)."
++                                )
+                             _gf = _pl.get("gflowrl", {}) or {}
+                             batch, _gf_metrics = compute_gflowrl_flow_gap(
+                                 batch,
+-- 
+2.34.1
+

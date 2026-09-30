@@ -1,0 +1,4 @@
+device_map: (该工具未暴露)
+estimate_depth -> Estimated depth map for 240x240 image. Focal length: 550.6px. Depth range: 0.37m to 0.40m (mean: 0.37m). Use $depth_map (numpy array, 240x240) to reference the depth data and $foca
+峰值显存 7.94 GiB
+SMOKE_OK

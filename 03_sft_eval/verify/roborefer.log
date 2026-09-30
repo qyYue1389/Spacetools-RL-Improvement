@@ -1,0 +1,12 @@
+WARNING: RoboRefer forcing no_output_vars to True
+[2026-09-12 00:58:52,980] [INFO] [real_accelerator.py:219:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+/opt/spacetools/SpaceTools-Toolshed/RoboRefer/llava/model/qlinear_te.py:95: FutureWarning: `torch.cuda.amp.custom_fwd(args...)` is deprecated. Please use `torch.amp.custom_fwd(args..., device_type='cuda')` instead.
+  @amp.custom_fwd(cast_inputs=torch.bfloat16)
+/opt/spacetools/SpaceTools-Toolshed/RoboRefer/llava/model/qlinear_te.py:146: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.
+  @amp.custom_bwd
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:05,  1.80s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:04<00:04,  2.07s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:06<00:02,  2.02s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.52s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.69s/it]
+You are attempting to use Flash Attention 2.0 with a model not initialized on GPU. Make sure to move the model to GPU after initializing it on CPU with `model.to('cuda')`.
+device_map: (该工具未暴露)
+detect_one -> Detected 1 instance(s) of 'cup': [(0.502, 0.498)]
+峰值显存 7.01 GiB
+SMOKE_OK

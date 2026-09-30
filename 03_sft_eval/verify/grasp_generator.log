@@ -1,0 +1,13 @@
+/opt/conda-st/envs/spacetools-tool-graspgen/lib/python3.11/site-packages/timm/models/layers/__init__.py:48: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+pointnet2_ops._ext OK
+2026-09-12 00:58:01,766 - OpenGL.acceleratesupport - INFO - No OpenGL_accelerate module loaded: No module named 'OpenGL_accelerate'
+2026-09-12 00:58:03,227 - grasp_gen.models.discriminator - INFO - Pose representation is mlp
+2026-09-12 00:58:03,234 - grasp_gen.models.discriminator - INFO - Object encoder checkpoints not found at location ../../checkpoints/GraspGenModels/checkpoints/graspgen_franka_panda_gen.pth
+2026-09-12 00:58:03,234 - grasp_gen.models.grasp_gen - INFO - Loading generator checkpoint from /opt/spacetools/SpaceTools-Toolshed/toolshed/tools/../../checkpoints/GraspGenModels/checkpoints/graspgen_franka_panda_gen.pth
+2026-09-12 00:58:04,076 - grasp_gen.models.grasp_gen - INFO - Loading discriminator checkpoint from /opt/spacetools/SpaceTools-Toolshed/toolshed/tools/../../checkpoints/GraspGenModels/checkpoints/graspgen_franka_panda_dis.pth
+GraspGeneratorTool 构建 OK
+2026-09-12 00:58:04,665 - grasp_gen.utils.point_cloud_utils - INFO - Removed 443 points from point cloud
+compute_grasp 抛 RuntimeError(随机点云上属正常): cannot reshape tensor of 0 elements into shape [-1, 0, 3] because the unspecified dimension size -1 can be any value and
+峰值显存 0.44 GiB
+SMOKE_OK

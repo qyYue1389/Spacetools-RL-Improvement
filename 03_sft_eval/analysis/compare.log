@@ -1,0 +1,16 @@
+=== START 2026-09-12T00:22:25+00:00
+--- eval3 finished (or waited out) at 2026-09-12T00:24:58+00:00
+
+--- run 2 gates
+  OOM                    0
+  Error:|ERROR:toolshed  8
+  val-core/RoboSpatial/Home-Vision/acc/mean@1:0.6028571428571429
+
+--- per-sample comparison run1 vs run2
+  run1 n=350  run2 n=350  common=350
+  run1  VQA 70.61% (161/228)   Vacant 45.08% (55/122)   Overall 61.71% (216/350)
+  run2  VQA 71.93% (164/228)   Vacant 38.52% (47/122)   Overall 60.29% (211/350)
+  flipped: 29 / 350   (wrong->right 12, right->wrong 17)
+  byte-identical generations: 151 / 350
+  flipped indices (first 8): [5, 22, 45, 87, 100, 105, 106, 107]
+=== DONE 2026-09-12T00:24:58+00:00

@@ -1,0 +1,157 @@
+From 574ae81f8280e21ee40b57130f056d84830b9549 Mon Sep 17 00:00:00 2001
+From: qyYue1389 <qyYue1389@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 05:37:06 +0000
+Subject: [PATCH 14/19] fix(rl): stop booking the same GPUs twice on a single
+ node
+
+run_rl.sh handed the SAME number, GPUS_PER_NODE, to two different consumers:
+the Toolshed STRICT_PACK placement group and trainer.n_gpus_per_node.  On two
+nodes that is correct -- the PG lands on node 1 and the trainer takes node 2 --
+which is why the paper's 2x8 configuration never hit it.  On ONE node the two
+requests are for the same cards: the PG takes everything and the trainer gets
+nothing, or the PG never becomes ready.
+
+Split into TOOL_GPUS / TRAIN_GPUS.  The multi-node path is byte-for-byte
+unchanged (both default to GPUS_PER_NODE); the single-node path defaults to 2
+for tools and the rest for training, with two bounds checks that exit rather
+than deadlock.
+
+Also assert inside the Toolshed launcher that the tool actors' logical GPU
+demand fits the placement group.  Ray's num_gpus is a logical reservation, not
+a memory quota: the seven tools ask for 7.8 logical GPUs by default, and
+compressing num_actors to fit a small machine drops that to ~3.0.  Reserve less
+than the actors request and the PG goes ready while the actors queue forever --
+the same silent failure mode as the bug above, one layer down.
+
+And unset VERL_DUMP_TOKEN_DIAGNOSTICS.  That env var switches on the P7 token
+diagnostics in ray_trainer._validate(), which test_freq makes run during
+training too.  It is set by hand for eval runs, so a shell that ran eval first
+would carry it into training, where it sleeps the rollout engine and adds a
+full compute_log_prob pass per validation.  Nothing here needs it.
+
+Verified by tools/p7/p7_gpusplit_check.py in the repro repo, which pulls the
+block out of this file and runs it: seven cases, including that the two-node
+result does not move.
+
+---
+ examples/toolshed/run_rl.sh | 51 ++++++++++++++++++++++++++++++++-----
+ 1 file changed, 44 insertions(+), 7 deletions(-)
+
+diff --git a/examples/toolshed/run_rl.sh b/examples/toolshed/run_rl.sh
+index 4cd3ec74..875883a0 100755
+--- a/examples/toolshed/run_rl.sh
++++ b/examples/toolshed/run_rl.sh
+@@ -108,6 +108,13 @@ cp "$TOOL_CONFIG" "$EXPERIMENT_DIR/tool_config.yaml"
+ # =============================================================================
+ echo "=== Starting Ray cluster ==="
+ 
++# The P7 token diagnostics in ray_trainer._validate() are switched on by this env
++# var, and test_freq makes _validate run during training too.  It is set by hand for
++# eval runs, so a shell that ran eval first would silently carry it into training,
++# where it sleeps the rollout engine and adds a full compute_log_prob pass per
++# validation.  Nothing needs it here.
++unset VERL_DUMP_TOKEN_DIAGNOSTICS
++
+ ray stop --force 2>/dev/null || true; sleep 5
+ 
+ # Detect SLURM multi-node allocation
+@@ -122,9 +129,31 @@ HEAD_NODE="${NODES[0]}"
+ HEAD_IP=$(hostname -I | awk '{print $1}')
+ TOTAL_GPUS=$((NUM_NODES * GPUS_PER_NODE))
+ 
++# --- Toolshed / training GPU split -------------------------------------------
++# The Toolshed placement group and the trainer used to be handed the SAME number
++# (GPUS_PER_NODE).  On two nodes that is correct: the PG lands on node 1, the
++# trainer takes node 2.  On ONE node it books the same cards twice -- the PG
++# grabs everything and the trainer gets none, or the PG never becomes ready.
++if (( NUM_NODES > 1 )); then
++    TOOL_GPUS="${TOOL_GPUS:-$GPUS_PER_NODE}"
++    TRAIN_GPUS="${TRAIN_GPUS:-$GPUS_PER_NODE}"
++else
++    TOOL_GPUS="${TOOL_GPUS:-2}"
++    TRAIN_GPUS="${TRAIN_GPUS:-$((GPUS_PER_NODE - TOOL_GPUS))}"
++    if (( TOOL_GPUS + TRAIN_GPUS > GPUS_PER_NODE )); then
++        echo "ERROR: TOOL_GPUS($TOOL_GPUS) + TRAIN_GPUS($TRAIN_GPUS) > GPUS_PER_NODE($GPUS_PER_NODE)" >&2
++        exit 1
++    fi
++    if (( TRAIN_GPUS < 1 )); then
++        echo "ERROR: TRAIN_GPUS=$TRAIN_GPUS -- nothing left to train on" >&2
++        exit 1
++    fi
++fi
++
+ echo "Nodes:          $NUM_NODES (${NODES[*]})"
+ echo "Head node:      $HEAD_NODE ($HEAD_IP)"
+ echo "Total GPUs:     $TOTAL_GPUS"
++echo "GPU split:      tools $TOOL_GPUS / training $TRAIN_GPUS (per node)"
+ 
+ export RAY_TMPDIR="/tmp/${USER}/ray"
+ 
+@@ -217,12 +246,12 @@ echo "=== Starting Toolshed ==="
+ 
+ if [[ "$VERSION" == "v1" ]]; then
+     # V1: 7 tool types (no robot)
+-    python3 - "$ROBOREFER_MODEL" "$DEPTH_CHECKPOINT" "$GPUS_PER_NODE" <<'TOOLSHED_PY' &
++    python3 - "$ROBOREFER_MODEL" "$DEPTH_CHECKPOINT" "$TOOL_GPUS" <<'TOOLSHED_PY' &
+ import ray, time, sys
+ ray.init(address="auto")
+ from toolshed import start_toolkit
+ roborefer_model, depth_checkpoint = sys.argv[1], sys.argv[2]
+-gpus_per_node = int(sys.argv[3])
++tool_gpus = float(sys.argv[3])
+ TOOL_CONFIGS = {
+     'roborefer': {'num_actors': 6, 'resources': {'num_gpus': 0.6}, 'conda_env': 'spacetools-tool-roborefer', 'timeout': 600,
+         'args': {'model_path': roborefer_model, 'no_output_image': True, 'no_output_vars': False, 'exclude_methods': ['general_query'], 'exclude_behavior': 'error'}},
+@@ -240,7 +269,11 @@ TOOL_CONFIGS = {
+         'args': {'no_output_image': True, 'no_output_vars': False}},
+ }
+ print(f"Launching {len(TOOL_CONFIGS)} tool types (V1, no robot)...", flush=True)
+-pg = ray.util.placement_group([{"CPU": 16, "GPU": gpus_per_node}], strategy="STRICT_PACK")
++_demand = sum(c['num_actors'] * c['resources']['num_gpus'] for c in TOOL_CONFIGS.values())
++assert _demand <= tool_gpus, (
++    f"tool actors need {_demand} logical GPUs but the placement group reserves only {tool_gpus}. "
++    f"Raise TOOL_GPUS or cut num_actors -- otherwise the PG goes ready and the actors queue forever.")
++pg = ray.util.placement_group([{"CPU": 16, "GPU": tool_gpus}], strategy="STRICT_PACK")
+ ray.get(pg.ready())
+ print("Placement group ready (tools packed on one node)", flush=True)
+ router = start_toolkit(TOOL_CONFIGS, detached=False, dashboard=False, placement_group=pg)
+@@ -249,12 +282,12 @@ while True: time.sleep(60)
+ TOOLSHED_PY
+ else
+     # V2: 8 tool types (V1 + mock_robot)
+-    python3 - "$ROBOREFER_MODEL" "$DEPTH_CHECKPOINT" "$GPUS_PER_NODE" <<'TOOLSHED_PY' &
++    python3 - "$ROBOREFER_MODEL" "$DEPTH_CHECKPOINT" "$TOOL_GPUS" <<'TOOLSHED_PY' &
+ import ray, time, sys
+ ray.init(address="auto")
+ from toolshed import start_toolkit
+ roborefer_model, depth_checkpoint = sys.argv[1], sys.argv[2]
+-gpus_per_node = int(sys.argv[3])
++tool_gpus = float(sys.argv[3])
+ TOOL_CONFIGS = {
+     'roborefer': {'num_actors': 6, 'resources': {'num_gpus': 0.6}, 'conda_env': 'spacetools-tool-roborefer', 'timeout': 600,
+         'args': {'model_path': roborefer_model, 'no_output_image': True, 'no_output_vars': False, 'exclude_methods': ['general_query'], 'exclude_behavior': 'error'}},
+@@ -274,7 +307,11 @@ TOOL_CONFIGS = {
+         'args': {'no_output_image': True, 'no_output_vars': False}},
+ }
+ print(f"Launching {len(TOOL_CONFIGS)} tool types (V2, with mock_robot)...", flush=True)
+-pg = ray.util.placement_group([{"CPU": 16, "GPU": gpus_per_node}], strategy="STRICT_PACK")
++_demand = sum(c['num_actors'] * c['resources']['num_gpus'] for c in TOOL_CONFIGS.values())
++assert _demand <= tool_gpus, (
++    f"tool actors need {_demand} logical GPUs but the placement group reserves only {tool_gpus}. "
++    f"Raise TOOL_GPUS or cut num_actors -- otherwise the PG goes ready and the actors queue forever.")
++pg = ray.util.placement_group([{"CPU": 16, "GPU": tool_gpus}], strategy="STRICT_PACK")
+ ray.get(pg.ready())
+ print("Placement group ready (tools packed on one node)", flush=True)
+ router = start_toolkit(TOOL_CONFIGS, detached=False, dashboard=False, placement_group=pg)
+@@ -391,7 +428,7 @@ python3 -m verl.trainer.main_ppo \
+     trainer.logger='["console"]' \
+     trainer.project_name="spacetools_rl_${VERSION}" \
+     trainer.experiment_name="rl_${VERSION}" \
+-    trainer.n_gpus_per_node="$GPUS_PER_NODE" \
++    trainer.n_gpus_per_node="$TRAIN_GPUS" \
+     trainer.nnodes=1 \
+     trainer.save_freq="$SAVE_FREQ" \
+     trainer.test_freq=5 \
+-- 
+2.34.1
+
