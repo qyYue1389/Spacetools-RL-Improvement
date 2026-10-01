@@ -2,9 +2,9 @@
 
 参考实现 – Maccchiatooo/spacetools-training-programs
 
-官方 GRPO ckpt（P4) – 用官方 GRPO ckpt的复现
-
 C′ – 自己训练的GFlowRL ckpt和eval
+
+Github repo \- [https://github.com/qyYue1389/Spacetools-RL-Improvement/tree/main](https://github.com/qyYue1389/Spacetools-RL-Improvement/tree/main)
 
 ## **背景、目标与范围**
 
@@ -46,8 +46,11 @@ C′ – 自己训练的GFlowRL ckpt和eval
 | P1(b) | 更新尺度与方向:grad\_clip 每步饱和;ε 方向可能反了 | grad\_clip 只裁离群步;确认 ε 方向 | grad\_norm 180 主要来自序列求和(×|y|);Eq.7 字面与论文正文意图相反 | grad\_clip \= L̄(≡ loss×1/L̄,纯配置);ε 交换;各 15 步对照 | 3×15 步 ≈ 12 h | 提案 |
 | P1(c) | G=5 的 log Z 估计方差 | 降方差到 \~1/3.2 | 过滤后仍存在由 Z 方差导致的停滞 | G=8 或 16 | G=16 85 步 ≈ 2.7 天 | 条件触发 |
 | P1(d) | epochs / β | — | — | 暂不动,设了触发条件 | — | 冻结 |
-| P3 | SFT 数据线(移出):front/behind 不调 depth\_estimator;Vacant 只问锚物体 | 这条链进入支撑集 | SFT 数据分布没覆盖 | 查数据 → 定向 SFT → 探索 → 塑形 | 中 | 移出,另立排期 |
-| P4 | 改配置后需要新 GRPO 对照 | 保持可归因 | — | 只在动了 G / epochs 时同批重训 GRPO 臂 | ≈ 一次 C′ 训练 | 条件触发 |
+| P2 | SFT 数据线(移出):front/behind 不调 depth\_estimator;Vacant 只问锚物体 | 这条链进入支撑集 | SFT 数据分布没覆盖 | 查数据 → 定向 SFT → 探索 → 塑形 | 中 | 移出,另立排期 |
+| P3 | 改配置后需要新 GRPO 对照 | 保持可归因 | — | 只在动了 G / epochs 时同批重训 GRPO 臂 | ≈ 一次 C′ 训练 | 条件触发 |
+| Infra P1 | 退化组的行也在做前向 / 反向,约 400 s / 步花在零梯度的行上 | 每步 922 → 约 514 s | 整组删掉退化组后更新与 P1(a) 相同 | 奖励出来后整组删,补齐到卡数 × micro 的倍数 | 零;随 P1(a) 上机 | 已实现,CPU 自检通过 |
+| Infra P2 | gen 321 s 主要在等工具,不知道在等谁 | 找出能在 4 张工具卡内消掉的等待 | 等待集中在少数工具或线程池 | 按工具计时,按结果重分配 | 零;随 P1(a) 上机 | 已实现,CPU 自检通过 |
+| Infra P3 | 训练机的 P2P 可能是坏的 | 开训前识别 | — | NCCL / P2P 开机验收 | 每次开机约 2 分钟 | 已实现,待上机 |
 
 ### 
 
@@ -186,7 +189,7 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 
 | 方案 | 每步 | 85 步 | 结论 |
 | ----- | ----- | ----- | ----- |
-| **只过滤,不补采** | 925 s(不变) | 不变 | **采用**:零成本、判决性、不作废对照 |
+| **只过滤,不补采** | 925 s(不变;开 Infra P1 后约 514 s) | 不变 | **采用**:零成本、判决性、不作废对照 |
 | 过滤 \+ DAPO 式补采到满批 | \~1744 s(gen ×3.37) | \~41 h | 只在 H1 成立但每步 \~19 组太少、方差过大时再上 |
 | 直接 G=16 | \~2770 s | \~65 h | 降为 P1c |
 
@@ -244,7 +247,7 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
   * 其他 pointing 题：还有 RefSpatial vacant 和 RefSpatial object 两类 pointing 题，各 500 条，也能算改点率  
   * 结论：按「差值要超过 2 倍 SD 才算真变化」的标准，只用那 500 条同类题，两窗STD 约 9 pp，门槛是 18 pp。预期改点率大约变 10 pp，达不到门槛，看不出来。三类合并后 SD ≈ 5 pp，门槛约 10 pp，能达到预期的 10 pp 变化。要是训练里实际噪声还是太大，就以每 10 步的训练中验证（Vacant 122 题）为准
 
-**Cost.**40 × 925 s ≈ 10.3 h(8 卡)+ 训练中验证约 35 分钟;可选确认 eval 约 1.2 h(4 卡)
+**Cost.**40 × 925 s ≈ 10.3 h(8 卡;开 Infra P1 后约 40 × 514 s ≈ 5.7 h)+ 训练中验证约 35 分钟;可选确认 eval 约 1.2 h(4 卡)
 
 ### **P1(b) · 更新的尺度与方向:loss 尺度、grad\_clip、flow-gap ε**
 
@@ -368,7 +371,7 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 
 **Proposed solution.**机器紧张用 G=8,否则 G=16
 
-**Cost & 代价.**G=16:每步 \~2770 s,85 步 ≈ 65 h ≈ 2.7 天。**改 G 会作废现有 GRPO 对照**,必须同批重训 GRPO (P4),总成本约翻倍;也不再能和论文 70.0 直接比
+**Cost & 代价.**G=16:每步 \~2770 s,85 步 ≈ 65 h ≈ 2.7 天。**改 G 会作废现有 GRPO 对照**,需要同批重训 GRPO,总成本约翻倍;也不再能和论文 70.0 直接比
 
 ### **P1(d) · epochs, β(暂时不变,设触发条件)**
 
@@ -381,7 +384,7 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 
 * ### rew/drift：奖励项和漂移项的量级比，现在中位数是 2.01，奖励约占主导
 
-* ### 持续下滑：C‘里它从前 10 步的 2.125 降到后 10 步的 1.754。原因是策略离 π\_ref 越来越远，漂移项越来越大
+* ### 持续下滑：C’里它从前 10 步的 2.125 降到后 10 步的 1.754。原因是策略离 π\_ref 越来越远，漂移项越来越大
 
 * ### 接近 1：说明漂移项已经和奖励项一样大，奖励信号快被淹没，更新开始更多是在把策略拉回 π\_ref，而不是在学奖励
 
@@ -496,10 +499,178 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 | ----- | ----- | ----- |
 | G | **作废** | 改变每步看到的数据量 |
 | epochs | **作废** | 改变更新次数 |
+| Infra P1 删退化组 | 有效 | 只改算力分配;C′ 臂的更新与 P1(a) 相同,GRPO 臂不开 |
+| Infra P2 工具副本重分配 | 有效 | 工具输出不变,只改排队 |
 
 **Execution plan.**只在动了 G 或 epochs 时触发:同 base、同 seed、同 G、同步数、同机重训一个 GRPO,与 P1 正式训练同批排机时;评测按 §1.2
 
 **Cost.**约等于一次同配置 C′ 训练(G=16 时约 2.7 天)
+
+## **Infra · 训练吞吐(与算法优化并行,不改目标函数)**
+
+**为什么单列.**P1 的每一轮实验都按「8 卡 × 约 10 h」计价,吞吐直接决定一天能验证几个假设。本节三项只改算力怎么花,不改 C′ 的目标函数和更新。编号 Infra P1–P3,与上面算法侧的 P1–P3 是两套。代码、自检与说明在 `GFlowRL_improve/infra_prep/`(README)。
+
+**一步 922 s 花在哪.**`infra_prep/stage_timing.py` 读 HF 上的完整训练日志(`provenance/full_train.log.gz`),85 步中位,单位秒:
+
+| 阶段 | 耗时 | 占比 | 随什么变 |
+| ----- | ----- | ----- | ----- |
+| gen | 321 | 35% | 主要在等工具(见 Infra P2) |
+| old\_log\_prob | 112 | 12% | 行数 |
+| ref | 117 | 13% | 行数 |
+| update\_actor | 352 | 38% | 行数 |
+| save\_checkpoint | 40 | 摊到每步约 1% | 只在 save\_freq 命中的 17 / 85 步 |
+| update\_weights | 10 | 1% | — |
+| 其余 | 0.3 | 0% | — |
+
+* 报告 §8.4 的「其余 129 s」(step 85)= old\_log\_prob 118.8 \+ update\_weights 10.0:这两段 verl 本来就计时,报告当时只抄了四项  
+* 随行数变的三段合计 580 s,占 63%;gen 占 35%。两块分别由 Infra P1、Infra P2 处理  
+* ref 放在 CPU(117 s)与同样是一次前向、参数在 GPU 的 old\_log\_prob(112 s)只差约 5 s,ref offload 不是瓶颈(§3)
+
+### **Infra P1 · 删掉退化组:old\_log\_prob / ref / update\_actor 只算保留行**
+
+**Problem statement**
+
+* old\_log\_prob \+ ref \+ update\_actor 每步中位 580 s(63%),耗时随行数线性变化  
+* P1(a) 打开后,退化组(中位 70.3% 的行)g̃ \= 0,on-policy 下梯度恰为 0;但这三段仍对全部 320 行做前向 / 反向,每步约 400 s 花在不产生梯度的行上  
+* 奖励随 rollout 一起返回(`rm_scores`),所以在 old\_log\_prob 之前就能认出退化组
+
+**Objective**
+
+* 更新与 P1(a) 完全相同的前提下,每步从 922 s 降到约 510 s;P1(a) 的 40 步从约 10 h 降到约 6 h
+
+**Hypothesis(Infra H1)**
+
+* 整组删掉退化组、把行数补齐到「训练卡数 × micro-batch」的倍数之后,每一行的梯度与 P1(a)(只把 g̃ 置 0)完全相同:  
+  * dp\_actor 每个 micro-batch 的 loss 乘 1 / gradient\_accumulation,而它等于配置里的 `ppo_mini_batch_size / micro`(每卡 80 / 2),不随实际行数变。所以每卡梯度 \= Σ本卡各行 loss / 80,FSDP 跨卡取平均后 \= Σ全部 / 320,与 P1(a)「分母保留全部行」相同  
+  * 删的是整组,保留组的 Z\_t(Eq. 4)不变  
+  * 补齐必须到 micro 的倍数:否则某张卡会出现 1 行的 micro-batch,它仍按 2 / 80 缩放,那一行权重翻倍  
+* 这三段耗时与行数近似成正比(按行估,没按 token;退化组与保留组的长度不同会带来偏差)
+
+**可证伪的预测:**
+
+* 三段耗时约按保留比例下降。用 85 步逐步的 degen 代入,每步中位约 514 s(p10–p90 461–571 s,最慢 602 s)  
+* 若三段耗时不随 `gflowrl_drop/rows_after` 下降,说明瓶颈不在行数(例如在权重搬运或通信),Infra H1 的第二条不成立
+
+**Proposed solution.**
+
+1. 在 `ray_trainer.fit` 里,response\_mask 算完、balance\_batch 之前,按 `rm_scores` 的组内极差 \= 0 找出退化组,整组删掉  
+2. 保留行数补齐到 `dp × ppo_micro_batch_size_per_gpu` 的倍数,补的是最短的退化行(filter 打开时它们 g̃ \= 0,不贡献梯度,只占最少算力)  
+3. 开关 `GF_DROP_DEGEN`,默认关;只能和 `GF_FILTER_DEGEN=true` 一起开,否则报错  
+4. 日志:`reward/degenerate_*` 仍按全批计;新增 `gflowrl_drop/{rows_before, rows_after, pad_rows, kept_rollout_frac, score_mean_full}`。rollout dump 仍写全部 320 条,p1\_monitor.py 的读数不受影响
+
+**Alternatives considered.**
+
+| 方案 | 每步 | 结论 |
+| ----- | ----- | ----- |
+| 只把 g̃ 置 0(P1(a) 原方案) | 922 s | 更新相同,但约 70% 的算力花在零梯度的行上 |
+| **置 0 \+ 删行(本方案)** | 约 514 s | **采用** |
+| 删行后 loss 改成只对保留行求均值 | 约 514 s | 不采用:等于把学习信号放大约 3 倍,与 P1(a)、P1(b) 的 grad\_clip 口径对不上 |
+| 删行,但只补齐到卡数的倍数 | 约 514 s | 不采用:会出现 1 行的 micro-batch,那一行权重翻倍(自检里的反例) |
+
+**Execution plan.**
+
+1. **实现(已完成):**`infra_prep/patched/ray_trainer.py`(\= 训练用的 SpaceTools-RL `c6fef78a` \+ P1(a) \+ 本项)与 `run_rl_gflowrl.sh`(新开关 `GF_DROP_DEGEN`);完整 diff `infra_all_vs_c6fef78a.diff`,在干净的 c6fef78a 上 `git apply` 验证可用  
+2. **自检(已完成,CPU):**`infra_drop_check.py` 在 16 组里有 0 / 5 / 11 / 16 组退化的四种情形下,保留行的梯度与 P1(a) 完全一致;只补齐到卡数倍数的反例梯度不一致;6 个 GFlowRL 自检指向打了补丁的完整代码全部通过  
+3. **上机:**P1(a) 的 40 步直接开 `GF_FILTER_DEGEN=true GF_DROP_DEGEN=true`,用 `stage_timing.py` 读各段耗时,对照 `gflowrl_drop/rows_after`
+
+**Success criteria / 决策.**
+
+| 读数 | 判定 | 下一步 |
+| ----- | ----- | ----- |
+| 三段耗时约与 rows\_after 成正比,每步中位 ≤ 约 600 s;rows\_after 都是 8 的倍数 | 生效 | 之后 C′ 的训练默认打开 |
+| 耗时没降、OOM 或 rows\_after 不是 8 的倍数 | 未生效 | 关掉开关,按 P1(a) 原方案跑;不影响实验本身 |
+
+**Risks**
+
+* **日志口径变了:**`critic/score/mean`、`perf/throughput`、`perf/total_num_tokens` 只算保留行。跨运行比较 score 用 `gflowrl_drop/score_mean_full`,和 P7 老日志对比时尤其注意  
+* **只适用 C′ 臂:**GRPO 的 token-mean 分母随行数变,删行后不再等价;P3 的 GRPO 对照走原路径  
+* **实际省时可能低于按行估算:**每步保留约 45–135 行,分到每卡的行更少,单卡利用率可能下降
+
+**Cost.**零 GPU 开发成本;上机随 P1(a) 一起跑,不额外占时间
+
+### **Infra P2 · 按工具计时:定位 gen 在等什么**
+
+**Problem statement**
+
+* gen 每步 321 s(35%),Infra P1 管不到:奖励要等生成完才知道  
+* 这段主要在等工具,不在生成(`agent_loop/*` 指标,85 步中位):每条轨迹平均工具耗时 135 s、生成 20 s;每步最慢的那条轨迹工具耗时 281 s、生成 26 s。一步的 gen 要等最慢那条跑完  
+* verl 只记每条轨迹的工具总时间。不知道是哪个工具,是在工具服务里排队还是算得慢,还是卡在 agent loop 的线程池:Toolshed 用 `run_in_executor(None, ...)` 同步调用,默认线程数最多 32,而每步 320 条轨迹、每轮最多 8 个并发调用  
+* 工具 actor 为塞进 4 张卡整体缩到 ×0.5(roborefer 3 个副本,vlm 1,sam2 2,depth 2,bbox 2,vision\_ops 4,grasp 2),没有按实际调用量分配
+
+**Objective**
+
+* 把 gen 的等待拆到每个工具,找出在同样 4 张工具卡内就能消掉的等待
+
+**Hypothesis(Infra H2)**
+
+* 等待集中在少数工具或 agent loop 的线程池,而不是各工具普遍算得慢。最可能是 roborefer:P0 在 robospatial 上每次约 577 次工具调用,几乎全是 roborefer
+
+**可证伪的预测:**
+
+* 某个工具远端耗时的中位数远大于它的最小值(在排队),或线程池排队时间显著、同时在途的调用经常超过线程数  
+* 若所有工具远端耗时中位 ≈ 最小值、线程池排队 ≈ 0:等待来自计算本身,重分配副本无效,Infra H2 否定
+
+**Proposed solution.**
+
+1. 设了 `TOOL_TIMING_DIR` 时,每次工具调用写一行:工具名、提交时刻、总耗时,并拆成三段 —— 在线程池排队(exec\_wait)、Toolshed 远端(router \+ 工具 actor 排队 \+ 计算)、回到事件循环后的处理(ray.put 等);另记提交时该工具与全部工具的在途调用数、线程池大小、是否出错。不设时行为与原来完全一样  
+2. `tool_timing_summary.py` 按工具给出分位数与耗时占比,并按训练步切分  
+3. 按结果决策(Success criteria)
+
+**Execution plan.**
+
+1. **实现(已完成):**`infra_prep/patched/tool_agent_loop.py`(SpaceTools-RL 侧)与 `patched_toolshed/verl.py`(Toolshed 侧,基于 `712e557`),各一份 diff,`git apply` 验证可用  
+2. **自检(已完成,CPU):**`tool_timing_check.py`:不设变量时返回值与原函数完全一致;设了之后每次调用一条记录,三段拆分正确,线程不够时排队时间变大,Toolshed 报错与未知工具都记为失败  
+3. **上机:**P1(a) 的 40 步同时设 `TOOL_TIMING_DIR=$OUTPUT_DIR/tool_timing`,跑完用 `tool_timing_summary.py` 汇总  
+4. 需要重分配工具副本时,和 §4「开机前」的工具打包检查一起做
+
+**Success criteria / 决策.**
+
+| 读数 | 判定 | 下一步 |
+| ----- | ----- | ----- |
+| 某个工具远端耗时 p50 远大于 min,且耗时占比最大 | 该工具在排队 | 在 4 张工具卡内把少用工具的份额挪给它(先过工具打包检查),下一次训练对比 gen |
+| 线程池排队显著,在途调用常超过线程数 | 线程池是瓶颈 | 调大 agent loop 的默认线程数,不用加卡 |
+| 远端 p50 ≈ min,线程池排队 ≈ 0 | 计算瓶颈 | 批处理或换卡;不动工具分配 |
+| 调整后 gen 中位下降,且超出 85 步里 gen 的步间波动 | 生效 | 之后默认用新配置 |
+
+**Risks**
+
+* 只打 SpaceTools-RL 侧补丁时只有总耗时,要拆分必须连 Toolshed 侧补丁一起上  
+* 重分配工具副本不改变工具输出,不影响奖励和可比性;给工具设超时、限制调用次数会改变任务,不做(§3)  
+* 每次调用写一行文件,每步几百行,开销可以忽略
+
+**Cost.**计时零 GPU 成本,随 P1(a) 一起跑;之后的调整视结果而定,不需要额外机器
+
+### **Infra P3 · 开机验收:GPU P2P / NCCL**
+
+**Problem statement**
+
+* P7 训练机的 P2P 在 `nvidia-smi topo -p2p r` 里显示正常,实际第一个 NCCL collective 就挂死(报告 §8.5)。只能设 `NCCL_P2P_DISABLE=1` 让 all-reduce 绕主机内存走,update\_actor(352 s,38%)因此变慢;925 s / 步就是在这个前提下测的  
+* 当时是写了 4 卡 all-reduce 的最小探针才定位到,否则每改一个环境变量要等一次 15 分钟的训练启动
+
+**Objective**
+
+* 开训之前约 2 分钟内判断 P2P 能不能用、all-reduce 带宽多少
+
+**Hypothesis(Infra H3)**
+
+* 换一台 P2P 正常的机器,update\_actor 会变快;P2P 坏的机器应该在开训前就被识别出来,而不是在训练起来之后
+
+**Proposed solution.**`infra_prep/preflight_nccl.sh` 对训练用的那几张卡各跑一次 all-reduce 探针(P2P 开 / 关),输出带宽与判定:P2P\_OK / P2P\_BROKEN / NCCL\_BROKEN
+
+**Execution plan.**
+
+1. **实现(已完成):**`nccl_bw_probe.py`(在 P7 用过的 ncclprobe.py 上加了带宽)与 `preflight_nccl.sh`;CPU(gloo)上跑通,GPU 上待开机验证  
+2. 每次租到训练机:先跑工具打包检查和本项,再开训;结果记入偏离清单
+
+**Success criteria / 决策.**
+
+| 判定 | 下一步 |
+| ----- | ----- |
+| P2P\_OK | 不设 `NCCL_P2P_DISABLE`,正常开训 |
+| P2P\_BROKEN | 设 `NCCL_P2P_DISABLE=1` 也能跑,但 update\_actor 会慢,记入偏离清单;时间允许就换机器 |
+| NCCL\_BROKEN | 不开训,换机器 |
+
+**Cost.**每次开机约 2 分钟
 
 ## **3\. 不做的事(Non-goals)**
 
@@ -507,6 +678,7 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 * **不为 fit 题调 prompt 或奖励。** fit 题的正确率 GRPO 和 C′ 都是 69.5%，逐题相同。缺的是工具集里没有自由空间和 3D 尺寸信息，调输出分布补不上  
 * **不在 refplacement、refunseen、cvb3ddepth 上反复评测。** 这 777 个样本 GRPO 和 C′ 逐题结果完全相同，工具输出决定了答案，测不出 RL 算法的差别  
 * **不换工具，也不改 SFT 数据。** 换工具是另一条独立的改进路线，混进来就分不清效果来自哪里。改 SFT 数据会换掉共同起点（见 P2）
+* **不做收益太小、或会改变实验本身的 infra 改动。** ref 模型放回 GPU:实测只省约 5 s / 步,每卡多占 2 GB(补丁保留,默认关);checkpoint 瘦身:存盘摊到每步约 8 s,去掉优化器状态会让自动续训失效;rollout 与训练重叠(异步 / off-policy):会破坏 P1(a) 与 Infra P1 依赖的 on-policy 等价;给工具设超时或限制调用次数:会改变奖励和任务
 
 ## 
 
@@ -514,10 +686,10 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 
 | 阶段 | 内容 | GPU | 产出 / 决策 |
 | ----- | ----- | ----- | ----- |
-| 开机前(无 GPU) | 还剩两件：① 训练机工具打包检查（附录 B）；② rollout dump 加开关，不存图片 | 无 | 能开跑 |
-| 第 1 天 | **P1(a)**：只过滤退化组，跑 40 步 | 8 卡 \~10 h | H1 成立 / 部分成立 / 否定 |
+| 开机前(无 GPU) | 还剩两件：① 训练机工具打包检查（附录 B）；② rollout dump 加开关，不存图片。Infra P1–P3 已实现,CPU 自检通过;开机后先跑 Infra P3 验收 | 无 | 能开跑 |
+| 第 1 天 | **P1(a)**：只过滤退化组，跑 40 步;同时开 Infra P1(删退化组)与 Infra P2(按工具计时) | 8 卡 \~10 h(开 Infra P1 后约 6 h) | H1 成立 / 部分成立 / 否定 |
 | 第 2 天 | **P1(b)**：A（基线）/ B（grad\_clip \= L̄）/ C（ε 交换），各 15 步 | 8 卡 \~12 h | B、C 各自采不采用 |
-| 第 3天起 | **P1 正式训练**：叠加前面采用的改动，85 步；满足触发条件时加 P1(c)（G=8/16），同时要补 P4（GRPO 臂） | 8 卡：G=5 约 22 h；G=16 约 65 h，再加同样时长的 GRPO对照 | 按 P1 退出条件判读，并复算查询写法 / 透传 / 改点表 |
+| 第 3天起 | **P1 正式训练**：叠加前面采用的改动，85 步；满足触发条件时加 P1(c)（G=8/16），同时要补 GRPO对照 | 8 卡：G=5 约 22 h；G=16 约 65 h，再加同样时长的 GRPO对照 | 按 P1 退出条件判读，并复算查询写法 / 透传 / 改点表 |
 | 之后 | P1(d)：score 出现上升趋势时再加 epoch P2：SFT 数据线 | — | — |
 
 ## 
@@ -535,14 +707,14 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 1. 论文公式的字面写法和正文说的意图相反，见 P1(b)。  
    1. 没有别的实现可以对照：官方代码仍未发布。参考实现也是照字面写的，而且它把边界放宽到 2.7 / 3.8，g 几乎不会被截断，方向对不对都没有影响，所以没法用来判断。  
    2. 只能靠 P1(b) 的 C（交换 ε）实测来定。  
-2. 8 卡训练机的租用时间与型号;若不是 A40,记入偏离清单,并在同机上补跑对照所需的部分。  
+2. 8 卡训练机的租用时间与型号;若不是 A40,记入偏离清单,并在同机上补跑对照所需的部分。开机先过 Infra P3 验收(P2P)。  
 3. 
 
 ## **附录 · 关键数字**
 
 | 量 | 值 | 出处 |
 | ----- | ----- | ----- |
-| 每步耗时 | 925 s(gen 322 / update\_actor 369 / ref 122 / save 39 / 其余 129\) | 报告§8.4 |
+| 每步耗时 | 均值 925 s / 中位 922 s(gen 321 / old\_log\_prob 112 / ref 117 / update\_actor 352 / update\_weights 10;save 40 只在 17/85 步) | 报告§8.4;infra\_prep/stage\_timing.py |
 | degen 中位 | 70.3%(0.578–0.859) | 报告§8.4 |
 | grad\_norm 中位 / 最大 / clip | 180 / 5229 / 1.0 | 报告§8.4 |
 | robospatial 三次均值 | SFT 213.0 · GRPO 226.7 · C′ 221.7 | Eval |

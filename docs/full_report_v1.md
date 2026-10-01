@@ -5,6 +5,7 @@
 > 版本 v1 · 2026-09-19 · 待 review
 > 2026-09-25 更正:① `front/behind` 的「C′ 少 3 题」是单次评测噪声(§0、§10.4、§10.6、§11、§12.2);
 > ② 「C′ 让策略更主动、改点有害」方向反了 —— 是 GRPO 把起点的改点压住了,C′ 停在起点(§0、§10.6、§10.7、§11)
+> 2026-09-30 补:§8.4 的「129 s 记账缺口」已查清 = old_log_prob 118.8 s + update_weights 10.0 s(§8.3、§8.4)
 > 覆盖:环境构建 → SFT 训练 → SFT eval 闸门 → C′ 的推导与实现 → GFlowRL 训练 →
 > GFlowRL eval → 与 P4/P5/P6 的逐样本对比。
 > 材料:`training/`(SFT 与 RL 的 as-run 记录)、`eval/GFlowRL/`(九个 benchmark 的
@@ -939,7 +940,7 @@ scaled tool actors by 0.500 to fit tool_gpus=4.0:
 |---|---|
 | 冻结视觉编码器 | 4.066 B 里只训 2.55 B。论文的做法,见下方说明 |
 | FSDP 全分片,**不** offload | 48 GB 够;offload 会把 PCIe 变成瓶颈(而这台机器 P2P 本来就坏),见下方说明 |
-| ref model 参数 offload 到 CPU | ref 每步只算一次 log_prob,常驻显存不划算。代价 `timing_s/ref ≈ 122 s` |
+| ref model 参数 offload 到 CPU | ref 每步只算一次 log_prob,常驻显存不划算。`timing_s/ref ≈ 122 s`,其中 offload 本身只占约 5 s(同样一次前向、参数在 GPU 的 old_log_prob 中位 112 s vs ref 117 s,§8.4) |
 | 梯度检查点<br>**gradient checkpointing**<br>(也叫 activation checkpointing / recomputation;开关是 `model.enable_gradient_checkpointing=True`) | **前向时只留少量「检查点」激活,其余的在反向时重新算一遍** —— 拿额外计算换显存。这里上下文是 `max_prompt 8192 + max_response 8192 = 16384` token,不开的话一次前向的全部层激活装不下 48 GB(**算式见下方说明**);§8.4 那个 35.3 / 48 GB 的显存峰值**就是开着它测出来的**,所以没有关掉它的余量。代价见 §4.5(SFT 上估的是慢 20–30%) |
 | remove padding(去填充) | 一个 batch 里的序列长短不一,常规做法是**给短的补 pad token 到最长那条**,然后连 pad 一起算。remove padding 把各条序列的真实 token **首尾相接拼成一条扁平流**,边界用 `cu_seqlens` 单独记着,**注意力不跨序列边界**。于是计算量和显存只随**真实 token 总数**走,不随 `batch × 最长序列长度`。**结果与补零算等价**(只有浮点归约顺序可能不同)—— 注意区别于 §4.5 里被排除的 `packing`:那个是把**多条短样本合并成一条训练样本**,会改 attention mask 语义 |
 | flash-attention-2 | 注意力显存 O(L²) → O(L) |
@@ -1061,7 +1062,7 @@ continuous batching 只能让「生成」这一段挤紧,**填不上工具往返
 
 `param_offload=False` / `optimizer_offload=False`(`run_rl.sh.asrun:477–478`)。
 **唯一的例外是 ref model**:`ref.fsdp_config.param_offload=True`(:492)——
-它每步只做一次 log_prob 前向,常驻显存不划算,代价是 `timing_s/ref ≈ 122 s`。
+它每步只做一次 log_prob 前向,常驻显存不划算;`timing_s/ref ≈ 122 s`,其中 offload 的额外代价只有约 5 s(§8.4)。
 
 **为什么不开 offload:** offload 的每一次搬运都走 PCIe,而这台机器的 P2P 是坏的(§8.5),
 NCCL 已经被迫 `NCCL_P2P_DISABLE=1` 走主机内存中转 —— **PCIe 上本来就挤满了 all-reduce 的流量**。
@@ -1147,10 +1148,12 @@ TorchMemorySaver 冲突)、调 `rollout.n`(改了两臂不可比)。
 ```
 timing_s/step  981 s(最后一步;全程均值 925 s)
   ├ gen              322 s   rollout —— sglang 生成多轮轨迹,含全部工具往返
-  ├ update_actor     369 s   前向 + 反向 + optimizer.step(),真正的梯度更新
+  ├ old_log_prob     119 s   用当前策略重算 π_old 的 log_prob,一次前向(Eq. 4/6 的 d 要用它)
   ├ ref              122 s   参考模型 π_ref 的一次 log_prob 前向(d = Σ(log π_ref − log π_old) 要用它)
+  ├ update_actor     369 s   前向 + 反向 + optimizer.step(),真正的梯度更新
   ├ save_checkpoint   39 s   落盘 44 GB 的 checkpoint,只在 save_freq=5 命中的步上发生
-  └ 其余            ~129 s   ⚠ 见下
+  ├ update_weights    10 s   把更新后的权重同步给 sglang
+  └ 其余            0.3 s
 perf/throughput  346 token/s · mfu 0.145 · 显存峰值 35.3 / 48 GB · CPU 峰值 151 GB
 85 步 × 925 s ≈ 21.8 h,与墙钟 21 h 57 min 吻合
 ```
@@ -1160,13 +1163,15 @@ perf/throughput  346 token/s · mfu 0.145 · 显存峰值 35.3 / 48 GB · CPU �
 - **`throughput` 的 346 是「每张训练卡」,不是全机。** 该步 `perf/total_num_tokens = 1,360,105`,
   `1,360,105 / 981 s = 1386 token/s` 是四卡合计,除以 4 张训练卡才是 346。**跨运行引用时要对齐卡数。**
 - **`mfu` = Model FLOPs Utilization**,实际达到的 FLOPs ÷ 硬件峰值 FLOPs,0.145 就是 14.5%。
-  这是个 **tool-augmented 多轮**的运行:一步里 322 s 在 rollout 与工具往返、122 s 在 ref 前向,
+  这是个 **tool-augmented 多轮**的运行:一步里 322 s 在 rollout 与工具往返、119 s 与 122 s 在 old_log_prob 与 ref 两次前向,
   真正做稠密矩阵乘的只有 `update_actor` 那 369 s。**所以这个数不能和纯 LM 训练的 mfu 比**,
   也不能和别的机器比(`NCCL_P2P_DISABLE=1` 让 all-reduce 过主机内存,§8.5)。
-- **⚠ 分项加不齐:`322+369+122+39 = 852`,离 981 差 129 s,归档里查不到归属。**
-  训练报告只额外记了 `adv 0.07 s` 一类的零头,量级对不上;verl 在这几段之外还有
-  `old_log_prob` 等阶段,但**本次没有留下逐项读数,所以这 129 s 只能记成记账缺口**,
-  不作推断。它不影响墙钟对账(85 × 925 s ≈ 21.8 h 与 21 h 57 min 吻合)。
+- **分项对得上(2026-09-30 补)。** 此前只抄了 gen / update_actor / ref / save 四项,`322+369+122+39 = 852`,
+  离 981 差的 129 s 曾记成记账缺口。读 HF 上的完整训练日志(`provenance/full_train.log.gz`)后查清:
+  **= `old_log_prob` 118.8 s + `update_weights` 10.0 s + 0.3 s**,两项 verl 本来就计时。
+  85 步中位:gen 321 · old_log_prob 112 · ref 117 · update_actor 352 · update_weights 10 · 每步 922 s
+  (`GFlowRL_improve/infra_prep/stage_timing.py`)。随行数变的 old_log_prob + ref + update_actor 合计占 63%,
+  gen 占 35% 且主要在等工具 —— 这两块是 Design Doc「Infra · 训练吞吐」的出发点。
 
 85 步全程的关键读数:
 
