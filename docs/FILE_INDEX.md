@@ -93,7 +93,7 @@ Long-form reasoning for patches 0001–0010: `01_official_checkpoint_eval/report
 |---|---|---|---|
 | `toolshed/tools/vlm.py` | Honours the `dtype` argument (upstream hardcodes `torch_dtype="auto"` and ignores it) and casts float inputs to the model dtype. Behaviour under the config we run is unchanged; it makes a precision ablation a one-string change. | 让 `dtype` 参数生效(上游写死 `torch_dtype="auto"`,不看这个参数),并把浮点输入转成模型的 dtype。在我们跑的配置下行为不变;做精度对照时只需改一个字符串。 | `00_environment/upstream_patches/SpaceTools-Toolshed/0001-fix-tools-honour-the-vlm-dtype-argument-cast-inputs-.patch` |
 | `toolshed/tools/graspgen_franka_panda.yml` | The three checkpoint paths made absolute; relative paths do not resolve from a Ray actor. | 三个 checkpoint 路径改成绝对路径;相对路径在 Ray actor 里解析不到。 | same patch / 同一个 patch |
-| `toolshed/integration/verl.py` | **Infra:** stamps when a worker thread picks a tool call up and when it returns, so the agent loop can split its latency into thread-pool wait and remote time. | **Infra:**记录线程开始处理工具调用和调用返回的时刻,agent loop 才能把耗时拆成「等线程」和「远端」两段。 | `07_gflowrl_improvement/infra_prep/patched_toolshed/verl.py`, `07_gflowrl_improvement/infra_prep/toolshed_tool_timing_vs_712e557.diff` |
+| `toolshed/integration/verl.py` | **Infra:** stamps when a worker thread picks a tool call up and when it returns, so the agent loop can split its latency into thread-pool wait and remote time. | **Infra:**记录线程开始处理工具调用和调用返回的时刻,agent loop 才能把耗时拆成「等线程」和「远端」两段。 | `07_gflowrl_improvement/infra_prep/toolshed_tool_timing_vs_712e557.diff` (diff only; apply it to Toolshed `712e557` / 只放 diff,打在 Toolshed `712e557` 上) |
 
 ### 2.3 GraspGen (base `2dd8852`)
 
@@ -351,7 +351,7 @@ The modified upstream files and the patches are in §2.1. 改动过的上游文�
 
 ### 4.9 `07_gflowrl_improvement/`
 
-The patched upstream files (`p1_prep/patched/`, `infra_prep/patched/`, `infra_prep/patched_toolshed/`) and their diffs are in §2. 打过补丁的上游文件及其 diff 见 §2。
+The patched upstream files (`p1_prep/patched/`, `infra_prep/patched/`) and the diffs are in §2. 打过补丁的上游文件及 diff 见 §2。
 
 | File | What it is | 说明 |
 |---|---|---|

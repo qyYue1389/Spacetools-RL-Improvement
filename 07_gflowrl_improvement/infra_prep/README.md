@@ -7,9 +7,8 @@
 | 文件 | 作用 |
 |---|---|
 | `patched/` | 打好补丁的 5 个文件:`ray_trainer.py`(= c6fef78a + P1-a + 丢退化组 + dump 不存图开关)、`fsdp_workers.py`、`tool_agent_loop.py`、`run_rl.sh`、`run_rl_gflowrl.sh` |
-| `patched_toolshed/verl.py` | Toolshed 侧计时补丁(SpaceTools-Toolshed `712e557`) |
 | `infra_all_vs_c6fef78a.diff` | `patched/` 5 个文件相对 c6fef78a 的完整 diff,`git apply` 验证可用 |
-| `toolshed_tool_timing_vs_712e557.diff` | Toolshed 侧计时补丁的 diff,`git apply` 验证可用 |
+| `toolshed_tool_timing_vs_712e557.diff` | Toolshed 侧计时补丁(改 `toolshed/integration/verl.py`)。只放 diff,不放改好的全文(Toolshed 用的是它自己的许可证);在 SpaceTools-Toolshed `712e557` 上 `git apply` |
 | `infra_drop_only.diff` | 只有「丢退化组」这一项(相对 P1-a) |
 | `infra_drop_check.py` | 丢退化组的 CPU 自检(需 torch) |
 | `stage_timing.py` | 从训练日志抽全部 `timing_s/*`,找出那 129 s |
@@ -75,7 +74,7 @@ step 85 那 981 s 里的 129 s = old_log_prob 118.8 + update_weights 10.0 + 0.3�
 - 剩下的是回到事件循环后的处理(`ray.put` 图片/变量等)
 
 外加提交时该工具和全部工具的在途调用数、线程池大小、是否出错。不设这个变量时行为与原来完全一样。
-`remote` 和 `exec_wait` 需要 Toolshed 侧补丁(`patched_toolshed/`);没打时只有总耗时。
+`remote` 和 `exec_wait` 需要 Toolshed 侧补丁(`git -C <SpaceTools-Toolshed> apply toolshed_tool_timing_vs_712e557.diff`);没打时只有总耗时。
 
 ```bash
 export TOOL_TIMING_DIR=$OUTPUT_DIR/tool_timing        # 在 run_rl_gflowrl.sh 之前,随 ray start 传给 worker

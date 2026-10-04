@@ -1,5 +1,6 @@
 """
-Self-check for the per-call tool timing (patched/tool_agent_loop.py + patched_toolshed/verl.py).
+Self-check for the per-call tool timing (patched/tool_agent_loop.py + Toolshed's
+toolshed/integration/verl.py with toolshed_tool_timing_vs_712e557.diff applied).
 
 Extracts ToolAgentLoop._call_tool and ToolshedMethodTool.execute from the patched sources (and
 _call_tool from the unpatched SpaceTools-RL for comparison), runs them on stub tools, and checks:

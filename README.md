@@ -140,7 +140,7 @@ Every upstream file we modified. Changes marked **P1(a)** or **Infra** are prepa
 | `verl/experimental/agent_loop/tool_agent_loop.py` | SpaceTools-RL (verl) | **Infra:** per-call tool timing log, to find what rollout generation waits for | [Infra](07_gflowrl_improvement/infra_prep/patched/tool_agent_loop.py) |
 | `toolshed/tools/vlm.py` | SpaceTools-Toolshed | Honour the `dtype` argument and cast inputs to the model dtype | [patch](00_environment/upstream_patches/SpaceTools-Toolshed) |
 | `toolshed/tools/graspgen_franka_panda.yml` | SpaceTools-Toolshed | Checkpoint paths made absolute, so they resolve inside a Ray actor | same patch |
-| `toolshed/integration/verl.py` | SpaceTools-Toolshed | **Infra:** timestamps that split a tool call's latency into thread-pool wait and remote time | [Infra](07_gflowrl_improvement/infra_prep/patched_toolshed/verl.py) |
+| `toolshed/integration/verl.py` | SpaceTools-Toolshed | **Infra:** timestamps that split a tool call's latency into thread-pool wait and remote time | [diff](07_gflowrl_improvement/infra_prep/toolshed_tool_timing_vs_712e557.diff) |
 | `pyproject.toml`, `requirements.txt` | GraspGen | Drop `pickle5`, which cannot compile on Python 3.11 | [patch](00_environment/upstream_patches/GraspGen) |
 | `pointnet2_ops/pointnet2_ops/pointnet2_utils.py` | GraspGen | The hardcoded GPU architecture list no longer overrides the build setting | [`repair_graspgen_step6.sh`](00_environment/eval_rl_env/graspgen_fixes/repair_graspgen_step6.sh) |
 | `env_setup.sh` | RoboRefer | Skip a hardcoded Python 3.10 wheel that aborts the install on Python 3.11 | [patch](00_environment/upstream_patches/RoboRefer) |
@@ -213,7 +213,7 @@ Scores are only comparable under the same protocol: `gpu_memory_utilization` set
 
 ## License
 
-Apache-2.0 (see [LICENSE](LICENSE)). Files under `04_gflowrl_implementation/spacetools_rl_modified/`, `07_gflowrl_improvement/p1_prep/patched/` and `07_gflowrl_improvement/infra_prep/patched/` are modified versions of [SpaceTools-RL](https://github.com/ChicyChen/SpaceTools-RL) / [verl](https://github.com/volcengine/verl) files, and `02_sft_training/run_sft.sh` of a [SpaceTools-SFT](https://github.com/ChicyChen/SpaceTools-SFT) file; all three projects are Apache-2.0. `07_gflowrl_improvement/infra_prep/patched_toolshed/verl.py` and the patches under `00_environment/upstream_patches/` derive from [SpaceTools-Toolshed](https://github.com/NVlabs/SpaceTools-Toolshed), [GraspGen](https://github.com/NVlabs/GraspGen) and [RoboRefer](https://github.com/Zhoues/RoboRefer) and remain under those projects' own licenses. The full list of modified upstream files is in §6.
+Apache-2.0 (see [LICENSE](LICENSE)). Files under `04_gflowrl_implementation/spacetools_rl_modified/`, `07_gflowrl_improvement/p1_prep/patched/` and `07_gflowrl_improvement/infra_prep/patched/` are modified versions of [SpaceTools-RL](https://github.com/ChicyChen/SpaceTools-RL) / [verl](https://github.com/volcengine/verl) files, and `02_sft_training/run_sft.sh` of a [SpaceTools-SFT](https://github.com/ChicyChen/SpaceTools-SFT) file; all three projects are Apache-2.0. `07_gflowrl_improvement/infra_prep/toolshed_tool_timing_vs_712e557.diff` and the patches under `00_environment/upstream_patches/` are diffs against [SpaceTools-Toolshed](https://github.com/NVlabs/SpaceTools-Toolshed), [GraspGen](https://github.com/NVlabs/GraspGen) and [RoboRefer](https://github.com/Zhoues/RoboRefer) which are under their own licenses; this repo carries only the diffs, not copies of those files. The full list of modified upstream files is in §6.
 
 ---
 
@@ -313,7 +313,7 @@ Apache-2.0 (see [LICENSE](LICENSE)). Files under `04_gflowrl_implementation/spac
 | `verl/experimental/agent_loop/tool_agent_loop.py` | SpaceTools-RL(verl) | **Infra:**逐次记录工具调用的耗时,用来查 rollout 生成在等什么 | [Infra](07_gflowrl_improvement/infra_prep/patched/tool_agent_loop.py) |
 | `toolshed/tools/vlm.py` | SpaceTools-Toolshed | 让 `dtype` 参数生效,并把输入转成模型的 dtype | [patch](00_environment/upstream_patches/SpaceTools-Toolshed) |
 | `toolshed/tools/graspgen_franka_panda.yml` | SpaceTools-Toolshed | checkpoint 路径改成绝对路径,在 Ray actor 里才解析得到 | 同一个 patch |
-| `toolshed/integration/verl.py` | SpaceTools-Toolshed | **Infra:**加时间戳,把一次工具调用的耗时拆成等线程和远端两段 | [Infra](07_gflowrl_improvement/infra_prep/patched_toolshed/verl.py) |
+| `toolshed/integration/verl.py` | SpaceTools-Toolshed | **Infra:**加时间戳,把一次工具调用的耗时拆成等线程和远端两段 | [diff](07_gflowrl_improvement/infra_prep/toolshed_tool_timing_vs_712e557.diff) |
 | `pyproject.toml`、`requirements.txt` | GraspGen | 去掉 `pickle5`,它在 Python 3.11 上编不过 | [patch](00_environment/upstream_patches/GraspGen) |
 | `pointnet2_ops/pointnet2_ops/pointnet2_utils.py` | GraspGen | 写死的 GPU 架构列表不再覆盖构建时的设置 | [`repair_graspgen_step6.sh`](00_environment/eval_rl_env/graspgen_fixes/repair_graspgen_step6.sh) |
 | `env_setup.sh` | RoboRefer | 跳过写死的 Python 3.10 wheel,它会让 Python 3.11 下的安装中止 | [patch](00_environment/upstream_patches/RoboRefer) |

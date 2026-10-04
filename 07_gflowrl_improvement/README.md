@@ -34,8 +34,7 @@ Training-side speed-ups that do not change the objective; with the new switches 
 | Path | What |
 |---|---|
 | `patched/` | `ray_trainer.py` (= c6fef78a + P1(a) + drop degenerate groups + `dump_images` switch), `fsdp_workers.py`, `tool_agent_loop.py`, `run_rl.sh`, `run_rl_gflowrl.sh` |
-| `patched_toolshed/verl.py` | Toolshed side of the per-tool timing (on SpaceTools-Toolshed `712e557`) |
-| `infra_all_vs_c6fef78a.diff` | All files in `patched/` as one diff against `c6fef78a` (`git apply`-able); `toolshed_tool_timing_vs_712e557.diff` for Toolshed |
+| `infra_all_vs_c6fef78a.diff` | All files in `patched/` as one diff against `c6fef78a` (`git apply`-able); `toolshed_tool_timing_vs_712e557.diff` is the Toolshed side of the per-tool timing: apply it to `toolshed/integration/verl.py` at SpaceTools-Toolshed `712e557` (only the diff is kept here; Toolshed has its own license) |
 | `infra_drop_only.diff` | Only the drop-degenerate change, on top of P1(a) |
 | `GF_DROP_DEGEN=true` | Drop reward-degenerate groups before old_log_prob / ref / update_actor (needs `GF_FILTER_DEGEN=true`); the update is unchanged, the three passes only see the ~30 % kept rows |
 | `REF_PARAM_OFFLOAD=False` | Keep the reference model on GPU (upstream forced CPU offload regardless of the flag). Measured gain only ~5 s/step, so it stays off |
