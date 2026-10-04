@@ -67,7 +67,7 @@ Primary metric for the next runs: the share of Vacant questions whose RoboRefer 
 The folders follow the order of the pipeline. Reports and the design doc are written in Chinese; code, file names and this README are in English. Old paths quoted inside the reports are mapped to this repo in [`docs/PATH_MAP.md`](docs/PATH_MAP.md).
 
 ```
-docs/                            Full report, design doc, paper notes, path map
+docs/                            Full report, design doc, paper notes, path map, file index
 00_environment/                  Building / restoring the SFT env and the 5 eval+RL envs
   sft_env/                         SFT env build script + packaged-env restore/verify
   eval_rl_env/                     Eval/RL env build guide, build + verify scripts, POSTRESTORE
@@ -100,6 +100,7 @@ Where to find each piece:
 |---|---|
 | The whole story in one document | [`docs/full_report_v1.md`](docs/full_report_v1.md) |
 | The current optimization plan | [`docs/design_doc_gflowrl_optimization.md`](docs/design_doc_gflowrl_optimization.md) |
+| What we changed upstream, and every file we created | [§6](#6-what-we-changed-upstream) · [`docs/FILE_INDEX.md`](docs/FILE_INDEX.md) |
 | GFlowRL loss (Eq. 8, gradient half) | [`04_gflowrl_implementation/spacetools_rl_modified/verl/trainer/ppo/core_algos.py`](04_gflowrl_implementation/spacetools_rl_modified/verl/trainer/ppo/core_algos.py) → `compute_policy_loss_gflowrl` |
 | Flow gap / log Z (Eq. 4–7, no-grad half) | [`04_gflowrl_implementation/spacetools_rl_modified/verl/trainer/ppo/ray_trainer.py`](04_gflowrl_implementation/spacetools_rl_modified/verl/trainer/ppo/ray_trainer.py) → `compute_gflowrl_flow_gap` |
 | GFlowRL launcher | [`04_gflowrl_implementation/spacetools_rl_modified/examples/toolshed/run_rl_gflowrl.sh`](04_gflowrl_implementation/spacetools_rl_modified/examples/toolshed/run_rl_gflowrl.sh) |
@@ -109,7 +110,45 @@ Where to find each piece:
 | Per-sample GRPO vs GFlowRL analysis | [`06_gflowrl_eval/analysis/`](06_gflowrl_eval/analysis) |
 | Trajectories (full multi-turn transcripts incl. tool outputs) | `*/dumps/**.jsonl.gz`, parsed records in `*/parsed/` |
 
-## 6. Hugging Face artifacts
+## 6. What we changed upstream
+
+Everything this project runs is upstream code plus the changes below; all other files in this repo were written for the project. [`docs/FILE_INDEX.md`](docs/FILE_INDEX.md) has the long form: each change explained, the 19 patches one by one, and every file we created with what it does.
+
+Upstream projects and the versions we started from:
+
+| Upstream | Started from |
+|---|---|
+| [SpaceTools-RL](https://github.com/ChicyChen/SpaceTools-RL), a fork of [verl](https://github.com/volcengine/verl) | `54270e82` |
+| [SpaceTools-Toolshed](https://github.com/NVlabs/SpaceTools-Toolshed) | `4f0512d` |
+| [GraspGen](https://github.com/NVlabs/GraspGen) | `2dd8852` |
+| [RoboRefer](https://github.com/Zhoues/RoboRefer) | `d97a995` |
+| [SpaceTools-SFT](https://github.com/ChicyChen/SpaceTools-SFT) | `b7ebbf32` |
+| [Ray](https://github.com/ray-project/ray) | 2.47.1 (pip) |
+| Official checkpoint [`siyich/spacetools-ckpt`](https://huggingface.co/siyich/spacetools-ckpt) | `f953b1a1` |
+
+Every upstream file we modified. Changes marked **P1(a)** or **Infra** are prepared and CPU-checked for the next GPU run; the 85-step training used the others.
+
+| Upstream file | From | What we changed, and why | In this repo |
+|---|---|---|---|
+| `examples/toolshed/run_eval.sh` | SpaceTools-RL | Benchmark paths corrected to the current HF dataset layout; GPU budget and tool GPU shares set for a 4-GPU node, so the tools stop running out of memory; `DATA_DIR` override; conda shell hook; policy held in bf16 to fit a 40 GB card | [modified file](04_gflowrl_implementation/spacetools_rl_modified/examples/toolshed/run_eval.sh) · [patches](04_gflowrl_implementation/patches_spacetools_rl) 0001–0007, 0009 |
+| `examples/toolshed/run_rl.sh` | SpaceTools-RL | Separate tool and training GPUs, so RL runs on a single node; tool actors scaled to the tool GPUs; Ray head started from the repo folder; correct exit code. **Infra:** `REF_PARAM_OFFLOAD` switch | [modified file](04_gflowrl_implementation/spacetools_rl_modified/examples/toolshed/run_rl.sh) · patches 0014, 0016–0018 · [Infra](07_gflowrl_improvement/infra_prep/patched/run_rl.sh) |
+| `examples/toolshed/run_rl_gflowrl.sh` | new file, added to the SpaceTools-RL tree | GFlowRL launcher: a thin wrapper over `run_rl.sh` that selects the loss, sets β and ε, and keeps the two arms' outputs apart. **P1(a):** `GF_FILTER_DEGEN`. **Infra:** `GF_DROP_DEGEN` | [file](04_gflowrl_implementation/spacetools_rl_modified/examples/toolshed/run_rl_gflowrl.sh) · patch 0012 · [P1(a)](07_gflowrl_improvement/p1_prep/patched/run_rl_gflowrl.sh) · [Infra](07_gflowrl_improvement/infra_prep/patched/run_rl_gflowrl.sh) |
+| `verl/trainer/ppo/core_algos.py` | SpaceTools-RL (verl) | The GFlowRL policy loss (Eq. 8), registered as `"gflowrl"` | [modified file](04_gflowrl_implementation/spacetools_rl_modified/verl/trainer/ppo/core_algos.py) · patches 0011, 0015 |
+| `verl/trainer/ppo/ray_trainer.py` | SpaceTools-RL (verl) | The flow gap (Eq. 4–7), a guard against two silent misconfigurations, reward-degeneracy and β metrics; extra fields in eval dumps for offline analysis. **P1(a):** zero the flow gap of reward-degenerate groups. **Infra:** drop those groups before the three forward / backward passes; `dump_images` switch | [modified file](04_gflowrl_implementation/spacetools_rl_modified/verl/trainer/ppo/ray_trainer.py) · patches 0008, 0010–0012, 0015, 0019 · [P1(a)](07_gflowrl_improvement/p1_prep/patched/ray_trainer.py) · [Infra](07_gflowrl_improvement/infra_prep/patched/ray_trainer.py) |
+| `verl/workers/config/actor.py`, `verl/trainer/config/actor/actor.yaml` | SpaceTools-RL (verl) | Declare the GFlowRL config keys so Hydra accepts them | [`actor.py`](04_gflowrl_implementation/spacetools_rl_modified/verl/workers/config/actor.py) · [`actor.yaml`](04_gflowrl_implementation/spacetools_rl_modified/verl/trainer/config/actor/actor.yaml) · patch 0013 |
+| `verl/workers/fsdp_workers.py` | SpaceTools-RL (verl) | **Infra:** the reference model can stay on GPU (upstream ignores the flag) | [Infra](07_gflowrl_improvement/infra_prep/patched/fsdp_workers.py) |
+| `verl/experimental/agent_loop/tool_agent_loop.py` | SpaceTools-RL (verl) | **Infra:** per-call tool timing log, to find what rollout generation waits for | [Infra](07_gflowrl_improvement/infra_prep/patched/tool_agent_loop.py) |
+| `toolshed/tools/vlm.py` | SpaceTools-Toolshed | Honour the `dtype` argument and cast inputs to the model dtype | [patch](00_environment/upstream_patches/SpaceTools-Toolshed) |
+| `toolshed/tools/graspgen_franka_panda.yml` | SpaceTools-Toolshed | Checkpoint paths made absolute, so they resolve inside a Ray actor | same patch |
+| `toolshed/integration/verl.py` | SpaceTools-Toolshed | **Infra:** timestamps that split a tool call's latency into thread-pool wait and remote time | [Infra](07_gflowrl_improvement/infra_prep/patched_toolshed/verl.py) |
+| `pyproject.toml`, `requirements.txt` | GraspGen | Drop `pickle5`, which cannot compile on Python 3.11 | [patch](00_environment/upstream_patches/GraspGen) |
+| `pointnet2_ops/pointnet2_ops/pointnet2_utils.py` | GraspGen | The hardcoded GPU architecture list no longer overrides the build setting | [`repair_graspgen_step6.sh`](00_environment/eval_rl_env/graspgen_fixes/repair_graspgen_step6.sh) |
+| `env_setup.sh` | RoboRefer | Skip a hardcoded Python 3.10 wheel that aborts the install on Python 3.11 | [patch](00_environment/upstream_patches/RoboRefer) |
+| `scripts/spacetools/run_sft.sh` | SpaceTools-SFT | Batch size derived from the GPU count so the global batch stays 8; ZeRO-2; `save_only_model`; `eval_steps` 500 | [`run_sft.sh`](02_sft_training/run_sft.sh) · [diff](02_sft_training/run_sft.sh.diff_vs_upstream) |
+| `ray/_private/node.py` | Ray | Python version check relaxed to the minor level, so tool environments on a different patch version can join the cluster | [`POSTRESTORE.sh`](00_environment/eval_rl_env/POSTRESTORE.sh) |
+| `config.json`, `preprocessor_config.json` | official checkpoint | Config repaired so sglang can load the checkpoint | [`fix_checkpoint.py`](00_environment/official_ckpt_fix/fix_checkpoint.py) |
+
+## 7. Hugging Face artifacts
 
 | Repo | Contents |
 |---|---|
@@ -119,7 +158,7 @@ Where to find each piece:
 
 Upstream artifacts used: base model [`Qwen/Qwen2.5-VL-3B-Instruct`](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct), official checkpoint [`siyich/spacetools-ckpt`](https://huggingface.co/siyich/spacetools-ckpt), SFT data [`siyich/spacetools-sft`](https://huggingface.co/datasets/siyich/spacetools-sft), RL data [`siyich/spacetools-rlfulltools`](https://huggingface.co/datasets/siyich/spacetools-rlfulltools), eval benchmarks [`siyich/spacetools-eval-benchmarks`](https://huggingface.co/datasets/siyich/spacetools-eval-benchmarks) @ `1d539ac9`, tool weights [`Zhoues/RoboRefer-8B-SFT`](https://huggingface.co/Zhoues/RoboRefer-8B-SFT), [`allenai/Molmo-7B-D-0924`](https://huggingface.co/allenai/Molmo-7B-D-0924), [`facebook/sam2.1-hiera-small`](https://huggingface.co/facebook/sam2.1-hiera-small), [`adithyamurali/GraspGenModels`](https://huggingface.co/adithyamurali/GraspGenModels) (all revisions pinned in [`03_sft_eval/config/WEIGHTS_PINS.txt`](03_sft_eval/config/WEIGHTS_PINS.txt)).
 
-## 7. Reproducing
+## 8. Reproducing
 
 All GPU steps need Linux x86_64, ≥ 4 GPUs of compute capability 8.0 / 8.6 / 8.9 with ≥ 40 GB each (H100 is not covered by the packaged env), driver ≥ 550, glibc ≥ 2.39 for the eval env. Set `HF_TOKEN` before downloading (anonymous downloads get rate-limited).
 
@@ -164,7 +203,7 @@ bash examples/toolshed/run_rl_gflowrl.sh trainer.test_freq=-1 trainer.val_before
 
 Scores are only comparable under the same protocol: `gpu_memory_utilization` set so the KV pool is 24 GB, greedy decoding, `vlm num_gpus=1.0`.
 
-## 8. References
+## 9. References
 
 - SpaceTools: *SpaceTools: Tool-Augmented Spatial Reasoning via Double Interactive RL*, [arXiv:2512.04069](https://arxiv.org/abs/2512.04069) · code [spacetools/SpaceTools](https://github.com/spacetools/SpaceTools) · [SpaceTools-RL](https://github.com/ChicyChen/SpaceTools-RL) · [SpaceTools-SFT](https://github.com/ChicyChen/SpaceTools-SFT) · [SpaceTools-Toolshed](https://github.com/NVlabs/SpaceTools-Toolshed)
 - GFlowRL: *GFlowRL: Scaling Distribution-Matching RL to Large Language Models*, [arXiv:2607.13394](https://arxiv.org/abs/2607.13394) (official code not released at the time of writing)
@@ -174,7 +213,7 @@ Scores are only comparable under the same protocol: `gpu_memory_utilization` set
 
 ## License
 
-Apache-2.0 (see [LICENSE](LICENSE)). Files under `04_gflowrl_implementation/spacetools_rl_modified/` are modified versions of [SpaceTools-RL](https://github.com/ChicyChen/SpaceTools-RL) / [verl](https://github.com/volcengine/verl), both Apache-2.0.
+Apache-2.0 (see [LICENSE](LICENSE)). Files under `04_gflowrl_implementation/spacetools_rl_modified/`, `07_gflowrl_improvement/p1_prep/patched/` and `07_gflowrl_improvement/infra_prep/patched/` are modified versions of [SpaceTools-RL](https://github.com/ChicyChen/SpaceTools-RL) / [verl](https://github.com/volcengine/verl) files, and `02_sft_training/run_sft.sh` of a [SpaceTools-SFT](https://github.com/ChicyChen/SpaceTools-SFT) file; all three projects are Apache-2.0. `07_gflowrl_improvement/infra_prep/patched_toolshed/verl.py` and the patches under `00_environment/upstream_patches/` derive from [SpaceTools-Toolshed](https://github.com/NVlabs/SpaceTools-Toolshed), [GraspGen](https://github.com/NVlabs/GraspGen) and [RoboRefer](https://github.com/Zhoues/RoboRefer) and remain under those projects' own licenses. The full list of modified upstream files is in §6.
 
 ---
 
@@ -231,6 +270,7 @@ Apache-2.0 (see [LICENSE](LICENSE)). Files under `04_gflowrl_implementation/spac
 |---|---|
 | 一份文档看完全部 | [`docs/full_report_v1.md`](docs/full_report_v1.md) |
 | 当前优化计划 | [`docs/design_doc_gflowrl_optimization.md`](docs/design_doc_gflowrl_optimization.md) |
+| 对上游的改动、我们创建的每个文件 | [§6](#6-对上游的改动) · [`docs/FILE_INDEX.md`](docs/FILE_INDEX.md) |
 | 环境搭建 | [`00_environment/`](00_environment) |
 | 官方 ckpt 评测与错题归因 | [`01_official_checkpoint_eval/`](01_official_checkpoint_eval) |
 | SFT 训练 / SFT eval | [`02_sft_training/`](02_sft_training) · [`03_sft_eval/`](03_sft_eval) |
@@ -243,7 +283,45 @@ Apache-2.0 (see [LICENSE](LICENSE)). Files under `04_gflowrl_implementation/spac
 
 **阶段编号说明:** 复现阶段沿用 P0–P7(P4 = 官方 ckpt 全量评测,P5 = accuracy,P6 = 错题归因,P7 = 换成 GFlowRL);design doc 里的优化阶段另有一套 P0–P3,放在 `07_gflowrl_improvement/`。
 
-## 6. Hugging Face
+## 6. 对上游的改动
+
+本项目跑的代码 = 上游代码 + 下面这些改动;repo 里其余文件都是为本项目写的。详细版在 [`docs/FILE_INDEX.md`](docs/FILE_INDEX.md):每处改动的说明、19 个 patch 逐个的作用,以及我们创建的每个文件是做什么的。
+
+上游项目与起始版本:
+
+| 上游 | 起始版本 |
+|---|---|
+| [SpaceTools-RL](https://github.com/ChicyChen/SpaceTools-RL)([verl](https://github.com/volcengine/verl) 的 fork) | `54270e82` |
+| [SpaceTools-Toolshed](https://github.com/NVlabs/SpaceTools-Toolshed) | `4f0512d` |
+| [GraspGen](https://github.com/NVlabs/GraspGen) | `2dd8852` |
+| [RoboRefer](https://github.com/Zhoues/RoboRefer) | `d97a995` |
+| [SpaceTools-SFT](https://github.com/ChicyChen/SpaceTools-SFT) | `b7ebbf32` |
+| [Ray](https://github.com/ray-project/ray) | 2.47.1(pip) |
+| 官方 checkpoint [`siyich/spacetools-ckpt`](https://huggingface.co/siyich/spacetools-ckpt) | `f953b1a1` |
+
+改动过的全部上游文件。标 **P1(a)** 或 **Infra** 的改动已写好并在 CPU 上自检通过,留给下一次 GPU 实验;85 步训练用的是其余改动。
+
+| 上游文件 | 来源 | 改了什么、为什么 | 本 repo 位置 |
+|---|---|---|---|
+| `examples/toolshed/run_eval.sh` | SpaceTools-RL | benchmark 路径改成 HF 数据集现在的布局;GPU 预算和工具的 GPU 份额按 4 卡设置,工具不再 OOM;新增 `DATA_DIR` 覆盖;加载 conda shell hook;策略模型用 bf16,40 GB 的卡才放得下 | [改后的文件](04_gflowrl_implementation/spacetools_rl_modified/examples/toolshed/run_eval.sh) · [patch](04_gflowrl_implementation/patches_spacetools_rl) 0001–0007、0009 |
+| `examples/toolshed/run_rl.sh` | SpaceTools-RL | 工具和训练的 GPU 分开,RL 才能在单机上跑;工具 actor 数按工具卡数缩放;Ray head 从仓库目录启动;退出码修正。**Infra:**`REF_PARAM_OFFLOAD` 开关 | [改后的文件](04_gflowrl_implementation/spacetools_rl_modified/examples/toolshed/run_rl.sh) · patch 0014、0016–0018 · [Infra](07_gflowrl_improvement/infra_prep/patched/run_rl.sh) |
+| `examples/toolshed/run_rl_gflowrl.sh` | 新文件,加在 SpaceTools-RL 目录里 | GFlowRL 启动脚本:`run_rl.sh` 的薄封装,选 loss、设 β 和 ε,两臂输出分开。**P1(a):**`GF_FILTER_DEGEN`。**Infra:**`GF_DROP_DEGEN` | [文件](04_gflowrl_implementation/spacetools_rl_modified/examples/toolshed/run_rl_gflowrl.sh) · patch 0012 · [P1(a)](07_gflowrl_improvement/p1_prep/patched/run_rl_gflowrl.sh) · [Infra](07_gflowrl_improvement/infra_prep/patched/run_rl_gflowrl.sh) |
+| `verl/trainer/ppo/core_algos.py` | SpaceTools-RL(verl) | GFlowRL 的 policy loss(Eq. 8),注册为 `"gflowrl"` | [改后的文件](04_gflowrl_implementation/spacetools_rl_modified/verl/trainer/ppo/core_algos.py) · patch 0011、0015 |
+| `verl/trainer/ppo/ray_trainer.py` | SpaceTools-RL(verl) | flow gap(Eq. 4–7)、两种静默错误配置的守卫、奖励退化与 β 分解指标;eval dump 多写几个字段供离线分析。**P1(a):**把奖励退化组的 flow gap 置 0。**Infra:**在三次前向 / 反向之前把这些组删掉;`dump_images` 开关 | [改后的文件](04_gflowrl_implementation/spacetools_rl_modified/verl/trainer/ppo/ray_trainer.py) · patch 0008、0010–0012、0015、0019 · [P1(a)](07_gflowrl_improvement/p1_prep/patched/ray_trainer.py) · [Infra](07_gflowrl_improvement/infra_prep/patched/ray_trainer.py) |
+| `verl/workers/config/actor.py`、`verl/trainer/config/actor/actor.yaml` | SpaceTools-RL(verl) | 声明 GFlowRL 的配置键,Hydra 才接受 | [`actor.py`](04_gflowrl_implementation/spacetools_rl_modified/verl/workers/config/actor.py) · [`actor.yaml`](04_gflowrl_implementation/spacetools_rl_modified/verl/trainer/config/actor/actor.yaml) · patch 0013 |
+| `verl/workers/fsdp_workers.py` | SpaceTools-RL(verl) | **Infra:**参考模型可以留在 GPU 上(上游不看这个开关) | [Infra](07_gflowrl_improvement/infra_prep/patched/fsdp_workers.py) |
+| `verl/experimental/agent_loop/tool_agent_loop.py` | SpaceTools-RL(verl) | **Infra:**逐次记录工具调用的耗时,用来查 rollout 生成在等什么 | [Infra](07_gflowrl_improvement/infra_prep/patched/tool_agent_loop.py) |
+| `toolshed/tools/vlm.py` | SpaceTools-Toolshed | 让 `dtype` 参数生效,并把输入转成模型的 dtype | [patch](00_environment/upstream_patches/SpaceTools-Toolshed) |
+| `toolshed/tools/graspgen_franka_panda.yml` | SpaceTools-Toolshed | checkpoint 路径改成绝对路径,在 Ray actor 里才解析得到 | 同一个 patch |
+| `toolshed/integration/verl.py` | SpaceTools-Toolshed | **Infra:**加时间戳,把一次工具调用的耗时拆成等线程和远端两段 | [Infra](07_gflowrl_improvement/infra_prep/patched_toolshed/verl.py) |
+| `pyproject.toml`、`requirements.txt` | GraspGen | 去掉 `pickle5`,它在 Python 3.11 上编不过 | [patch](00_environment/upstream_patches/GraspGen) |
+| `pointnet2_ops/pointnet2_ops/pointnet2_utils.py` | GraspGen | 写死的 GPU 架构列表不再覆盖构建时的设置 | [`repair_graspgen_step6.sh`](00_environment/eval_rl_env/graspgen_fixes/repair_graspgen_step6.sh) |
+| `env_setup.sh` | RoboRefer | 跳过写死的 Python 3.10 wheel,它会让 Python 3.11 下的安装中止 | [patch](00_environment/upstream_patches/RoboRefer) |
+| `scripts/spacetools/run_sft.sh` | SpaceTools-SFT | batch 按 GPU 数推导,全局 batch 保持 8;ZeRO-2;`save_only_model`;`eval_steps` 500 | [`run_sft.sh`](02_sft_training/run_sft.sh) · [diff](02_sft_training/run_sft.sh.diff_vs_upstream) |
+| `ray/_private/node.py` | Ray | Python 版本检查放宽到 minor 档,补丁版本不同的工具环境才能加入集群 | [`POSTRESTORE.sh`](00_environment/eval_rl_env/POSTRESTORE.sh) |
+| `config.json`、`preprocessor_config.json` | 官方 checkpoint | 修复配置,sglang 才能加载这个 checkpoint | [`fix_checkpoint.py`](00_environment/official_ckpt_fix/fix_checkpoint.py) |
+
+## 7. Hugging Face
 
 | Repo | 内容 |
 |---|---|
@@ -251,10 +329,10 @@ Apache-2.0 (see [LICENSE](LICENSE)). Files under `04_gflowrl_implementation/spac
 | [`qzpm55555/spacetools-p7-gflowrl-cprime-8xa40`](https://huggingface.co/qzpm55555/spacetools-p7-gflowrl-cprime-8xa40) | GFlowRL C′ 的 `global_step_30/60/85`(HF 格式)与完整训练日志 |
 | [`qzpm55555/spacetools-eval-env`](https://huggingface.co/qzpm55555/spacetools-eval-env) | eval/RL 环境包(5 个 conda 环境,约 22 GB)及还原、验收脚本 |
 
-## 7. 复现
+## 8. 复现
 
-步骤见上文英文部分第 7 节,命令相同。无 GPU 的离线分析:`bash tools/unpack_dumps.sh` 之后直接跑 `06_gflowrl_eval/analysis/` 下的脚本。
+步骤见上文英文部分第 8 节,命令相同。无 GPU 的离线分析:`bash tools/unpack_dumps.sh` 之后直接跑 `06_gflowrl_eval/analysis/` 下的脚本。
 
-## 8. 参考
+## 9. 参考
 
-见上文英文部分第 8 节。
+见上文英文部分第 9 节。

@@ -8,3 +8,4 @@
 | `sft_training_notes.md` | Where every SFT config value comes from; batch / memory / ZeRO trade-offs |
 | `why_not_train_per_benchmark.md` | Why RL is not split per benchmark |
 | `PATH_MAP.md` | Original working paths quoted in the reports → paths in this repo |
+| `FILE_INDEX.md` | Every upstream file we modified (what changed, why, where it came from) and every file we created |
