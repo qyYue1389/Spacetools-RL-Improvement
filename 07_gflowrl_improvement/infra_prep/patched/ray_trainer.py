@@ -825,8 +825,11 @@ class RayPPOTrainer:
             if len(v) == n:
                 base_data[k] = v
 
-        # Save images from multi_modal_data if present
-        if multi_modal_data is not None and len(multi_modal_data) > 0:
+        # Save images from multi_modal_data if present.  +trainer.dump_images=false skips it:
+        # a training dump writes one PNG per image for all 320 rollouts every step, and the
+        # offline monitors (p1_monitor.py) only read the JSONL.  Default keeps the old behavior.
+        _dump_images = self.config.trainer.get("dump_images", True)
+        if _dump_images and multi_modal_data is not None and len(multi_modal_data) > 0:
             from PIL import Image
 
             images_dir = os.path.join(dump_path, f"images_{self.global_steps}")

@@ -6,7 +6,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `patched/` | 打好补丁的 5 个文件:`ray_trainer.py`(= c6fef78a + P1-a + 丢退化组)、`fsdp_workers.py`、`tool_agent_loop.py`、`run_rl.sh`、`run_rl_gflowrl.sh` |
+| `patched/` | 打好补丁的 5 个文件:`ray_trainer.py`(= c6fef78a + P1-a + 丢退化组 + dump 不存图开关)、`fsdp_workers.py`、`tool_agent_loop.py`、`run_rl.sh`、`run_rl_gflowrl.sh` |
 | `patched_toolshed/verl.py` | Toolshed 侧计时补丁(SpaceTools-Toolshed `712e557`) |
 | `infra_all_vs_c6fef78a.diff` | `patched/` 5 个文件相对 c6fef78a 的完整 diff,`git apply` 验证可用 |
 | `toolshed_tool_timing_vs_712e557.diff` | Toolshed 侧计时补丁的 diff,`git apply` 验证可用 |
@@ -14,6 +14,8 @@
 | `infra_drop_check.py` | 丢退化组的 CPU 自检(需 torch) |
 | `stage_timing.py` | 从训练日志抽全部 `timing_s/*`,找出那 129 s |
 | `nccl_bw_probe.py` + `preflight_nccl.sh` | 开机验收:P2P 能不能用、all-reduce 带宽多少 |
+| `dump_images_check.py` | dump 不存图开关的 CPU 自检 |
+| `check_tool_packing.py` | 开机验收:工具 actor 按卡排不排得下、份额够不够显存(读 run 脚本里的 `TOOL_CONFIGS`,不用 GPU) |
 | `tool_timing_check.py` / `tool_timing_summary.py` | 按工具计时的自检 / 汇总 |
 | `stage_timing_p7_85steps.csv` | P7 训练 85 步的逐阶段耗时 |
 
@@ -91,6 +93,30 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 bash preflight_nccl.sh     # 训练用的那几张�
 ```
 P2P_OK 才不设 `NCCL_P2P_DISABLE`;P2P_BROKEN 时考虑换机器。
 
+```bash
+python3 check_tool_packing.py examples/toolshed/run_rl.sh 4 --card-gib 46   # TOOL_GPUS=4,单卡 46 GiB
+```
+改工具 actor 数或 `num_gpus` 之后、开训之前跑。`run_rl.sh` 自己只断言份额合计 ≤ TOOL_GPUS,而且要等训练启动才触发;
+这里多查两件事:每张卡上的份额加起来 ≤ 1.0(排不进任何一张卡的 actor 会一直等),以及份额 × 单卡显存 ≥ 实测峰值
+(目前只有 vlm 有实测值 32.11 GiB,其余用 `--peak-gib 工具=GiB` 补)。工具表不在脚本里另抄一份,而是把 run 脚本的
+`TOOL_CONFIGS` 段(含自动缩放)切出来执行。
+PACK_FAIL 不要开训。PACK_ORDER_DEPENDENT 不拦:论文的 2 节点配置(7.8 / 8)和 P7 的配置(3.7 / 4)都是这个结果,
+意思是没有余量,换一种创建顺序会有 actor 排不进去;开训后某个工具一直不响应时先查这里。
+
+## 6. rollout dump 不存图片(`+trainer.dump_images=false`)
+
+P1 的监控要开 `trainer.rollout_data_dir`,而上游的 `_dump_generations` 除了写 JSONL,还会把每条样本的图另存成 PNG
+(每步一个 `images_<step>/`,320 条样本有几张图就存几张)。`p1_monitor.py` 只读 JSONL,这些图用不上。
+加了一个配置项:`trainer.dump_images`,默认 True(行为与原来完全一样);设成 false 时跳过存图,JSONL 照写。
+它不在上游的配置文件里,所以命令行要带 `+`:
+
+```bash
+GF_FILTER_DEGEN=true bash examples/toolshed/run_rl_gflowrl.sh \
+    trainer.rollout_data_dir=$OUT/rollouts +trainer.dump_images=false
+```
+
+训练中验证的 dump(`validation_data_dir`)走同一个函数,同一个开关一起生效。eval 脚本不传这个开关,行为不变。
+
 ## 自检结果
 
 - `infra_drop_check.py`:退化组 0/5/11/16 个四种情形,保留行梯度与 P1-a 全量完全一致;不按 micro 补齐的反例确实不一致。PASS
@@ -98,6 +124,8 @@ P2P_OK 才不设 `NCCL_P2P_DISABLE`;P2P_BROKEN 时考虑换机器。
 - `04_gflowrl_implementation/checks/run_checks.sh` 指向打了补丁的完整树:config / guard / gpusplit / onpolicy / fixedpoint / degenerate 全部 PASS
 - `infra_all_vs_c6fef78a.diff` 在干净的 c6fef78a 上 `git apply` 后与 `patched/` 逐字节相同
 
+- `check_tool_packing.py --selftest`:合计超限、合计不超但单卡排不下、P7 配置(顺序相关)、vlm 份额 0.6 / 0.7 对 46 GiB 卡,判定都符合预期;对 `c6fef78a` 的 `run_rl.sh` 取 TOOL_GPUS=4 复现 3.70 与 P7 的 actor 数。PASS
+- `dump_images_check.py`:不设 / 设 true 时存图与原来相同,设 false 时不建 `images_<step>/`、JSONL 逐行相同;同一脚本指向没有开关的 `../p1_prep/patched/ray_trainer.py` 会失败。PASS
 - `tool_timing_check.py`:不设变量时返回值与原函数完全一致;设了之后每次调用一条记录,`remote` / `exec_wait` 拆分正确,线程数不够时 `exec_wait` 变大,Toolshed 报错与未知工具都记为失败。PASS
 
 没做:checkpoint 瘦身。每 5 步存一次、每次 39 s,摊到每步约 8 s(<1%),而且去掉 optimizer 状态会让自动续训失效。

@@ -33,7 +33,7 @@ python p1_monitor.py --window 10 $OUT/rollouts
 python p1_monitor.py --window 1 $OUT/val_outputs   # 训练中验证:每次 122 题的只问物体题数
 ```
 
-注意:`_dump_generations` 每步会把 320 条样本的图存成 PNG,开机前确认磁盘或加开关跳过。
+注意:`_dump_generations` 每步会把 320 条样本的图存成 PNG。开关已加在 `../infra_prep/patched/ray_trainer.py`(本目录的 P1-a 版本没有):训练命令再带 `+trainer.dump_images=false` 就只写 JSONL,见 `../infra_prep/README.md` §6。
 
 ## 监控脚本的校准
 

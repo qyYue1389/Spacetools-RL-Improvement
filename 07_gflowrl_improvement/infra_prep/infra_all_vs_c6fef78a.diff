@@ -112,7 +112,21 @@
      }
  
      # ---- diagnostics.  No gradient, no effect on what this function returns. ----
-@@ -1770,6 +1851,26 @@
+@@ -744,8 +825,11 @@
+             if len(v) == n:
+                 base_data[k] = v
+ 
+-        # Save images from multi_modal_data if present
+-        if multi_modal_data is not None and len(multi_modal_data) > 0:
++        # Save images from multi_modal_data if present.  +trainer.dump_images=false skips it:
++        # a training dump writes one PNG per image for all 320 rollouts every step, and the
++        # offline monitors (p1_monitor.py) only read the JSONL.  Default keeps the old behavior.
++        _dump_images = self.config.trainer.get("dump_images", True)
++        if _dump_images and multi_modal_data is not None and len(multi_modal_data) > 0:
+             from PIL import Image
+ 
+             images_dir = os.path.join(dump_path, f"images_{self.global_steps}")
+@@ -1770,6 +1854,26 @@
  
                      if "response_mask" not in batch.batch.keys():
                          batch.batch["response_mask"] = compute_response_mask(batch)
@@ -139,7 +153,7 @@
                      # Balance the number of valid tokens across DP ranks.
                      # NOTE: This usually changes the order of data in the `batch`,
                      # which won't affect the advantage calculation (since it's based on uid),
-@@ -1906,6 +2007,8 @@
+@@ -1906,6 +2010,8 @@
                          # 组内奖励简并率。两臂都记,与 loss_mode 无关 —— 放在 gflowrl
                          # 分支之前就是为了这个:只有一臂有这个数的话它什么也证明不了。
                          metrics.update(compute_group_degeneracy_metrics(batch))
@@ -148,7 +162,7 @@
  
                          # GFlowRL replaces the advantage with the flow gap g~ (Eq. 4/6/7).
                          # compute_advantage still runs first so its metrics stay comparable.
-@@ -1933,12 +2036,27 @@
+@@ -1933,12 +2039,27 @@
                                      "use_kl_loss=True so ref_log_prob is still computed)."
                                  )
                              _gf = _pl.get("gflowrl", {}) or {}
@@ -176,7 +190,7 @@
                              )
                              metrics.update(_gf_metrics)
  
-@@ -1987,7 +2105,11 @@
+@@ -1987,7 +2108,11 @@
                      # Log rollout generations if enabled
                      rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
                      if rollout_data_dir:

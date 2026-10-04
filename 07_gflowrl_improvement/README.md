@@ -33,7 +33,7 @@ Training-side speed-ups that do not change the objective; with the new switches 
 
 | Path | What |
 |---|---|
-| `patched/` | `ray_trainer.py` (= c6fef78a + P1(a) + drop degenerate groups), `fsdp_workers.py`, `tool_agent_loop.py`, `run_rl.sh`, `run_rl_gflowrl.sh` |
+| `patched/` | `ray_trainer.py` (= c6fef78a + P1(a) + drop degenerate groups + `dump_images` switch), `fsdp_workers.py`, `tool_agent_loop.py`, `run_rl.sh`, `run_rl_gflowrl.sh` |
 | `patched_toolshed/verl.py` | Toolshed side of the per-tool timing (on SpaceTools-Toolshed `712e557`) |
 | `infra_all_vs_c6fef78a.diff` | All files in `patched/` as one diff against `c6fef78a` (`git apply`-able); `toolshed_tool_timing_vs_712e557.diff` for Toolshed |
 | `infra_drop_only.diff` | Only the drop-degenerate change, on top of P1(a) |
@@ -44,3 +44,5 @@ Training-side speed-ups that do not change the objective; with the new switches 
 | `stage_timing.py` → `stage_timing_p7_85steps.csv` | Per-stage timing from a training log (`timing_s/*`). On the P7 run: gen 321 s, old_log_prob 112 s, ref 117 s, update_actor 352 s per step (median); gen is dominated by tool calls |
 | `tool_timing_check.py` | CPU self-check of the per-tool timing (return values unchanged, split correct) |
 | `preflight_nccl.sh`, `nccl_bw_probe.py` | Machine acceptance: is GPU P2P usable, all-reduce bandwidth |
+| `check_tool_packing.py` | Pre-flight for the tool GPUs: do the tool actors' GPU shares in a run script fit card by card, and does each share cover the tool's memory peak. Run before training and after any change to tool replicas or fractions (`--selftest`) |
+| `+trainer.dump_images=false` | Skip the per-rollout PNGs in rollout / validation dumps; the JSONL is unchanged and the default keeps the images. `dump_images_check.py` is the CPU self-check |
