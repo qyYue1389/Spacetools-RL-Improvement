@@ -30,7 +30,7 @@ Github repo \- [https\://github.com/qyYue1389/Spacetools-RL-Improvement/tree/mai
 
 **总目标(Goals)**
 
-1. 让 C′ 在同配置下至少学会 GRPO 学会的东西 —— 以 Vacant 中「调 roborefer 时 obj\_name 只写锚物体名(不带位置描述)」的题目占比为主判据  
+1. 让 C′ 在同配置下至少学会 GRPO 学会的东西 —— 以 Vacant 中「调 roborefer 时 `obj_name` 只写锚物体名(不带位置描述)」的题目占比为主判据  
 2. 在不影响现有 GRPO 对照的前提下做优化;如果影响,同批补一个同配置 GRPO run  
 3. 每一个结论都能被一套固定的测量协议(§1.2)复现和区分
 
@@ -56,19 +56,21 @@ Github repo \- [https\://github.com/qyYue1389/Spacetools-RL-Improvement/tree/mai
 
 ### **1.2 测量协议(所有后续评测沿用)**
 
-* **环境:**同机同 session,KV 池固定 24.5 GB(gpu\_memory\_utilization 按卡容量反算,49140 MiB 卡上为 0.511);vlm 的 Ray num\_gpus \= 1.0(防止 Molmo 与两个 DepthPro 打包到同一张卡);ulimit \-c 0  
+* **环境:**同机同 session,KV 池固定 24.5 GB(`gpu_memory_utilization` 按卡容量反算,49140 MiB 卡上为 0.511);`vlm` 的 Ray `num_gpus` \= 1.0(防止 Molmo 与两个 DepthPro 打包到同一张卡);`ulimit -c 0`  
   * KV 池的大小决定推理时一批能装多少条序列，批的组成变了，浮点运算的累加顺序就跟着变，于是一些接近平局的样本会翻转答案。所以固定KV池避免机器带来的差异。以在4x A6000上eval用的 24.5 GB为标准  
-* **完成判定:**dump 存在且日志 OOM 计数为 0(run\_eval.sh 成功时也返回 15,不能用返回码);所有 dump 过 parse\_dump.py \--strict  
+* **完成判定:**dump 存在且日志 OOM 计数为 0(`run_eval.sh` 成功时也返回 15,不能用返回码);所有 dump 过 `parse_dump.py --strict`  
 * **重复:**每个 checkpoint 3 次,按SFT → GRPO → C′的顺序跑3次而不是按 checkpoint 分组  
 * **读数:**robospatial **必须拆成 VQA /228 与 Vacant /122 分别报**;配对检验同时给「稳定核」与「三次配对合并」两种 McNemar。Vacant 另按查询写法(只问锚物体 / 带位置描述)拆开报  
   * **稳定核：** 只用两臂各自 3 次结果都一致的题（3 次全对或全错），在这些题上数 A 对 B 错和 A 错 B 对各有几道  
   * **三次配对合并：** 第 1 次对第 1 次、第 2 次对第 2 次、第 3 次对第 3 次，逐题比较，把三次的分歧加在一起再检验  
 * **分辨率:**两臂之差的 sd ≈ 2.7 题,2σ ≈ 5.3 题。三次只能分辨 5 题以上;更小的差距需要 6 次以上  
-* **基线:**P0 的 27 个 dump(本地 P0/p0\_bundle/)是所有后续复查的对照  
+* **基线:**P0 的 27 个 dump(本地 `P0/p0_bundle/`)是所有后续复查的对照  
   * 重评时保存的样本轨迹  
     * **robospatial:** SFT, GRPO, C′ × 3 runs  
     * **blinkdepth：**SFT, GRPO, C′ × 3 runs  
     * **RefSpatial 三项：** SFT, GRPO, C′ × 1 run × 3 项 
+
+## 
 
 ## **2\. P1 · 训练信号饥饿 —— 根因**
 
@@ -128,15 +130,13 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
    * C′ 有 88.5% 的obj\_name和 SFT 起点一字不差，GRPO 是 50.8%  
 4. 这个习惯是 SFT 数据教出来的。 RoboSpatial 这个模板的 410 条示范全部只问物体，而 RefSpatial vacant 的 471 条里有 465 条带位置描述
 
-**实现核对:在我们的配置下,C′ 的一步更新就是 REINFORCE。**ppo\_mini\_batch\_size \= train\_batch\_size \= 64,每步只做一次梯度更新,严格 on-policy(训练中 is\_weight\_min=1.0、collapsed\_frac=0.0)。于是求导那一刻 log(π\_θ/π\_old)=0、w≡1,Eq. 8 的梯度精确等于 2·g̃\_i·∇Σ\_t log π\_θ —— 以 **−g̃\_i 为优势**、按序列求和的 REINFORCE。后面几项都从这里读:
+**实现核对:在我们的配置下,C′ 的一步更新就是 REINFORCE。**`ppo_mini_batch_size = train_batch_size = 64`,每步只做一次梯度更新,严格 on-policy(训练中 `is_weight_min=1.0`、`collapsed_frac=0.0`)。于是求导那一刻 log(π\_θ/π\_old)=0、w≡1,Eq. 8 的梯度精确等于 `2·g̃_i·∇Σ_t log π_θ` —— 以 **−g̃\_i 为优势**、按序列求和的 REINFORCE。后面几项都从这里读:
 
 * 退化组上 −g̃ \= −clip(d̄ − d\_i),纯漂移(a)  
 * 奖励项 |β(r̄ − r\_i)| 的步均值中位 0.67(含退化组的 0),而裁剪边界只有 0.2 / 0.28,所以 sat 中位 52%:一半样本的优势只剩符号加一个固定幅度(b)  
 * 梯度幅度随序列长度(闸门阶段实测均值 \~334 token)线性放大,这是 grad\_norm 180 的主因(b)
 
-外部实现 Maccchiatooo/spacetools-training-programs 的逐项对照见附录 B
-
-### 
+外部实现 `Maccchiatooo/spacetools-training-programs` 的逐项对照见附录 B
 
 ### 
 
@@ -146,7 +146,7 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 
 * 5 条奖励完全相同(全对或全错)的退化组占多数：C′ 每步约 70% 的组是退化组，组内奖励全同，奖励项为 0，这些组只贡献漂移项的梯度  
 * clip 后奖励信号被冲淡：grad\_clip 把每步梯度裁成单位范数，只保留方向。70% 的组都在往 π\_ref 拉，所以裁剪后剩下的方向主要由漂移项决定，真正来自奖励差的信号只占一小部分  
-* 这是我们自己偏离论文造成的：论文 Table 9 写了 Filter groups: Accuracy-based，也就是按正确率过滤掉全对或全错的组。我们实现 C′ 时有意没做这一步，这就是付出的代价。当时的考虑：  
+* 这是我们自己偏离论文造成的：论文 Table 9 写了 `Filter groups: Accuracy-based`，也就是按正确率过滤掉全对或全错的组。我们实现 C′ 时有意没做这一步，这就是付出的代价。当时的考虑：  
 * 退化组很多：用 G=5 的真实 rollout 组统计，5 条奖励完全相同的 prompt 占比 robospatial 199/350 \= 56.9%，blinkdepth 94/124 \= 75.8%，boppose 32/60 \= 53.3%  
 * GRPO 在退化组上优势为 0，不出梯度；C′ 的逐轨迹残差平方一般不为 0，仍然出梯度。当时把这看作 C′ 能用上 GRPO 扔掉的那部分 rollout  
 * 照搬过滤，G=5 下会丢掉 53–76% 的 prompt；不过滤，就是对论文配方的主动偏离，需要自己论证
@@ -173,15 +173,15 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 
 **Proposed solution.**「只过滤、不补采」:
 
-1. 在 driver 的 compute\_gflowrl\_flow\_gap() 里,组内奖励极差为 0 的组把 g̃ 设成 0(判据与现有的 reward/degenerate\_group\_frac 相同)。  
+1. 在 driver 的 `compute_gflowrl_flow_gap()` 里,组内奖励极差为 0 的组把 g̃ 设成 0(判据与现有的 `reward/degenerate_group_frac` 相同)。  
    1. 把退化组里 5 条 rollout 的 g̃ 都设成 0，它们的优势就是 0，对梯度的贡献也是 0。这些组原来那部分纯漂移项的梯度就被去掉了，效果和 GRPO 在退化组上不出梯度一样。每步只剩约 30% 有奖励差异的组参与更新。  
    2. 按上面的等价关系,on-policy 下这与「把这些组的 loss 权重置 0」**逐位等价**,不用改 actor 端,也不用给 loss 多传一个 mask。参考实现也是这么写的(附录 B)。  
 2. 分母仍用全部序列,**与 GRPO 一致**:GRPO 的退化组优势为 0,但照样计入 token-mean 的分母。  
-3. 守卫:断言 ppo\_mini\_batch\_size \== train\_batch\_size。以后若为省显存拆 mini-batch,等价性就不成立了(退化组会变成把 π\_θ 拉回 π\_old 的近端项),那时要改成真正的 loss mask。  
+3. 守卫:断言 `ppo_mini_batch_size == train_batch_size`。以后若为省显存拆 mini-batch,等价性就不成立了(退化组会变成把 π\_θ 拉回 π\_old 的近端项),那时要改成真正的 loss mask。  
    1. **Eq. 8 的形式：** 每条轨迹的 loss 大致是残差平方 (Σ log π\_θ/π\_old \+ g̃)²，梯度是 2·(Σ log π\_θ/π\_old \+ g̃)·∇log π\_θ  
    2. **现在（on-policy）：** 每步只更新一次，求导时 π\_θ \= π\_old，log 比恒为 0，梯度就是 2·g̃·∇log π\_θ。g̃ 置 0 之后，梯度正好为 0，等于把这些组滤掉了  
    3. **拆 mini-batch 以后：** 一步里会连续更新好几次。从第二个 mini-batch 起 π\_θ 已经不等于 π\_old，log 比不为 0。这时即使 g̃ \= 0，loss 仍是 (Σ log π\_θ/π\_old)²，梯度不为 0，作用是把 π\_θ 拉回 π\_old，相当于一个近端（信任域）约束。退化组就又开始影响更新，没被真正滤掉  
-   4. **所以要换成真正的 loss mask：** 直接把这些组的 loss 乘 0，不管 π\_θ 和 π\_old 差多少，都保证不出梯度。现在的补丁里用断言 ppo\_mini\_batch\_size \== train\_batch\_size 来防止误用  
+   4. **所以要换成真正的 loss mask：** 直接把这些组的 loss 乘 0，不管 π\_θ 和 π\_old 差多少，都保证不出梯度。现在的补丁里用断言 `ppo_mini_batch_size == train_batch_size` 来防止误用  
 4. 新增日志:每步保留组数(预期 64 → \~19:每步 64 个 prompt 即 64 组,退化组中位占 70.3% 被置 0,剩约 64×0.297≈19 组参与训练;用来确认过滤生效,并盯住保留组过少时梯度噪声/方差变大)  
    1. 过滤之后, 每步只剩约 19 组参与更新。样本越少, 这一步的梯度方向越容易被当前抽到的那几道题带偏, 步与步之间的方向会来回抖, 而不是稳定地朝一个方向走  
    2. 所以要记录保留组数。如果某些步只剩很少几组，梯度就不可靠。风险部分也写了应对：改点率方向对但抖动大时，再上补采（DAPO 式补到满批）  
@@ -209,7 +209,7 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
    2. 同时开训练中验证  
       1. 参考实现用 TEST\_FREQ=20 跑整个 robospatial 验证集,见附录 B: val 集换成只含 Vacant 122 题的 P1\_prep/robospatial\_vacant.parquet(已生成),加 data.val\_files=… trainer.test\_freq=10 trainer.val\_before\_train=True;  
       2. 贪心解码：验证时 T=0，同一个模型同一道题每次输出都一样，所以读数不带采样噪声，几步之间可以直接比  
-      3. 设了 val\_before\_train=True，训练第一步之前会先验证一次。这时权重还是 SFT，所以这次结果就是 SFT 起点在这 122 道 Vacant 题上的值，step 0 就是同机同池的起点读数;每次约 7 分钟(按 P0 上 350 题约 20 分钟折算),40 步共 5 次 ≈ 35 分钟。validation\_data\_dir 的 dump 直接用 p1\_monitor.py 读只问物体的题数。  
+      3. 设了 `val_before_train=True`，训练第一步之前会先验证一次。这时权重还是 SFT，所以这次结果就是 SFT 起点在这 122 道 Vacant 题上的值，step 0 就是同机同池的起点读数;每次约 7 分钟(按 P0 上 350 题约 20 分钟折算),40 步共 5 次 ≈ 35 分钟。validation\_data\_dir 的 dump 直接用 p1\_monitor.py 读只问物体的题数。  
 4. **读数:**每 10 步一个窗口读只问物体占比与改点率;同时看 degen、保留组数、score、rew/drift、grad\_norm。  
 5. **(可选)确认:**step 40 的 ckpt 按 §1.2 协议跑 robospatial ×3,按 VQA / Vacant 分开读。
 
@@ -235,7 +235,7 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 * **每步只剩 \~19 组,梯度方差变大。**若改点率方向对但抖动大,再上补采  
   * 补采：过滤掉退化组后，从数据集里再抽新题来生成 rollout，把非退化组补满到 64 组再更新，靠多抽题来增加组数  
   * robospatial 的 pointing 奖励只有 0 和 1 两个值  
-    * 评判方式是 convex\_hull：只看模型输出的第一个点，落在目标区域的凸包里就得 1，否则得 0，不按距离给部分分  
+    * 评判方式是 `convex_hull`：只看模型输出的第一个点，落在目标区域的凸包里就得 1，否则得 0，不按距离给部分分  
     * 所以 pointing 组也会整组退化被过滤;留下的正是 5 条里有对有错的组,GRPO 的信号也只来自这些组  
 * **score 在 40 步内大概率不动**  
   * 参考实现(Maccchiatooo/spacetools-training-programs)里已经有过滤退化组+G=16+更宽的 clip 边界 ε。跑了 39 步后，对训练奖励随步数做线性回归，斜率的 t 值是 −0.25。|t| 远小于 2，说明斜率和 0 没有区别，奖励基本没涨。所以判据用只问物体占比,不用 score  
@@ -244,7 +244,7 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 * **训练题问法不同**：RL 训练集里对应的题（unary\_spatial\_context）措辞是「several points … situated」这类，和 eval 模板不一样。所以模型在训练题上会不会犯同样的毛病，事先不知道，要等第一个窗口的 rollout 出来才能看到  
 * **如果训练题上本来就很少只问物体**：那训练 rollout 上的只问物体占比没有下降空间，拿它当判据没意义。这时改用训练中验证的读数，也就是每 10 步在 Vacant 122 题上跑一次。那 122 题用的就是 eval 模板，习惯一定会显现  
 * **改点率在 rollout 上的样本量**  
-  * 数据来源：RL 训练集是 HF 上的 siyich/spacetools-rlfulltools  
+  * 数据来源：RL 训练集是 HF 上的 `siyich/spacetools-rlfulltools`  
   * 和 Vacant 同类的题：训练集里有 500 条 RoboSpatial unary\_spatial\_context，和 eval 的 Vacant 是同一题型，占训练集 9.1%。每步 64 题里平均抽到约 5.8 题，乘 5 条 rollout 是 29 条；10 步一窗约 58 题、290 条  
   * 其他 pointing 题：还有 RefSpatial vacant 和 RefSpatial object 两类 pointing 题，各 500 条，也能算改点率  
   * 结论：按「差值要超过 2 倍 SD 才算真变化」的标准，只用那 500 条同类题，两窗STD 约 9 pp，门槛是 18 pp。预期改点率大约变 10 pp，达不到门槛，看不出来。三类合并后 SD ≈ 5 pp，门槛约 10 pp，能达到预期的 10 pp 变化。要是训练里实际噪声还是太大，就以每 10 步的训练中验证（Vacant 122 题）为准
@@ -297,9 +297,9 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 
 1. **常数 loss 缩放 ×1/L̄**  
    1. 验证H2a  
-   2. **做什么**：把 loss 整体乘一个固定常数 1/L̄。L̄ 是平均回答长度，以前测过约 334，开机后按前几步日志里的 y\_len\_mean 定一个值，之后不再变  
+   2. **做什么**：把 loss 整体乘一个固定常数 1/L̄。L̄ 是平均回答长度，以前测过约 334，开机后按前几步日志里的 `y_len_mean` 定一个值，之后不再变  
    3. **为什么不影响目标**：所有 loss 乘同一个常数，最小点不变，C′ 的不动点(loss, 梯度为 0)也就不变。只有每条样本除以各自的长度 |y\_i|，才会改变不动点（那是论文原版的 normalized 做法，C′ 没用）  
-   4. **为什么只需改一行配置**：在 AdamW 下，loss 乘 1/L̄ 和把 grad\_clip 阈值从 1.0 调到 L̄ 效果完全一样。因为 Adam 对梯度的常数倍不敏感，eps 又小到可以忽略，KL 也关了，不会改变各项的相对权重。所以 B 臂只要设 grad\_clip \= L̄，不用改代码  
+   4. **为什么只需改一行配置**：在 AdamW 下，loss 乘 1/L̄ 和把 grad\_clip 阈值从 1.0 调到 L̄ 效果完全一样。因为 Adam 对梯度的常数倍不敏感，eps 又小到可以忽略，KL 也关了，不会改变各项的相对权重。所以 B 臂只要设 `grad_clip = L̄`，不用改代码  
    5. **L̄ 定多少，能让多少步不被裁**：用C′ 那 85 步的 grad\_norm 反推，阈值设成 L̄ 时被裁的步数比例是：  
       1. 334 → 10.6%  
       2. 250 → 21%  
@@ -383,7 +383,7 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 
 |  | 为什么现在不动 | 触发条件 | 触发后怎么做 |
 | ----- | ----- | ----- | ----- |
-| epochs | 1 epoch 是上游写死的(run\_rl.sh:435),论文里RoboSpatial Overall 分数 70.0 也是 只训练了1 epoch 当前配置下85 步里 score 没有上升，大部分梯度来自退化组的漂移项，不是在学奖励。这时再多跑一遍数据，也只是多了一些同样不学奖励的步数，不会有帮助。 | 前 85 步 score 出现可重复的上升趋势 | 加到 2–3 epoch,每 \~30 步评 robospatial \+ blinkdepth,报告里写明评了几个 ckpt GRPO 对照run也要加 |
+| epochs | 1 epoch 是上游写死的(`run_rl.sh:435`),论文里RoboSpatial Overall 分数 70.0 也是 只训练了1 epoch 当前配置下85 步里 score 没有上升，大部分梯度来自退化组的漂移项，不是在学奖励。这时再多跑一遍数据，也只是多了一些同样不学奖励的步数，不会有帮助。 | 前 85 步 score 出现可重复的上升趋势 | 加到 2–3 epoch,每 \~30 步评 robospatial \+ blinkdepth,报告里写明评了几个 ckpt GRPO 对照run也要加 |
 | β | β \= 8 时，奖励项和漂移项的量级比中位数是 2.01，奖励项约为漂移项的 2 倍，**奖励已经占主导，**漂移项没有盖过奖励信号 调 β 对裁剪比例影响很小。同一批 rollout 把 β 换成 2 到 16 重算，sat 只在 48%–53% 之间变化 退化组上奖励项恒 0,β 再大也是乘 0。退化组的问题只能靠 P1(a) 的过滤解决。 | P1a-c 之后 rew/drift 仍持续下滑并接近 1 | 试 β=16 |
 
 ### β 这一行的触发条件：什么情况下才去动 β
@@ -516,9 +516,9 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 
 ## **Infra · 训练吞吐(与算法优化并行,不改目标函数)**
 
-**为什么单列.**P1 的每一轮实验都按「8 卡 × 约 10 h」计价,吞吐直接决定一天能验证几个假设。本节三项只改算力怎么花,不改 C′ 的目标函数和更新。编号 Infra P1–P3,与上面算法侧的 P1–P3 是两套。代码、自检与说明在 GFlowRL\_improve/infra\_prep/(README)。
+**为什么单列.**P1 的每一轮实验都按「8 卡 × 约 10 h」计价,吞吐直接决定一天能验证几个假设。本节三项只改算力怎么花,不改 C′ 的目标函数和更新。编号 Infra P1–P3,与上面算法侧的 P1–P3 是两套。代码、自检与说明在 `GFlowRL_improve/infra_prep/`(README)。
 
-**一步 922 s 花在哪.**infra\_prep/stage\_timing.py 读 HF 上的完整训练日志(provenance/full\_train.log.gz),85 步中位,单位秒:
+**一步 922 s 花在哪.**`infra_prep/stage_timing.py` 读 HF 上的完整训练日志(`provenance/full_train.log.gz`),85 步中位,单位秒:
 
 | 阶段 | 做什么 | 耗时 | 占比 | 随什么变 |
 | ----- | ----- | ----- | ----- | ----- |
@@ -531,7 +531,7 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 | 其余 | 计算 advantage 等零头 | 0.3 | 0% | — |
 
 * 这些阶段是verl 训练循环里各个计时段的名字。  
-* verl 在 ray\_trainer.py 的主循环里用 marked\_timer() 把每个阶段包起来计时,比如 with marked\_timer("gen", ...)。这些名字作为计时标签,写进日志后成为 timing\_s/gen、timing\_s/update\_actor 这样的指标,我们的耗时表就是从这些指标统计出来的。  
+* verl 在 `ray_trainer.py` 的主循环里用 `marked_timer()` 把每个阶段包起来计时,比如 `with marked_timer("gen", ...)`。这些名字作为计时标签,写进日志后成为 `timing_s/gen`、`timing_s/update_actor` 这样的指标,我们的耗时表就是从这些指标统计出来的。  
 * 报告 §8.4 的「其余 129 s」(step 85)= old\_log\_prob 118.8 \+ update\_weights 10.0:这两段 verl 本来就计时,报告当时只抄了四项  
 * 随No. of rollout变的三段合计 580 s,占 63%;gen 占 35%。两块分别由 Infra P1、Infra P2 处理  
 * ref 放在 CPU(117 s)与同样是一次前向、参数在 GPU 的 old\_log\_prob(112 s)只差约 5 s,ref offload 不是瓶颈(§3)
@@ -546,7 +546,7 @@ Vacant 上 C′ 比 GRPO 少对8.6 题（p \= 0.0004）。原因是一条链：�
 * update\_actor:在 FSDP 里做反向和 optimizer.step(),改的是 FSDP策略模型那份权重,这是真正的更新  
 * update\_weights:不算梯度,只把 FSDP 里刚更新好的权重拷给 sglang,让下一步 gen 用新策略采样  
 * 两步都会更新权重,但只有 update\_actor 在「学」;update\_weights 只是同步,保证生成用的权重和训练出来的一致。跳过它,sglang 会一直用旧策略采样,训练就不再是 on-policy  
-* 视觉编码器全程被冻结(freeze\_vision\_model=true，上游默认)，照常做前向(模型仍然看得见图)，但不算梯度，优化器里也没有它的参数。  
+* 视觉编码器全程被冻结(`freeze_vision_model=true`，上游默认)，照常做前向(模型仍然看得见图)，但不算梯度，优化器里也没有它的参数。  
 * 只训练语言模型部分的所有 Transformer 层(2.55B)，**全部更新**，全参数微调，没用 LoRA
 
 Note: 这里的 actor 和部署工具时的 actor 不是一个东西,只是撞了名:
@@ -566,14 +566,14 @@ Note: 这里的 actor 和部署工具时的 actor 不是一个东西,只是撞�
 
 * old\_log\_prob \+ ref \+ update\_actor 每步中位 580 s(63%),耗时随No. of rollout线性变化  
 * P1(a) 打开后,5 条奖励全同的组(退化组)g̃ 被置 0,on-policy 下这些轨迹的梯度恰为 0,不影响参数更新。这类轨迹中位占每步的 70.3%(320 条里约 225 条)。但 old\_log\_prob、ref、update\_actor 三段仍对全部 320 条做前向 / 反向,所以这三段的 580 s 里约 400 s(580 × 70.3%)是白算的。  
-  * siyich/spacetools-rlfulltoolsRL训练集train.parquet共 5500道题  
+  * `siyich/spacetools-rlfulltools`RL训练集`train.parquet`共 5500道题  
   * train\_batch\_size=64来自上游run\_rl.sh, **每步取 64 道**:5500 ÷ 64 \= 85.9,verl 丢掉最后不满一个 batch 的部分,1 个 epoch 是 85 步。64 道题 × 每题采G=5条rollout  
-* gen 结束时,每条轨迹的奖励已经算好,和轨迹一起返回(存在 rm\_scores 字段)。所以不用等后面三段跑完,在 old\_log\_prob 开始之前就能判断哪些组 5 条奖励全同(退化组)  
-  * rm\_scores(reward model scores)是 verl 的 batch 里存奖励的那个字段  
+* gen 结束时,每条轨迹的奖励已经算好,和轨迹一起返回(存在 `rm_scores` 字段)。所以不用等后面三段跑完,在 old\_log\_prob 开始之前就能判断哪些组 5 条奖励全同(退化组)  
+  * `rm_scores(`reward model scores`)`是 verl 的 batch 里存奖励的那个字段  
     * 它是每条轨迹的奖励分数,即这道题答得对不对(按题型打的分)。  
     * gen 阶段采完轨迹就打分,分数和轨迹一起写进 batch,所以它随 rollout 一起返回  
-    * 同一个 prompt 的 5 条轨迹如果 rm\_scores 完全相同(组内极差 \= 0),这组就是退化组  
-    * 逐 token 的张量。**形状**:\[轨迹数, response 长度\]  
+    * 同一个 prompt 的 5 条轨迹如果 `rm_scores` 完全相同(组内极差 \= 0),这组就是退化组  
+    * 逐 token 的张量。**形状**:`[轨迹数, response 长度]`  
       * `rm_scores` 是一张表,每条轨迹占一行,每个 token 占一列。表里几乎全是 0,只有每条轨迹最后一个有效 token 那一格填着这条轨迹的奖励。  
       * 例如 3 条轨迹,长度分别是 4、3、5 个 token,奖励分别是 1、0、1:  
         * 轨迹1: \[0, 0, 0, 1, 0\]     ← 第 4 个 token 是最后一个,填奖励 1  
@@ -606,13 +606,13 @@ Note: 这里的 actor 和部署工具时的 actor 不是一个东西,只是撞�
   * **每条轨迹的权重不变。** 每条轨迹的 loss 权重固定是 1/320,由配置算出,与实际送进来多少行无关:  
     * 目的是算出全部 320 条 rollout 的平均梯度，用平均梯度更新模型参数(actor 的 2.55B 个权重)  
       * (用累加梯度也可以,两者方向相同,只差一个倍数(320 倍)。用平均是为了让更新的大小不随 batch 大小变  
-      * **学习率好定**:用累加的话,batch 越大梯度越大,等于学习率跟着放大。换一个 batch 大小就得重调学习率。用平均,lr \= 1e-6 在不同 batch 大小下意义相同  
-      * **梯度裁剪好定**:我们的 grad\_clip \= 1.0 是按平均梯度的量级设的。用累加的话梯度大 320 倍,每步都会被裁剪)  
-    * ppo\_mini\_batch\_size \= 64来自上游 run\_rl.sh   
-      * 它的单位是 prompt,不是 rollout。verl 启动时会自动换算成每卡的 rollout 数:64 × 5(rollout.n)=320 rollouts。**320 ÷ 4(训练卡数)= 80**。每卡处理80 条rollout  
-      * 它和 train\_batch\_size(也是 64)相等,意思是一步采来的 320 条 rollout 只切成一个 mini-batch,所以每步只更新一次参数  
+      * **学习率好定**:用累加的话,batch 越大梯度越大,等于学习率跟着放大。换一个 batch 大小就得重调学习率。用平均,`lr = 1e-6` 在不同 batch 大小下意义相同  
+      * **梯度裁剪好定**:我们的 `grad_clip = 1.0` 是按平均梯度的量级设的。用累加的话梯度大 320 倍,每步都会被裁剪)  
+    * `ppo_mini_batch_size = 64`来自上游 `run_rl.sh`   
+      * 它的单位是 prompt,不是 rollout。verl 启动时会自动换算成每卡的 rollout 数:64 × 5(`rollout.n`)=320 rollouts。**320 ÷ 4(训练卡数)= 80**。每卡处理80 条rollout  
+      * 它和 `train_batch_size`(也是 64)相等,意思是一步采来的 320 条 rollout 只切成一个 mini-batch,所以每步只更新一次参数  
       * SpaceTools-RL/verl/workers/fsdp\_workers.py  
-    * ppo\_micro\_batch\_size\_per\_gpu \= 2也来自上游 run\_rl.sh  
+    * `ppo_micro_batch_size_per_gpu = 2`也来自上游 `run_rl.sh`  
       * 决定每次喂几条进GPU  
       * 一张卡的显存放不下 80 条轨迹同时做前向 / 反向,所以每次只算 2 条rollout,这 2 条就是一个 micro-batch。算完不立刻更新参数,而是把梯度累加起来,80 条都算完再更新一次。  
       * 一条轨迹的上下文上限是 16384 token(prompt 8192 \+ response 8192),前向 \+ 反向要存各层的激活,很占显存。报告里记的是,不开梯度检查点的话,一次前向的激活在 48 GB 的 A40 上装不下  
@@ -650,8 +650,7 @@ Note: 这里的 actor 和部署工具时的 actor 不是一个东西,只是撞�
       3. `pad_rows`:补进去的条数  
       4. `kept_rollout_frac`:非退化 rollout 占全部的比例(不含补进去的)  
       5. `score_mean_full`:全部 320 条的平均奖励  
-   3. rollout dump 仍写全部 320 条,所以 `p1_monitor.py` 的读数不受影响。  
-      
+   3. rollout dump 仍写全部 320 条,所以 `p1_monitor.py` 的读数不受影响。
 
 | reward/degenerate\_\* | 训练指标:每步退化组的占比等 | 我们实现 GFlowRL 时自己加进 `ray_trainer.py` 的,训练GFlowRL已经在用 |
 | :---- | :---- | :---- |
@@ -673,9 +672,9 @@ Note: 这里的 actor 和部署工具时的 actor 不是一个东西,只是撞�
 **Execution plan.**
 
 1. **实现(已完成)**  
-   1. infra\_prep/patched/ray\_trainer.py(= 训练用的 SpaceTools-RL c6fef78a \+ P1(a) \+ 本项)  
-   2. run\_rl\_gflowrl.sh(新开关 GF\_DROP\_DEGEN)  
-   3. 完整 diff infra\_all\_vs\_c6fef78a.diff,在干净的 c6fef78a 上 git apply 验证可用  
+   1. `infra_prep/patched/ray_trainer.py`(= 训练用的 SpaceTools-RL `c6fef78a` \+ P1(a) \+ 本项)  
+   2. `run_rl_gflowrl.sh`(新开关 `GF_DROP_DEGEN`)  
+   3. 完整 diff `infra_all_vs_c6fef78a.diff`,在干净的 c6fef78a 上 `git apply` 验证可用  
 2. **自检(已完成,CPU)**  
    1. `infra_drop_check.py` 造 16 组数据,分别让其中 0、5、11、16 组是退化组。四种情形下,删掉退化组后算出的梯度都与 P1(a)(不删,只把 g̃ 置 0)完全一致。  
    2. 反例:只补齐到卡数的倍数、不管 micro-batch 时,梯度与 P1(a) 不一致。这说明补齐到"卡数 × micro-batch"的倍数是必需的。  
@@ -753,9 +752,9 @@ Note: 这里的 actor 和部署工具时的 actor 不是一个东西,只是撞�
 
 **Execution plan.**
 
-1. **实现(已完成):**infra\_prep/patched/tool\_agent\_loop.py(SpaceTools-RL 侧)与 patched\_toolshed/verl.py(Toolshed 侧,基于 712e557),各一份 diff,git apply 验证可用  
-2. **自检(已完成,CPU):**tool\_timing\_check.py:不设变量时返回值与原函数完全一致;设了之后每次调用一条记录,三段拆分正确,线程不够时排队时间变大,Toolshed 报错与未知工具都记为失败  
-3. **上机:**P1(a) 的 40 步同时设 TOOL\_TIMING\_DIR=\$OUTPUT\_DIR/tool\_timing,跑完用 tool\_timing\_summary.py 汇总  
+1. **实现(已完成):**`infra_prep/patched/tool_agent_loop.py`(SpaceTools-RL 侧)与 `patched_toolshed/verl.py`(Toolshed 侧,基于 `712e557`),各一份 diff,`git apply` 验证可用  
+2. **自检(已完成,CPU):**`tool_timing_check.py`:不设变量时返回值与原函数完全一致;设了之后每次调用一条记录,三段拆分正确,线程不够时排队时间变大,Toolshed 报错与未知工具都记为失败  
+3. **上机:**P1(a) 的 40 步同时设 `TOOL_TIMING_DIR=$OUTPUT_DIR/tool_timing`,跑完用 `tool_timing_summary.py` 汇总  
 4. 需要重分配工具副本时,和 §4「开机前」的工具打包检查一起做
 
 **Success criteria / 决策.**
@@ -804,7 +803,7 @@ Note: 这里的 actor 和部署工具时的 actor 不是一个东西,只是撞�
 
 **Proposed solution**
 
-* 自建infra\_prep/preflight\_nccl.sh. 它在训练用的 4 张卡上跑两遍 all-reduce 探针,一遍开着 P2P,一遍关掉 P2P,每遍输出能否跑通和带宽,判定:P2P\_OK / P2P\_BROKEN / NCCL\_BROKEN
+* 自建`infra_prep/preflight_nccl.sh`. 它在训练用的 4 张卡上跑两遍 all-reduce 探针,一遍开着 P2P,一遍关掉 P2P,每遍输出能否跑通和带宽,判定:P2P\_OK / P2P\_BROKEN / NCCL\_BROKEN
 
 **Execution plan.**
 
@@ -822,8 +821,8 @@ Note: 这里的 actor 和部署工具时的 actor 不是一个东西,只是撞�
 
 | 判定 | 下一步 |
 | ----- | ----- |
-| P2P\_OK | 不设 NCCL\_P2P\_DISABLE,正常开训 |
-| P2P\_BROKEN | 设 NCCL\_P2P\_DISABLE=1 也能跑,但 update\_actor 会慢,记入偏离清单;时间允许就换机器 |
+| P2P\_OK | 不设 `NCCL_P2P_DISABLE`,正常开训 |
+| P2P\_BROKEN | 设 `NCCL_P2P_DISABLE=1` 也能跑,但 update\_actor 会慢,记入偏离清单;时间允许就换机器 |
 | NCCL\_BROKEN | 不开训,换机器 |
 
 **Cost.**每次开机约 2 分钟
@@ -884,18 +883,18 @@ Note: 这里的 actor 和部署工具时的 actor 不是一个东西,只是撞�
 
 ## **附录 B · 外部实现对照:Maccchiatooo/spacetools-training-programs**
 
-同样用 GFlowRL 替换 SpaceTools 的 GRPO(Qwen2.5-VL-3B,8×B200)。算法本体在 algo\_gflowrl\_core\_algos.py 第 2375–2606 行,与 algo\_gflowrl\_excerpt.py 逐字一致。
+同样用 GFlowRL 替换 SpaceTools 的 GRPO(Qwen2.5-VL-3B,8×B200)。算法本体在 `algo_gflowrl_core_algos.py` 第 2375–2606 行,与 `algo_gflowrl_excerpt.py` 逐字一致。
 
 | 项 | 参考实现 | 我们 | 结论 |
 | ----- | ----- | ----- | ----- |
-| 接入点 | register\_adv\_est 算 g̃ \+ register\_policy\_loss | driver 上 compute\_gflowrl\_flow\_gap() \+ register\_policy\_loss | 等价,不改 |
-| 长度归一化 | 每条 rollout 的 log 概率比都除以它的长度 |y|，Eq. 4、6、8 三处都除（默认 gflowrl\_normalize\_z\_logp=True），相当于我们的 normalized 变体 |  参考实现（normalized） C′ Eq. 4 求 Z\_t 组内均值 (βr \+ d/|y|) 组内均值 (βr \+ d) Eq. 6 算 g 漂移项 d/|y| 漂移项 d，不除 Eq. 8 算 loss (g̃ \+ log(π\_θ/π\_old)/|y|)² (g̃ \+ Σ\_t log(π\_θ/π\_old))² 其中 d \= Σ\_t(log π\_ref − log π\_old)，是整条 rollout 逐 token 求和。代码上两者的唯一区别就是用 masked\_sum 还是除以长度，这一行改了不会报错，所以动过就要重跑不动点(到了这里 loss 为 0、梯度为 0，再训练参数也不会动)自检。 为什么这样做： **不动点是对的**：论文 Prop. B.1 就是在不做长度归一化的前提下证明 π ∝ π\_ref·exp(βr)。我们的数值自检，C′ 误差 7.39e-13，通过；normalized 5.1e-2，不通过。 **归一化会扭曲目标**：按论文 Remark B.4，除以 |y| 等于把 β 换成 |y|·β（约 334×8 ≈ 2700）。目标分布变成接近纯奖励最大化，分布匹配就没了，而且长短不同的回答相当于用了不同的温度。 代价是梯度随长度线性放大，这是 grad\_norm 中位 180 的主因，P1(b) 用常数缩放（grad\_clip \= L̄）把尺度拿回来。  | **不采用。 它会改掉训练的目标**：论文 Remark B.4 指出，每条除以 |y| 相当于把 β 换成 |y|·β。我们 |y| 约 334，有效 β 约 2700，目标分布几乎全压在最高奖励上，变成纯奖励最大化，分布匹配就没了。 **自检也不通过**：构造目标分布去算 loss，normalized 误差 5.1e-2，不通过；C′ 误差 7.4e-13，通过。 **它的好处我们另外拿**：除以 |y| 唯一的好处是梯度尺度变小。我们改用常数缩放（grad\_clip \= L̄，见 P1(b)），尺度一样能拿回来，而且不改目标。  |
+| 接入点 | `register_adv_est` 算 g̃ \+ `register_policy_loss` | driver 上 `compute_gflowrl_flow_gap()` \+ `register_policy_loss` | 等价,不改 |
+| 长度归一化 | 每条 rollout 的 log 概率比都除以它的长度 |y|，Eq. 4、6、8 三处都除（默认 `gflowrl_normalize_z_logp=True`），相当于我们的 `normalized` 变体 |  参考实现（normalized） C′ Eq. 4 求 Z\_t 组内均值 (βr \+ d/|y|) 组内均值 (βr \+ d) Eq. 6 算 g 漂移项 d/|y| 漂移项 d，不除 Eq. 8 算 loss (g̃ \+ log(π\_θ/π\_old)/|y|)² (g̃ \+ Σ\_t log(π\_θ/π\_old))² 其中 d \= Σ\_t(log π\_ref − log π\_old)，是整条 rollout 逐 token 求和。代码上两者的唯一区别就是用 `masked_sum` 还是除以长度，这一行改了不会报错，所以动过就要重跑不动点(到了这里 loss 为 0、梯度为 0，再训练参数也不会动)自检。 为什么这样做： **不动点是对的**：论文 Prop. B.1 就是在不做长度归一化的前提下证明 π ∝ π\_ref·exp(βr)。我们的数值自检，C′ 误差 7.39e-13，通过；normalized 5.1e-2，不通过。 **归一化会扭曲目标**：按论文 Remark B.4，除以 |y| 等于把 β 换成 |y|·β（约 334×8 ≈ 2700）。目标分布变成接近纯奖励最大化，分布匹配就没了，而且长短不同的回答相当于用了不同的温度。 代价是梯度随长度线性放大，这是 grad\_norm 中位 180 的主因，P1(b) 用常数缩放（grad\_clip \= L̄）把尺度拿回来。  | **不采用。 它会改掉训练的目标**：论文 Remark B.4 指出，每条除以 |y| 相当于把 β 换成 |y|·β。我们 |y| 约 334，有效 β 约 2700，目标分布几乎全压在最高奖励上，变成纯奖励最大化，分布匹配就没了。 **自检也不通过**：构造目标分布去算 loss，normalized 误差 5.1e-2，不通过；C′ 误差 7.4e-13，通过。 **它的好处我们另外拿**：除以 |y| 唯一的好处是梯度尺度变小。我们改用常数缩放（grad\_clip \= L̄，见 P1(b)），尺度一样能拿回来，而且不改目标。  |
 | 退化组过滤 | g̃ 置零,不补采 | 实现(P1(a)) | **采用写法**退化组整组 g̃ 置 0，不补采（见 P1(a)）。on-policy 下这和真正用 loss mask 屏蔽掉这些组的效果逐位相同。 **判断退化组的标准 不采用**： 参考实现：组内方差 ≤ 1e-8 就算退化。方差按 E\[r²\] − E\[r\]² 算，两个接近的数相减有浮点误差；奖励是连续值时，5 条奖励完全相同的组可能算出一个略大于 1e-8 的方差，被误判成非退化组。 我们：组内最大值减最小值严格等于 0 才算退化，没有这个误差。  |
 | flow-gap ε | 2.7 / 3.8,sat≈0 | 0.2 / 0.28,sat 中位 52% | **不采用**2.7 / 3.8**的数值**：2.7 / 3.8 下 g 几乎不会被截断，等于不截断。论文 Table 7 里不截断的版本均分掉了 3.9，grad\_norm 是原来的 6.3 倍。 **它的判断我们认同**：Table 9 里的 0.2 / 0.28 很可能是给 GRPO 的 ratio clip 用的，不是 g 的边界。 **我们另外发现了方向问题**：它和我们都是按字面写的，好样本往上推的上限反而更小。这一点用 P1(b) 的 C（交换 ε）来验证。  |
 | β | | β | **2.5**。论文的 β=8 是按 0/1 奖励定的；它的奖励是 0–10 的复合分数，所以按「β·r 的标准差和论文一致」折算成 2.5  | **8**，和论文一致，因为我们的奖励也在 0–1。当前 rew/drift 中位 2.01，奖励项压得住漂移项，所以不适用：两边奖励的量程不同，2.5 不能直接搬过来  | 不适用 |
 | IS 权重 | **按 token 取平均**：w \= exp(每个 token 的 log 概率比的平均)，上限 2.0。对应论文 Table 9 的「Geometric」和「IS threshold 2.0」 | **按整条序列求和**：w \= exp(所有 token 的 log 概率比之和)，上限 1.2（= 1 \+ ε\_is） | **现在没影响**：我们严格 on-policy，w 恒等于 1。**以后如果拆 mini-batch，就改成它的做法**，上限改成 2.0。原因是求和版里，指数是每个 token 的 log 概率差加起来的总和，序列越长总和越大，w 就偏离 1 越远，每个 token 一点点偏差，乘上几百个 token 就能把 w 压到 0.02 这种量级，这条样本几乎不再贡献梯度  |
 | G / batch / epochs | 16 / 63 / 4(348 步) | 5 / 64 / 1(85 步) | 见 P1(c) / P1(d) |
 | 日志 | **记录**：|g| 的分位数、sat（被截断的比例）、退化组占比。**训练中验证**：每 20 步跑一次完整的 robospatial 350 题（TEST\_FREQ=20） | **记录**：sat、β 分解（奖励项 / 漂移项）、sign\_ok、退化组占比、IS 权重守卫。**训练中验证**：不做（test\_freq=-1） | 采用已补见P1(a)  |
-| 工具打包 | 改工具 actor 数或 fraction 前先跑 check\_tool\_packing.py 核对 num\_gpus 之和(其配置恰为 2.000,零余量) | eval 时人工把 vlm 提到 1.0 避开 OOM | **采用思路,已实现:**infra\_prep/check\_tool\_packing.py,开训前跑。除份额合计外,还按卡检查份额,并核对份额对应的显存 |
+| 工具打包 | 改工具 actor 数或 fraction 前先跑 `check_tool_packing.py` 核对 `num_gpus` 之和(其配置恰为 2.000,零余量) | eval 时人工把 vlm 提到 1.0 避开 OOM | **采用思路,已实现:**infra\_prep/check\_tool\_packing.py,开训前跑。除份额合计外,还按卡检查份额,并核对份额对应的显存 |
 | 运行结果 | 39 步,奖励斜率 t=−0.25,退化组 53.3%(G=16) | 85 步,无趋势,70.3%(G=5) | **两边都还没学会**：跑了 39 步，训练奖励没有上升趋势（斜率 t \= −0.25）；我们跑了 85 步，也没有上升趋势。 把题目分成两类来看： **难度适中的题**：模型有时对、有时错。G=5 时，碰巧 5 条全对或全错的情况不少；加到 16 条，几乎总会有对有错，这类题基本不再退化。 **极端题**：模型每次都对，或者每次都错。采多少条都一样，一定是整组全对或全错。 加大 G 只能救第一类，第二类救不了。 实测 G=16 还有 53% 的组退化，说明大部分退化都来自第二类。所以加大 G 效果有限，不值得优先做。 |
 
