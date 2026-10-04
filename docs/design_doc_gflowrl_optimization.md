@@ -1,8 +1,8 @@
-# **GFlowRL(C′)优化 · Design Doc**
+# **GFlowRL优化 · Design Doc**
 
 参考实现 – Maccchiatooo/spacetools-training-programs
 
-C′ – 自己训练的GFlowRL ckpt和eval
+C′ – 用来指代自己训练GFlowRL ckpt和用它跑eval的场景
 
 Github repo \- [https\://github.com/qyYue1389/Spacetools-RL-Improvement/tree/main](https://github.com/qyYue1389/Spacetools-RL-Improvement/tree/main)
 

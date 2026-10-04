@@ -10,7 +10,7 @@ This table maps each of them to its location here. Paths not listed were intenti
 | Original path / 原路径 | In this repo / 本 repo |
 |---|---|
 | `eval/GFlowRL/P7_完整报告_v1.md` | `docs/full_report_v1.md` |
-| `GFlowRL_improve/P7 GFlowRL(C′)优化 · Design Doc.md` | `docs/design_doc_gflowrl_optimization.md` |
+| `GFlowRL_improve/GFlowRL优化 · Design Doc.md` | `docs/design_doc_gflowrl_optimization.md` |
 | `两篇论文笔记.md` | `docs/paper_notes.md` |
 | `training/SFT/SFT训练学习笔记.md` | `docs/sft_training_notes.md` |
 | `training/为什么不能按 benchmark 分开训练.md` | `docs/why_not_train_per_benchmark.md` |
