@@ -3,7 +3,7 @@
 > Training time: 2026-09-16 08:35:04 → 2026-09-17 06:32:35 UTC (21 h 57 min)
 > Machine: RunPod 8× A40 48 GB (released after this report was generated)
 > Result: `FULL_DONE_PASS`, all 85 steps completed, exit code 0
-> Artifacts: `qyYue1389/spacetools-p7-gflowrl-cprime-8xa40` (private HF repo)
+> Artifacts: `qyYue1389/spacetools-p7-gflowrl-cprime-8xa40` (HF repo)
 > This file, together with the raw files in the same directory, forms the complete record of this training run
 
 ---
@@ -504,7 +504,7 @@ Two points that must be kept in mind:
 ### 8.5 Where all the artifacts are
 
 ```
-private HF repo   qyYue1389/spacetools-p7-gflowrl-cprime-8xa40
+HF repo           qyYue1389/spacetools-p7-gflowrl-cprime-8xa40
   global_step_85/ 60/ 30/        three HF-format ckpts, 7.6 GB each
   provenance/                    p7_metrics.csv · as-run scripts · full logs · commit SHAs
   bundle/p7_bundle.tar.gz        full version of this directory (including the complete 9.8 MB training log)
