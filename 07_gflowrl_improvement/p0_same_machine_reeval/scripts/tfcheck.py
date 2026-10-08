@@ -20,7 +20,7 @@ for d in sorted(glob.glob('/workspace/parsed/*')):
 # are those samples discordant?
 def load(p, thr=0.5):
     return {json.loads(l)['index']: (1 if json.loads(l)['score'] >= thr else 0) for l in open(p)}
-print('\n--- 这些样本在三次里的表现,以及三臂对照 ---')
+print('\n--- how these samples did across the three runs, plus the three-arm comparison ---')
 for (tag, bench), ids in bad.items():
     ck = tag.split('_')[0]
     for sid in sorted(ids):
@@ -28,4 +28,4 @@ for (tag, bench), ids in bad.items():
         for t in ['sft', 'p4', 'cp']:
             v = [load(f'/workspace/exp/p0/{t}/run{i}/{bench}/0.jsonl').get(sid) for i in (1, 2, 3)]
             row.append(f'{t}={v}')
-        print(f'{bench} #{sid:4d} (出问题的是 {tag}):  ' + '  '.join(row))
+        print(f'{bench} #{sid:4d} (the one with the problem is {tag}):  ' + '  '.join(row))

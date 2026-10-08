@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
-"""P6:关系题的自动判据(重建版)—— 只读 `p4/parsed/`,不需要 GPU 也不需要人工。
+"""P6: automatic criterion for relation questions (rebuilt version) — reads only `p4/parsed/`, needs neither GPU nor manual work.
 
-覆盖两个原先退回人工的 benchmark:
+Covers two benchmarks that were previously sent back to manual review:
 
-  * `cvb2drelation`  —— 旧判据自洽率只有约 93%,被判定不可用而退回人工。
-    本版把它修到 **99.83%**。三处修法都对应旧笔记点名的那两个误差来源:
-      1. 主体/参照从 **"where is the X located with respect to the Y"** 这一小句取,
-         不要从开头 "relative positions of A and B" 取——后者的次序与前者不一定相同;
-      2. 剥掉 "(annotated by the red box)" 这类修饰语再与 `obj_name` 匹配;
-      3. **逐样本读选项字母到词的映射**,不要假定 (A)=left / (A)=above。
-  * `robospatial` VQA 的关系题 —— 新增。自洽率 98.5%。
+  * `cvb2drelation`  — the old criterion had a self-consistency rate of only about 93%, was judged unusable and sent back to manual review.
+    This version fixes it to **99.83%**. All three fixes target the two error sources named in the old notes:
+      1. take subject/reference from the clause **"where is the X located with respect to the Y"**,
+         not from the leading "relative positions of A and B" — the latter's order is not necessarily the same as the former's;
+      2. strip modifiers like "(annotated by the red box)" before matching against `obj_name`;
+      3. **read the option-letter-to-word mapping per sample**, do not assume (A)=left / (A)=above.
+  * `robospatial` VQA relation questions — new. Self-consistency rate 98.5%.
 
-判据本身很朴素:两个检测点,在图像平面上比 x 或比 y。它的价值全在**校验**:
-> **在模型答对的样本上,规则与模型是否一致?** 不一致率就是判据自身的误差上界。
-> 旧判据栽在这一步(93%),而错题总数只有 35 —— 信噪比不够,所以必须退回人工。
-> 一个不够准的自动判据比没有更糟。
+The criterion itself is simple: two detection points, compare x or y in the image plane. All of its value is in the **validation**:
+> **On samples the model got right, do the rule and the model agree?** The disagreement rate is an upper bound on the criterion's own error.
+> The old criterion failed at this step (93%), and there are only 35 wrong answers in total — not enough signal-to-noise, so it had to go back to manual review.
+> An automatic criterion that is not accurate enough is worse than none.
 
-另外报两件事,它们不是判据、但决定结论怎么写:
+Two more things are reported; they are not criteria, but they decide how the conclusion is written:
 
-  * **规则对 GT 的准确率**。它回答「二维图像平面是不是这个 benchmark 的正确语义」。
-    `cvb2drelation` 95.4%(是),`robospatial` VQA 78.6%(**不是**)。
-    所以「遵守规则却答错」在前者可判为工具错,在后者**不能**——那里还混着
-    坐标系/语义不匹配(分类 3b)与标注问题(分类 6),必须看图才能分开。
-  * **判定轴上的间距**。间距接近 0 时规则退化成掷硬币,那些样本要单独拿出来,
-    不能算进「遵守」或「违反」。
+  * **Rule accuracy against GT**. It answers "is the 2D image plane the correct semantics for this benchmark".
+    `cvb2drelation` 95.4% (yes), `robospatial` VQA 78.6% (**no**).
+    So "obeys the rule yet answers wrong" can be classed as tool error in the former, but **not** in the latter — there it is still mixed with
+    frame/semantics mismatch (class 3b) and label problems (class 6), which can only be separated by looking at the image.
+  * **Margin on the deciding axis**. When the margin is near 0 the rule degenerates into a coin flip; those samples must be pulled out separately
+    and cannot be counted as "obey" or "violate".
 
-用法(在仓库根目录):
+Usage (from the repo root):
 
     python3 tools/p6/p6_relations.py --parsed p4/parsed [--dump-cases out.jsonl]
 """
@@ -39,14 +39,14 @@ RS_FIT = re.compile(r"\bfit\b", re.I)
 CV_Q = re.compile(r"where is the (.+?) located with respect to the (.+?)\?", re.I)
 CV_OPT = re.compile(r"\(([AB])\)\s*([^()]+?)(?=\s*\([AB]\)|$)")
 
-# 只有这四种关系能从两个 2D 点判定。front/behind 需要深度,见 §「结构性缺口」。
+# only these four relations can be decided from two 2D points. front/behind need depth, see § "structural gap".
 DECIDABLE = {
     "above":    ("y", lambda a, b: a[1] < b[1]),
     "below":    ("y", lambda a, b: a[1] > b[1]),
     "left of":  ("x", lambda a, b: a[0] < b[0]),
     "right of": ("x", lambda a, b: a[0] > b[0]),
 }
-TIE = 0.02          # 判定轴上的间距小于此值 -> 规则退化,单独归档
+TIE = 0.02          # margin on the deciding axis below this -> rule degenerates, filed separately
 
 
 def norm(s):
@@ -56,7 +56,7 @@ def norm(s):
 
 
 def detections(rec):
-    """按调用顺序收集 {obj_name: 第一个返回点}。"""
+    """Collect {obj_name: first returned point} in call order."""
     out = {}
     for turn in rec["trajectory"]:
         calls = turn.get("tool_calls") or []
@@ -72,8 +72,8 @@ def detections(rec):
 
 
 def lookup(det, name):
-    """精确优先;否则唯一的子串匹配。**匹配不唯一就返回 None**——
-    宁可判为不可判定,也不要猜错主体/参照,那正是旧判据的死因。"""
+    """Exact match first; otherwise a unique substring match. **If the match is not unique, return None** —
+    better to call it undecidable than to guess subject/reference wrong; that is exactly what killed the old criterion."""
     if name in det:
         return det[name]
     cand = [v for k, v in det.items() if name in k or k in name]
@@ -83,49 +83,49 @@ def lookup(det, name):
 def judge(rows, label, out=None):
     dec = [x for x in rows if x["rule"]]
     if not dec:
-        print(f"\n=== {label}: 没有可判定样本"); return
+        print(f"\n=== {label}: no decidable samples"); return
     corr = [x for x in dec if x["correct"]]
     wrong = [x for x in dec if not x["correct"]]
     agree_c = sum(1 for x in corr if x["rule"] == x["ans"])
 
     print(f"\n=== {label}")
-    print(f"  可判定 {len(dec)}/{len(rows)}")
-    print(f"  [判据校验] 答对样本 n={len(corr)}:规则与模型一致 {agree_c} "
-          f"({100*agree_c/len(corr):.2f}%),不一致 {len(corr)-agree_c}"
-          f"   <- 判据自身误差上界")
+    print(f"  decidable {len(dec)}/{len(rows)}")
+    print(f"  [criterion check] correct samples n={len(corr)}: rule agrees with model {agree_c} "
+          f"({100*agree_c/len(corr):.2f}%), disagrees {len(corr)-agree_c}"
+          f"   <- upper bound on the criterion's own error")
     if agree_c / len(corr) < 0.97:
-        print("  ⚠ 自洽率低于 97%,判据不可用,退回人工(旧 cvb2drelation 判据就死在这里)")
+        print("  ⚠ self-consistency below 97%, criterion unusable, back to manual review (the old cvb2drelation criterion died here)")
 
     rule_gt = sum(1 for x in dec if x["rule"] == x["gt"])
-    print(f"  [语义检验] 规则对 GT {rule_gt}/{len(dec)} = {100*rule_gt/len(dec):.1f}%"
-          f" · 模型对 GT {len(corr)}/{len(dec)} = {100*len(corr)/len(dec):.1f}%")
+    print(f"  [semantics check] rule vs GT {rule_gt}/{len(dec)} = {100*rule_gt/len(dec):.1f}%"
+          f" · model vs GT {len(corr)}/{len(dec)} = {100*len(corr)/len(dec):.1f}%")
     if abs(rule_gt - len(corr)) <= 2:
-        print("  → 模型的成绩与规则的成绩几乎相同:**在这类题上模型就是这条规则**,"
-              "它的上限就是规则的上限")
+        print("  → the model's score is almost the same as the rule's: **on this question type the model is this rule**,"
+              "its ceiling is the rule's ceiling")
     if rule_gt / len(dec) < 0.90:
-        print("  ⚠ 图像平面规则不是这个 benchmark 的正确语义。"
-              "「遵守规则却答错」**不能**直接判为工具错——还混着坐标系/语义(3b)与标注(6)")
+        print("  ⚠ the image-plane rule is not the correct semantics for this benchmark."
+              "\"obeys the rule yet answers wrong\" **cannot** be classed directly as tool error — it is still mixed with frame/semantics (3b) and labels (6)")
 
     tie   = [x for x in wrong if x["margin"] is not None and x["margin"] < TIE]
     keep  = [x for x in wrong if x not in tie]
     obey  = [x for x in keep if x["rule"] == x["ans"]]
     viol  = [x for x in keep if x["rule"] != x["ans"]]
-    print(f"  [错题 n={len(wrong)}] 遵守规则 {len(obey)} · 违反规则 {len(viol)} · "
-          f"间距<{TIE} 规则退化 {len(tie)}")
+    print(f"  [wrong answers n={len(wrong)}] obeys rule {len(obey)} · violates rule {len(viol)} · "
+          f"margin<{TIE} rule degenerates {len(tie)}")
 
     if obey:
         mo = [x["margin"] for x in obey if x["margin"] is not None]
         mc = [x["margin"] for x in corr if x["margin"] is not None]
-        print(f"  [间距] 答对组中位 {st.median(mc):.3f} · 遵守却答错组中位 {st.median(mo):.3f}")
+        print(f"  [margin] correct group median {st.median(mc):.3f} · obeyed-but-wrong group median {st.median(mo):.3f}")
         for t in (0.05, 0.10):
-            print(f"        <{t:.2f}: 答对组 {100*sum(1 for m in mc if m<t)/len(mc):.0f}% · "
-                  f"答错组 {100*sum(1 for m in mo if m<t)/len(mo):.0f}%")
+            print(f"        <{t:.2f}: correct group {100*sum(1 for m in mc if m<t)/len(mc):.0f}% · "
+                  f"wrong group {100*sum(1 for m in mo if m<t)/len(mo):.0f}%")
 
     if out is not None:
         tie_ids = {x["sid"] for x in tie}
         for x in wrong:
-            v = ("规则退化(间距≈0,不计入遵守/违反)" if x["sid"] in tie_ids else
-                 ("遵守规则" if x["rule"] == x["ans"] else "违反规则"))
+            v = ("rule degenerates (margin≈0, not counted as obey/violate)" if x["sid"] in tie_ids else
+                 ("obeys rule" if x["rule"] == x["ans"] else "violates rule"))
             out.append({**x, "benchmark": label, "verdict": v})
 
 
@@ -161,7 +161,7 @@ def do_robospatial(path, out):
     for line in open(path, encoding="utf-8"):
         r = json.loads(line)
         if str(r["gt"]).strip().lower() not in ("yes", "no"):
-            continue                                   # Vacant,不在本判据范围
+            continue                                   # Vacant, outside the scope of this criterion
         if RS_FIT.search(r["question"]):
             fit.append(r); continue
         m = RS_Q.match(r["question"].strip())
@@ -181,40 +181,40 @@ def do_robospatial(path, out):
                          gt=str(r["gt"]).strip().lower(),
                          ans=str(r["raw_answer"]).strip().lower(),
                          correct=r["correct"], q=r["question"][:90]))
-    judge(rows, "robospatial VQA · 关系题", out)
+    judge(rows, "robospatial VQA · relation questions", out)
 
-    # ---- 结构性缺口:题目需要的信息,模型从来没有去取 ----
-    print("\n=== robospatial VQA · 结构性缺口(不靠判据,靠工具直方图)")
+    # ---- structural gap: information the question needs that the model never fetched ----
+    print("\n=== robospatial VQA · structural gap (not from the criterion, from the tool histogram)")
     for name, group, why in [
-        ("front/behind", fb, "需要深度序;depth_estimator 就在工具表里"),
-        ("fit(自由空间)", fit, "需要自由空间范围;没有单个工具直接给,但 bbox+depth 可逼近"),
+        ("front/behind", fb, "needs depth order; depth_estimator is right there in the tool list"),
+        ("fit (free space)", fit, "needs free-space extent; no single tool gives it directly, but bbox+depth can approximate it"),
     ]:
         if not group:
             continue
         c = sum(1 for r in group if r["correct"])
         nod = sum(1 for r in group if "depth" not in r["chain_signature"])
         no_c = [r for r in group if str(r["gt"]).lower() == "no"]
-        print(f"  {name:16} n={len(group):3}  正确率 {c}/{len(group)} = {100*c/len(group):.1f}%"
-              f"  **未调用深度工具 {nod}/{len(group)}**"
-              f"  GT=no 正确率 {sum(1 for r in no_c if r['correct'])}/{len(no_c)}")
+        print(f"  {name:16} n={len(group):3}  accuracy {c}/{len(group)} = {100*c/len(group):.1f}%"
+              f"  **depth tool not called {nod}/{len(group)}**"
+              f"  GT=no accuracy {sum(1 for r in no_c if r['correct'])}/{len(no_c)}")
     if unmatched:
-        print(f"  {'检测对不上':16} n={len(unmatched):3}  "
-              f"正确率 {sum(1 for r in unmatched if r['correct'])}/{len(unmatched)}  <- 需看图")
+        print(f"  {'detection mismatch':16} n={len(unmatched):3}  "
+              f"accuracy {sum(1 for r in unmatched if r['correct'])}/{len(unmatched)}  <- needs looking at the image")
 
 
 def do_vacant(path):
-    """RoboSpatial Vacant:透传 vs 自行改点,以及「改点时用眼估的整数坐标」。
+    """RoboSpatial Vacant: pass-through vs point override, and "round coordinates eyeballed during point override".
 
-    Vacant 的答案是一个点,所以判据 B(原样透传)直接适用。已知「模型一改点
-    正确率减半」;这里再问一句**它改成了什么样的数**——如果覆盖工具靠的是目测
-    而不是计算,那么坐标会落在 0.05 这种人为粒度上。
+    The Vacant answer is a point, so criterion B (verbatim pass-through) applies directly. It is known that "once the model overrides the point,
+    accuracy halves"; here we also ask **what kind of number it changes it to** — if overriding the tool relies on eyeballing
+    rather than computation, the coordinates will land on an artificial granularity such as 0.05.
     """
     import math
     keep, chg = [], []
     for line in open(path, encoding="utf-8"):
         r = json.loads(line)
         if str(r["gt"]).strip().lower() in ("yes", "no"):
-            continue                                   # VQA,不在本节范围
+            continue                                   # VQA, outside the scope of this section
         det = detections(r)
         tool = next(iter(det.values()), None)
         a = PT.findall(str(r["raw_answer"]))
@@ -226,22 +226,22 @@ def do_vacant(path):
     def rnd(v, step=0.05):
         return abs(v / step - round(v / step)) < 1e-6
 
-    print("\n=== robospatial Vacant · 透传 vs 改点")
-    print(f"  {'':14}{'n':>5}{'正确率':>12}{'两坐标都是 0.05 整数倍':>24}")
-    for g, name in ((keep, "原样透传"), (chg, "模型自行改点")):
+    print("\n=== robospatial Vacant · pass-through vs point override")
+    print(f"  {'':14}{'n':>5}{'accuracy':>12}{'both coords multiple of 0.05':>24}")
+    for g, name in ((keep, "verbatim pass-through"), (chg, "model point override")):
         if not g:
             continue
         ok = sum(1 for _, c in g if c)
         r5 = sum(1 for ap, _ in g if rnd(ap[0]) and rnd(ap[1]))
         print(f"  {name:14}{len(g):5}{ok:6} ({100*ok/len(g):4.1f}%){r5:14} ({100*r5/len(g):3.0f}%)")
-    print("  → 透传时坐标带着工具的三位小数;一旦模型自己动手,坐标就落在人为粒度上。")
-    print("     **它不是在算,是在目测**——而 Vacant 的 GT 是一条几十像素宽的窄带。")
+    print("  → on pass-through the coordinates carry the tool's three decimals; once the model does it itself, they land on an artificial granularity.")
+    print("     **it is not computing, it is eyeballing** — and the Vacant GT is a narrow band a few dozen pixels wide.")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--parsed", default="p4/parsed")
-    ap.add_argument("--dump-cases", help="把错题逐条写成 jsonl,供人工归类使用")
+    ap.add_argument("--dump-cases", help="write the wrong answers one per line as jsonl, for manual classification")
     a = ap.parse_args()
     out = [] if a.dump_cases else None
 
@@ -254,7 +254,7 @@ def main():
         with open(a.dump_cases, "w", encoding="utf-8") as f:
             for x in out:
                 f.write(json.dumps(x, ensure_ascii=False) + "\n")
-        print(f"\n写入 {a.dump_cases}({len(out)} 条错题)")
+        print(f"\nwrote {a.dump_cases} ({len(out)} wrong answers)")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""robospatial 上 P4 与 P7 的分歧样本长什么样。"""
+"""What the samples where P4 and P7 diverge on robospatial look like."""
 import json, os, collections
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))  # repo root
 L = lambda p: {r["sample_id"]: r for r in (json.loads(l) for l in open(p))}
@@ -9,32 +9,32 @@ c2 = L(f"{ROOT}/06_gflowrl_eval/parsed_runC/robospatial.jsonl")
 vqa = lambda r: len(str(r.get("gt","")).strip()) < 8
 
 p4ok  = {i for i in a if a[i]["correct"]}
-p7ok  = {i for i in c if c[i]["correct"] and c2[i]["correct"]}      # 两次都对
-p7bad = {i for i in c if not c[i]["correct"] and not c2[i]["correct"]}  # 两次都错
+p7ok  = {i for i in c if c[i]["correct"] and c2[i]["correct"]}      # correct in both runs
+p7bad = {i for i in c if not c[i]["correct"] and not c2[i]["correct"]}  # wrong in both runs
 
-lost = sorted(p4ok & p7bad)   # P4 对、P7 两次都错
-gain = sorted(p7ok - p4ok)    # P7 两次都对、P4 错
-print(f"P4 对 {len(p4ok)} · P7 恒对 {len(p7ok)} · P7 恒错 {len(p7bad)}")
-print(f"丢掉(P4对/P7两次都错) {len(lost)}   捡到(P7恒对/P4错) {len(gain)}   净 {len(gain)-len(lost)}")
-for name, ids in (("丢掉", lost), ("捡到", gain)):
+lost = sorted(p4ok & p7bad)   # P4 correct, P7 wrong in both runs
+gain = sorted(p7ok - p4ok)    # P7 correct in both runs, P4 wrong
+print(f"P4 correct {len(p4ok)} · P7 always correct {len(p7ok)} · P7 always wrong {len(p7bad)}")
+print(f"lost (P4 correct/P7 wrong in both runs) {len(lost)}   gained (P7 always correct/P4 wrong) {len(gain)}   net {len(gain)-len(lost)}")
+for name, ids in (("lost", lost), ("gained", gain)):
     nv = sum(1 for i in ids if vqa(a[i]))
     print(f"  {name}: VQA {nv} · Vacant {len(ids)-nv}")
     sig = collections.Counter(c[i]["chain_signature"] for i in ids)
-    print(f"        P7 链路: {dict(sig)}")
+    print(f"        P7 chain: {dict(sig)}")
 
 print()
-print("=== Yes/No 方向(VQA 分歧样本上,两边各答了什么)")
+print("=== Yes/No direction (on the diverging VQA samples, what each side answered)")
 import re
 def ans(r):
     t = str(r.get("raw_answer","")).strip().lower()
     return "yes" if "yes" in t else ("no" if "no" in t else "?")
-for name, ids in (("丢掉", lost), ("捡到", gain)):
+for name, ids in (("lost", lost), ("gained", gain)):
     v = [i for i in ids if vqa(a[i])]
     print(f"  {name}: " + str(collections.Counter((str(a[i]['gt']).strip(), ans(a[i]), ans(c[i])) for i in v)))
 
 print()
-print("=== Vacant 错题离凸包有多远(P7 恒错的 Vacant 样本 vs P4 对的)")
-print("  (仅统计能解析出预测点的样本)")
+print("=== How far the Vacant wrong answers are from the convex hull (Vacant samples P7 always gets wrong vs those P4 gets right)")
+print("  (only samples whose predicted point can be parsed)")
 def pt(r):
     try:
         v = eval(str(r.get("raw_answer","")))
@@ -44,11 +44,11 @@ def pt(r):
         pass
     return None
 vac_lost = [i for i in lost if not vqa(a[i])]
-print(f"  Vacant 丢掉 {len(vac_lost)} 个;其中 P4/P7 预测点都可解析的 "
+print(f"  Vacant lost {len(vac_lost)}; of which P4/P7 predicted points are both parseable: "
       f"{sum(1 for i in vac_lost if pt(a[i]) and pt(c[i]))}")
 
 print()
-print("=== 未被调用的工具(robospatial 全程)")
+print("=== Tools never called (robospatial, whole run)")
 for tag, d in (("P4", a), ("P7", c)):
     used = collections.Counter()
     for r in d.values():

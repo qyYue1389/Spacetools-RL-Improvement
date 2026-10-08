@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""P2 开机前调查:三臂在 robospatial Vacant 上给 roborefer 的查询写法(obj_name)。
-用法: python p2_query_type.py [P0 dumps 目录,默认 ../p0_same_machine_reeval/dumps]
-target = 查询里带了位置/空位描述("point close to and in front of the cup");object = 只问锚物体("cup")。"""
+"""P2 pre-GPU-session survey: the query phrasing (obj_name) that the three arms give roborefer on robospatial Vacant.
+Usage: python p2_query_type.py [P0 dumps directory, default ../p0_same_machine_reeval/dumps]
+target = the query includes a location/vacancy description ("point close to and in front of the cup"); object = asks only for the anchor object ("cup")."""
 import sys, json, re, collections
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
 import p1_monitor as m
@@ -35,8 +35,8 @@ for arm in ('sft', 'p4', 'cp'):
             D.setdefault(r['index'], {})[(arm, i)] = hit
             Q.setdefault((r['index'], i), {})[arm] = tuple(qs)
     for t, v in sorted(st.items()):
-        print(f'{arm:4s} {t:7s} 每次 {v[0]/3:5.1f} 题  工具点中 {100*v[1]/v[0]:3.0f}%  改点 {100*v[2]/v[0]:3.0f}%  答对 {100*v[3]/v[0]:3.0f}%')
+        print(f'{arm:4s} {t:7s} per run {v[0]/3:5.1f} questions  tool point hits {100*v[1]/v[0]:3.0f}%  point override {100*v[2]/v[0]:3.0f}%  correct {100*v[3]/v[0]:3.0f}%')
 n = len(Q)
-print(f"查询逐字同 SFT:C′ {100*sum(v['cp']==v['sft'] for v in Q.values())/n:.1f}%  P4 {100*sum(v['p4']==v['sft'] for v in Q.values())/n:.1f}%")
+print(f"queries verbatim identical to SFT: C′ {100*sum(v['cp']==v['sft'] for v in Q.values())/n:.1f}%  P4 {100*sum(v['p4']==v['sft'] for v in Q.values())/n:.1f}%")
 H = lambda a, i: sum(D[i][(a, j)] for j in (1, 2, 3))
-print('P4 工具点 3/3 中、C′ 0/3 的题:', sorted(i for i in D if H('p4', i) == 3 and H('cp', i) == 0))
+print('questions where the P4 tool point hits 3/3 and C′ 0/3:', sorted(i for i in D if H('p4', i) == 3 and H('cp', i) == 0))

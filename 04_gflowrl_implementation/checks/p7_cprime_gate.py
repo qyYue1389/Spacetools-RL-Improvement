@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""C′ 闸门:长度归一化的三个配置,在**真实**数据上比一次。
+"""C′ gate: compare the three length-normalization configs once, on **real** data.
 
-`records/P7_ROUTE_C_PLAN` 的前置闸门。**零 GPU。**
+The preliminary gate of `records/P7_ROUTE_C_PLAN`. **Zero GPU.**
 
-A′ 已经证明:论文原样(A)与「归一化 Eq.4」(B)各有一种病,
-而「两边都不归一化」(C′)在两个指标上都健康 —— 但 C′ 的代价正是论文当初
-引入长度归一化要解决的问题:「long sequences dominating the loss」。
-**本脚本量那个代价,在我们自己的长度分布上。**
+A′ has already shown: the paper as-is (A) and "normalized Eq.4" (B) each have a pathology,
+while "normalize neither side" (C′) is healthy on both metrics — but the cost of C′ is exactly the problem the paper originally
+introduced length normalization to solve: "long sequences dominating the loss".
+**This script measures that cost, on our own length distribution.**
 
-三个配置的 flow gap(Eq. 6,d_i := log π_ref − log π_old):
+The flow gap of the three configs (Eq. 6, d_i := log π_ref − log π_old):
 
-    A  论文原样    Z_t = mean_j(β·r_j + d_j)          g_i = Z_t − d_i/L_i − β·r_i
-    B  归一化 Eq.4 Z_t = mean_j(β·r_j + d_j/L_j)      g_i = Z_t − d_i/L_i − β·r_i
-    C′ 两边都不    Z_t = mean_j(β·r_j + d_j)          g_i = Z_t − d_i     − β·r_i
+    A  paper as-is     Z_t = mean_j(β·r_j + d_j)          g_i = Z_t − d_i/L_i − β·r_i
+    B  normalized Eq.4 Z_t = mean_j(β·r_j + d_j/L_j)      g_i = Z_t − d_i/L_i − β·r_i
+    C′ neither side    Z_t = mean_j(β·r_j + d_j)          g_i = Z_t − d_i     − β·r_i
 
-Eq. 8 的第二项(带梯度的那个)相应地是 (1/L_i)·log(π_θ/π_old)(A、B)
-或 log(π_θ/π_old)(C′)。**长度主导发生在这一项,不在 flow gap** ——
-flow gap 被 clip 钳住了,update 项没有。
+The second term of Eq. 8 (the one carrying the gradient) is correspondingly (1/L_i)·log(π_θ/π_old) (A, B)
+or log(π_θ/π_old) (C′). **Length domination happens in this term, not in the flow gap** —
+the flow gap is clamped by the clip, the update term is not.
 
-⚠ **`d_i` 是代理不是真值。** P4/P6/passk2 里没有训练发生过(π_old = π_ref = 同一 ckpt),
-   真实漂移恒为 0。这里用 **rollout(sglang)与 trainer(FSDP)的 logprob 差**代替:
-   单位与量级可比,是 IS 权重 `w_i` 设立的那个量,但**不是训练漂移**。
-   约定 d_i := Σ_masked (trainer_lp − rollout_lp)。
+⚠ **`d_i` is a proxy, not the true value.** No training happened in P4/P6/passk2 (π_old = π_ref = the same ckpt),
+   so the true drift is always 0. Here the **logprob difference between rollout (sglang) and trainer (FSDP)** is used instead:
+   comparable in units and magnitude, it is the quantity the IS weight `w_i` exists for, but it is **not training drift**.
+   Convention: d_i := Σ_masked (trainer_lp − rollout_lp).
 
-用法: python3 tools/p7/p7_cprime_gate.py [--beta 8]
+Usage: python3 tools/p7/p7_cprime_gate.py [--beta 8]
 """
 import argparse, json, os, statistics as st
 from collections import defaultdict
 
-EPS_LOW, EPS_HIGH = 0.2, 0.28                 # 论文 Table 9
+EPS_LOW, EPS_HIGH = 0.2, 0.28                 # paper Table 9
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 BENCH = ["robospatial", "blinkdepth", "boppose"]
@@ -46,7 +46,7 @@ def load(key, root):
             g[o["index"]].append({
                 "r": o["score"],
                 "L": max(int(o["n_policy_tokens"]), 1),
-                "d": sum(tr[i] - rl[i] for i in range(n)),      # 未归一化,整条求和
+                "d": sum(tr[i] - rl[i] for i in range(n)),      # unnormalized, summed over the whole sequence
             })
     return [v for v in g.values() if len(v) >= 2]
 
@@ -64,7 +64,7 @@ def gaps(group, beta, cfg):
 
 
 def share_top_decile(weights, lengths):
-    """按 |y| 排序,最长 10% 的 rollout 占总权重的比例。"""
+    """Sort by |y|; the share of total weight taken by the longest 10% of rollouts."""
     pairs = sorted(zip(lengths, weights))
     k = max(1, len(pairs) // 10)
     tot = sum(w for _, w in pairs)
@@ -78,7 +78,7 @@ def main():
     ap.add_argument("--root", default=os.path.join(REPO, "01_official_checkpoint_eval", "p6", "passk2"))
     a = ap.parse_args()
     B = a.beta
-    print(f"# C′ 闸门 · beta={B:g} · clip [-{EPS_LOW}, +{EPS_HIGH}] · 真实 |y| 与两侧 logprob 差\n")
+    print(f"# C′ gate · beta={B:g} · clip [-{EPS_LOW}, +{EPS_HIGH}] · real |y| and logprob difference between the two sides\n")
 
     for key in BENCH:
         groups = load(key, a.root)
@@ -87,15 +87,15 @@ def main():
         n = sum(len(g) for g in groups)
         print("=" * 76)
         print(f"## {key}   prompts={len(groups)}  rollouts={n}")
-        print(f"   |y| token   中位 {st.median(allL):.0f}   均值 {st.mean(allL):.0f}"
+        print(f"   |y| token   median {st.median(allL):.0f}   mean {st.mean(allL):.0f}"
               f"   min {min(allL)}  max {max(allL)}   max/min {max(allL)/min(allL):.1f}×")
-        print(f"   d 整条求和  中位 {st.median([abs(x) for x in alld]):.4f}"
-              f"   每 token 中位 {st.median([abs(x['d'])/x['L'] for g in groups for x in g]):.2e}\n")
+        print(f"   d whole-seq sum  median {st.median([abs(x) for x in alld]):.4f}"
+              f"   per-token median {st.median([abs(x['d'])/x['L'] for g in groups for x in g]):.2e}\n")
 
-        # ---- A节:flow gap 健康度 ----
-        print(f"   A. flow gap 健康度(起点,π_θ=π_old,update 项为 0)")
-        print(f"      {'配置':>16} {'饱和率':>9} {'整组同值':>10} {'组内 |g| 极差 中位':>20}")
-        for cfg, name in (("A", "A 论文原样"), ("B", "B 归一化Eq.4"), ("Cp", "C′ 都不归一化")):
+        # ---- section A: flow gap health ----
+        print(f"   A. flow gap health (starting point, π_θ=π_old, update term is 0)")
+        print(f"      {'config':>16} {'saturation':>9} {'whole group same':>10} {'within-group |g| range median':>20}")
+        for cfg, name in (("A", "A paper as-is"), ("B", "B normalized Eq.4"), ("Cp", "C′ normalize neither")):
             sat = tot = uni = 0; rng = []
             for g in groups:
                 gg = gaps(g, B, cfg)
@@ -106,12 +106,12 @@ def main():
             print(f"      {name:>16} {100*sat/tot:8.1f}% {100*uni/len(groups):9.1f}%"
                   f" {st.median(rng):20.4f}")
 
-        # ---- A2节:组内方差分解 —— 奖励信号还在不在 ----
-        print(f"\n   A2. 组内 g 的方差分解:奖励项 vs 漂移项(分简并/非简并报)")
-        print(f"       g_i = [Z − β·r_i] + [漂移项];问漂移会不会把奖励淹掉")
-        print(f"       {'':>14} {'组数':>6} {'Var(奖励项)':>13} {'Var(漂移项) A':>15}"
-              f" {'Var(漂移项) C′':>16} {'漂移/奖励 C′':>14}")
-        for label, want_deg in (("奖励简并组", True), ("非简并组", False)):
+        # ---- section A2: within-group variance decomposition — is the reward signal still there ----
+        print(f"\n   A2. variance decomposition of within-group g: reward term vs drift term (reported separately for degenerate/non-degenerate)")
+        print(f"       g_i = [Z − β·r_i] + [drift term]; asks whether drift drowns out the reward")
+        print(f"       {'':>14} {'groups':>6} {'Var(reward term)':>13} {'Var(drift term) A':>15}"
+              f" {'Var(drift term) C′':>16} {'drift/reward C′':>14}")
+        for label, want_deg in (("reward-degenerate groups", True), ("non-degenerate groups", False)):
             vr, vdA, vdC, ratio, cnt = [], [], [], [], 0
             for g in groups:
                 r = [x["r"] for x in g]
@@ -120,7 +120,7 @@ def main():
                     continue
                 cnt += 1
                 L = [x["L"] for x in g]; d = [x["d"] for x in g]
-                rew = [-B*x for x in r]                       # Z 是常数,不改方差
+                rew = [-B*x for x in r]                       # Z is a constant, does not change variance
                 dA  = [-d[i]/L[i] for i in range(len(g))]
                 dC  = [-d[i]       for i in range(len(g))]
                 vr.append(st.pvariance(rew)); vdA.append(st.pvariance(dA)); vdC.append(st.pvariance(dC))
@@ -128,53 +128,53 @@ def main():
                     ratio.append(st.pvariance(dC) / st.pvariance(rew))
             if not cnt:
                 continue
-            rr = f"{st.median(ratio):.3f}" if ratio else "—(奖励方差为 0)"
+            rr = f"{st.median(ratio):.3f}" if ratio else "— (reward variance is 0)"
             print(f"       {label:>14} {cnt:6d} {st.median(vr):13.4f} {st.median(vdA):15.2e}"
                   f" {st.median(vdC):16.4f} {rr:>14}")
 
-        # ---- B节:长度主导 ----
-        print(f"\n   B. 长度主导:Eq.8 的 update 项,最长 10% 的 rollout 占多少 loss")
-        print(f"      update 项 = (1/L)·Σδ_t (A、B)  或  Σδ_t (C′);loss ∝ 该项的平方")
-        print(f"      两种 δ 假设都报:token 间独立(∝√L)与完全同向(∝L)")
+        # ---- section B: length domination ----
+        print(f"\n   B. length domination: Eq.8 update term, how much of the loss the longest 10% of rollouts take")
+        print(f"      update term = (1/L)·Σδ_t (A, B)  or  Σδ_t (C′); loss ∝ the square of this term")
+        print(f"      both δ assumptions reported: independent across tokens (∝√L) and fully aligned (∝L)")
         eq = share_top_decile([1.0]*len(allL), allL)
         rows = [
-            ("归一化 · 独立",   [1.0/L for L in allL]),
-            ("归一化 · 同向",   [1.0   for L in allL]),
-            ("未归一化 · 独立", [float(L) for L in allL]),
-            ("未归一化 · 同向", [float(L)**2 for L in allL]),
+            ("normalized · independent",   [1.0/L for L in allL]),
+            ("normalized · aligned",   [1.0   for L in allL]),
+            ("unnormalized · independent", [float(L) for L in allL]),
+            ("unnormalized · aligned", [float(L)**2 for L in allL]),
         ]
-        print(f"      {'情形':>16} {'最长10%的 loss 份额':>20} {'相对均分(10%)':>16}")
+        print(f"      {'case':>16} {'loss share of longest 10%':>20} {'relative to even split (10%)':>16}")
         for name, w in rows:
             s = share_top_decile(w, allL)
             print(f"      {name:>16} {100*s:19.1f}% {s/0.1:15.2f}×")
 
-        # 组内(同一 prompt 内部的相对权重才影响该 prompt 的梯度方向)
+        # within group (only relative weights inside the same prompt affect that prompt's gradient direction)
         ratios_ind, ratios_coh = [], []
         for g in groups:
             Ls = [x["L"] for x in g]
             m = st.mean(Ls)
             ratios_ind.append(max(Ls) / m)
             ratios_coh.append((max(Ls) / m) ** 2)
-        print(f"      组内最长 rollout 的相对权重(对组内均值):"
-              f" 独立 {st.median(ratios_ind):.2f}×   同向 {st.median(ratios_coh):.2f}×")
+        print(f"      relative weight of the longest rollout in the group (vs group mean):"
+              f" independent {st.median(ratios_ind):.2f}×   aligned {st.median(ratios_coh):.2f}×")
 
-        # ---- C节:这个代价对长度散布有多敏感 ----
+        # ---- section C: how sensitive this cost is to length spread ----
         med = st.median(allL)
-        print(f"\n   C. 代价对长度散布的敏感性(未归一化·同向,最坏情形)")
-        print(f"      参照:**对数均匀**分布(不是我们的形状,只为看敏感度)")
-        print(f"      {'长度散布 max/min':>18} {'最长10%的 loss 份额':>20}")
+        print(f"\n   C. sensitivity of the cost to length spread (unnormalized · aligned, worst case)")
+        print(f"      reference: **log-uniform** distribution (not our shape, only to see sensitivity)")
+        print(f"      {'length spread max/min':>18} {'loss share of longest 10%':>20}")
         import random
         rng = random.Random(20260902)
         for spread in (1.0, 3.0, 10.0, 20.0, 100.0):
             import math
             if spread == 1.0:
                 Ls = [med]*len(allL)
-            else:                      # 对数均匀,保持中位不变
+            else:                      # log-uniform, keep the median unchanged
                 Ls = [med*math.exp(rng.uniform(-0.5, 0.5)*math.log(spread)) for _ in allL]
             sh = share_top_decile([x**2 for x in Ls], Ls)
             print(f"      {spread:18.0f}× {100*sh:19.1f}%")
-        print(f"      **本 benchmark 的真实分布**(max/min = {max(allL)/min(allL):.1f}×,"
-              f"但比对数均匀集中得多)-> **{100*share_top_decile([float(x)**2 for x in allL], allL):.1f}%**")
+        print(f"      **real distribution of this benchmark** (max/min = {max(allL)/min(allL):.1f}×, "
+              f"but much more concentrated than log-uniform) -> **{100*share_top_decile([float(x)**2 for x in allL], allL):.1f}%**")
         print()
 
 

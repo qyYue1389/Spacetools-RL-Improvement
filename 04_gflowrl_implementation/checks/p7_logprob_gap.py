@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""P7 · rollout(sglang) 与 trainer(FSDP) 之间 logprob 差的分布形状。
+"""P7 · distribution shape of the logprob gap between rollout (sglang) and trainer (FSDP).
 
-**这是第二组采样这一趟最重要的产出。** 判据 i-b 的落点就是它:
-`p7_estimators.py` §4 测出三种噪声分布给三种相反的排序 ——
-高斯 -> 算术平均最优;重尾 -> median/huber 好 0.6x;**双峰 -> 算术平均好 3.5-7.4x**。
-该选哪个批内常数完全取决于真实漂移的分布形状,而那只有前向 pass 能给。
+**This is the most important output of this second sampling pass.** It is where criterion i-b lands:
+`p7_estimators.py` §4 measured three noise distributions giving three opposite rankings —
+Gaussian -> arithmetic mean is best; heavy-tailed -> median/huber better by 0.6x; **bimodal -> arithmetic mean better by 3.5-7.4x**.
+Which within-batch constant to pick depends entirely on the shape of the real drift distribution, and only a forward pass can give that.
 
-⚠ 一个必须写进结论的限定:P4/P6 的数据里**没有训练发生过**,
-`π_old = π_ref = 同一个 ckpt`,所以 GFlowRL 的漂移项 `log π_ref − log π_old`
-在这些数据上**恒等于 0**。本脚本量的是 **rollout/trainer 的框架差**,
-不是训练漂移 —— 它是漂移的**第一个真实代理**(GFlowRL 的 IS 权重正是为它设的)。
+⚠ A qualification that must go into the conclusion: **no training happened** in the P4/P6 data,
+`π_old = π_ref = the same ckpt`, so GFlowRL's drift term `log π_ref − log π_old`
+is **identically 0** on this data. What this script measures is the **rollout/trainer framework gap**,
+not training drift — it is the **first real proxy** for drift (GFlowRL's IS weight is set up exactly for it).
 
-同时兑现 P7_STEP23_RESULTS.md §1.2 的待办:把那里的**字符**代理换成**真实 token 数**。
+It also clears the TODO in P7_STEP23_RESULTS.md §1.2: replace the **character** proxy there with the **real token count**.
 
-用法:  python3 tools/p7/p7_logprob_gap.py <dump 目录或 jsonl> [...]
+Usage:  python3 tools/p7/p7_logprob_gap.py <dump dir or jsonl> [...]
 """
 import argparse
 import json

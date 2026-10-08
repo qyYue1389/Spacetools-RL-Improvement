@@ -5,11 +5,11 @@ def load(b): return [json.loads(l) for l in open(f"{BASE}/{b}.jsonl",encoding="u
 DET = re.compile(r"Detected (\d+) instance\(s\)[^:]*:\s*(\[.*?\])")
 PT  = re.compile(r"\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)")
 
-# ---------- robospatial Vacant:透传检验 ----------
+# ---------- robospatial Vacant: pass-through check ----------
 rs=load("robospatial")
 vac=[r for r in rs if str(r["gt"]).strip().startswith("[")]
 vqa=[r for r in rs if str(r["gt"]).strip().lower() in ("yes","no")]
-print(f"robospatial 拆分: VQA {len(vqa)} / Vacant {len(vac)}")
+print(f"robospatial split: VQA {len(vqa)} / Vacant {len(vac)}")
 same=diff=skip=0; same_wrong=diff_wrong=0
 for r in vac:
     det=None
@@ -27,12 +27,12 @@ for r in vac:
     else:
         diff+=1; diff_wrong += (not r["correct"])
 n=same+diff
-print(f"\n### robospatial Vacant 透传检验  可判定 {n}/{len(vac)}(跳过 {skip})")
-print(f"   原样透传 {same:4} ({100*same/n:5.1f}%)  其中答错 {same_wrong:3}  ← 工具错")
-print(f"   自行改动 {diff:4} ({100*diff/n:5.1f}%)  其中答错 {diff_wrong:3}")
+print(f"\n### robospatial Vacant pass-through check  decidable {n}/{len(vac)} (skipped {skip})")
+print(f"   verbatim pass-through {same:4} ({100*same/n:5.1f}%)  of which wrong {same_wrong:3}  ← tool error")
+print(f"   changed by model      {diff:4} ({100*diff/n:5.1f}%)  of which wrong {diff_wrong:3}")
 
-# ---------- cvb2drelation 题目形态 ----------
-print("\n### cvb2drelation 题目样例")
+# ---------- cvb2drelation question form ----------
+print("\n### cvb2drelation question examples")
 c2=load("cvb2drelation")
 for r in c2[:3]:
     print(f"  [{'✓' if r['correct'] else '✗'}] {(r.get('question') or '')[:170].replace(chr(10),' ')}")
@@ -43,8 +43,8 @@ for q in qs:
     ql=q.lower()
     for k in ["left","right","above","below","under","on top","closer","behind","front"]:
         if k in ql: kinds[k]+=1
-print("  关键词出现次数:", dict(kinds))
+print("  keyword occurrence counts:", dict(kinds))
 
-print("\n### robospatial VQA 题目样例")
+print("\n### robospatial VQA question examples")
 for r in vqa[:3]:
     print(f"  [{'✓' if r['correct'] else '✗'}] GT={r['gt']:>3}  {(r.get('question') or '')[:170].replace(chr(10),' ')}")

@@ -1,6 +1,6 @@
 #!/bin/bash
-# 判定实验:gpu_memory_utilization 0.25(在 80GB 上复现 40GB 的 20GB KV 池)
-# 除该参数外与 tools/p4_run.sh 完全相同。
+# Decisive experiment: gpu_memory_utilization 0.25 (reproduces 40GB's 20GB KV pool on 80GB)
+# Identical to tools/p4_run.sh except for this parameter.
 set -eo pipefail
 # A crashed sglang worker (31 GiB RSS) wrote a 50 GB core into
 # /var/lib/vastai_kaalia/data/ and filled the 50 GB CONTAINER disk mid-run.

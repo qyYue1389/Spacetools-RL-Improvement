@@ -1,240 +1,240 @@
-# C 路计划:GFlowRL(C′ 臂)对 GRPO 的同起点对比
+# Route C plan: GFlowRL (C′ arm) vs GRPO from the same starting point
 
-> **这份文档回答**:C 路具体怎么做、要多少机器和时间、能不能测出东西。
-> **不回答**:要不要做——那是排期决定,依据见 §7 的两个决策点。
-> 写于 2026-09-02。前置:`P7_DECISION.md`(路线)· `P7_GPU_RESULTS.md`(A′ 的答案)·
-> `P7_ROUTE_C_GATE.md`(训练臂的闸门)。
-
----
-
-## 0. 两条前置,决定了这份计划长什么样
-
-**① A′ 已经答了:`Z_t` 按论文原样在我们这里不可用。** 原因不是批内 MC 的方差、
-也不是常数选得不对,而是 `Eq.4` 与 `Eq.5/6` 的长度归一化不一致
-(阈值 5e-4 nat/token,零训练下的框架差就已 1.5–1.9e-3)。
-**所以 C 不能直接跑「论文原样的 GFlowRL vs GRPO」——那是在测一个已知有缺陷的实现。**
-
-**② 闸门已经选出了臂:C′(`Eq.4` 与 `Eq.5/6` 两边都不做长度归一化)。**
-`P7_ROUTE_C_GATE.md`:长度主导的代价在我们的长度分布上是温和的
-(最长 10% 占 loss 的 20.7–24.2%,**组内仅 1.04–1.32×**);
-非简并组上奖励主导漂移 **24×**;简并组的整组同值率 **0.0%**(A 是 30–49%)。
-**代价是 C′ 的 clip 饱和率最高(77.9%)。**
-
-> **所以 C 要问的那一句话必须改写:**
-> ~~「GFlowRL 对 GRPO 能提多少分」~~
-> **「把 GFlowRL 的分布匹配目标(C′ 形式)换进 SpaceTools 的 Step 4,
-> `robospatial` 上的 accuracy 会不会动?」**
-> 换目标函数动不了 P6 那 273 条工具错与工具集缺口(84.7%),
-> 所以**问的只能是可动的那一块**,而它几乎全在 `robospatial`(§6.1)。
+> **This doc answers**: how exactly Route C is done, how many machines and how much time it needs, and whether it can measure anything.
+> **It does not answer**: whether to do it — that is a scheduling decision; the basis is in the two decision points of §7.
+> Written 2026-09-02. Prerequisites: `P7_DECISION.md` (route) · `P7_GPU_RESULTS.md` (A′'s answer) ·
+> `P7_ROUTE_C_GATE.md` (gate for the training arm).
 
 ---
 
-## 1. 四个 Step
+## 0. Two prerequisites that determine what this plan looks like
 
-`run_rl.sh` 的真实架构:**2 节点 × 8 卡** —— 一整个节点跑 Toolshed,
-另一整个节点跑 FSDP 训练 + sglang(`trainer.nnodes=1`,`n_gpus_per_node=8`)。
+**① A′ has already answered: `Z_t` per the paper as is is not usable in our setting.** The reason is neither the variance of the within-batch MC
+nor a wrong choice of constant, but the length normalization inconsistency between `Eq.4` and `Eq.5/6`
+(threshold 5e-4 nat/token; the framework difference with zero training is already 1.5–1.9e-3).
+**So C cannot directly run "GFlowRL per the paper as is vs GRPO" — that would be testing a known-defective implementation.**
 
-### Step 3 · SFT(两臂共用,只跑一次)
+**② The gate has already chosen the arm: C′ (no length normalization on either side: neither `Eq.4` nor `Eq.5/6`).**
+`P7_ROUTE_C_GATE.md`: the cost of length dominance on our length distribution is mild
+(the longest 10% take 20.7–24.2% of the loss, **only 1.04–1.32× within group**);
+on non-degenerate groups reward dominates drift **24×**; on degenerate groups the whole-group same-value rate is **0.0%** (A is 30–49%).
+**The cost is that C′ has the highest clip saturation rate (77.9%).**
+
+> **So the one question C asks must be rewritten:**
+> ~~"How many points does GFlowRL add over GRPO"~~
+> **"If GFlowRL's distribution-matching objective (C′ form) is swapped into SpaceTools' Step 4,
+> does accuracy on `robospatial` move?"**
+> Swapping the objective cannot touch P6's 273 tool errors and toolset gaps (84.7%),
+> so **the question can only be about the movable part**, and that is almost entirely in `robospatial` (§6.1).
+
+---
+
+## 1. The four Steps
+
+The real architecture of `run_rl.sh`: **2 nodes × 8 GPUs** — one whole node runs Toolshed,
+the other whole node runs FSDP training + sglang (`trainer.nnodes=1`, `n_gpus_per_node=8`).
+
+### Step 3 · SFT (shared by both arms, run once)
 
 | | |
 |---|---|
-| 数据 | `siyich/spacetools-sft` — **7463 文件 / 6.32 GB**(此前未出现在任何记录里) |
-| 代码 | `ChicyChen/SpaceTools-SFT`(LLaMA-Factory fork,Apache 2.0,`b7ebbf32`) |
-| 配置 | vision tower 冻结,只训 LLM;3000 步 |
-| 论文耗时 | 8×A100-80G,3–4 h |
-| **验收** | 论文 Table 4 有 Tool-SFT 的消融数字可作靶子,**但那张表的基数与 Table 2 不同,用之前必须核对口径** |
+| data | `siyich/spacetools-sft` — **7463 files / 6.32 GB** (not previously in any record) |
+| code | `ChicyChen/SpaceTools-SFT` (LLaMA-Factory fork, Apache 2.0, `b7ebbf32`) |
+| config | vision tower frozen, LLM only; 3000 steps |
+| paper time | 8×A100-80G, 3–4 h |
+| **acceptance check** | the paper's Table 4 has Tool-SFT ablation numbers to use as a target, **but that table's denominator differs from Table 2; check the definition before using it** |
 
-**不需要工具。** 所以 SFT 可以用满全部卡,是四个 Step 里唯一在当前机器上跑得动的。
+**No tools needed.** So SFT can use all GPUs, and it is the only one of the four Steps that can run on the current machine.
 
-### Step 4 · full-tool RL(两臂各跑 k 个 seed,主实验)
+### Step 4 · full-tool RL (k seeds per arm, main experiment)
 
-超参直接抄自 `run_rl.sh`:
+Hyperparameters copied directly from `run_rl.sh`:
 
-    rollout.n = 5                    ← G=5,判据 i-b 的 3.17× 方差就是它
-    train_batch_size = 64            → 5425 / 64 ≈ 85 步 = 1 epoch
+    rollout.n = 5                    ← G=5, this is where criterion i-b's 3.17× variance comes from
+    train_batch_size = 64            → 5425 / 64 ≈ 85 steps = 1 epoch
     ppo_mini_batch_size = 64 · ppo_micro_batch_size_per_gpu = 2
-    max_prompt_length = 8192 · max_response_length = 8192   ← eval 侧是 4096
+    max_prompt_length = 8192 · max_response_length = 8192   ← eval side is 4096
     gpu_memory_utilization = 0.7 · max_num_seqs = 256
     use_kl_loss = True · kl_loss_coef = 0.01 · kl_loss_type = low_var_kl
     entropy_coeff = 0 · lr = 1e-6 · freeze_vision_model = true
     gradient_checkpointing = True · actor param/optimizer offload = False
     ref.param_offload = True · total_epochs = 1 · save_freq = 5 · test_freq = 5
 
-**训练侧的工具配置是 eval 的 2.6 倍**,容易被忽略:
+**The training-side tool config is 2.6 times the eval one**, which is easy to overlook:
 
     RL:   roborefer 6×0.6 + vlm 2×0.6 + sam2 5×0.2 + depth 5×0.2
-          + bbox 5×0.1 + vision_ops 8×0 + grasp 5×0.1  =  7.8 GPU   ← 塞满一个节点
-    eval: 同样七个工具                                  =  3.0 GPU
+          + bbox 5×0.1 + vision_ops 8×0 + grasp 5×0.1  =  7.8 GPU   ← fills a whole node
+    eval: the same seven tools                          =  3.0 GPU
 
-原因是 batch 64 × n=5 = **每步 320 条 rollout 并发调工具**。actor 减少,
-工具延迟就主导整步时间,吞吐赤字会比按卡数外推的更糟。
+The reason is batch 64 × n=5 = **320 rollouts calling tools concurrently per step**. With fewer actors,
+tool latency dominates step time, and the throughput deficit is worse than extrapolating from GPU count.
 
-### ⚠ 两臂的受控差异:KL 项是一个必须处理的混淆
+### ⚠ Controlled difference between the two arms: the KL term is a confound that must be handled
 
-GRPO 臂带 `kl_loss_coef = 0.01` 的 KL-to-ref;而 GFlowRL 的分布匹配**本身就锚在
-`π_ref` 上**(目标是 `π_ref·exp(β·r)`),论文 Table 9 的 KL 系数是 **0.0**。
-**两臂若一个带 KL 一个不带,差的就不只是目标函数。**
+The GRPO arm has a KL-to-ref with `kl_loss_coef = 0.01`; GFlowRL's distribution matching is **anchored on
+`π_ref` by itself** (the target is `π_ref·exp(β·r)`), and the paper's Table 9 KL coefficient is **0.0**.
+**If one arm has KL and the other does not, the difference is not just the objective.**
 
-**处置(二选一,必须预先写死):**
-1. **两臂都关 KL**(`kl_loss_coef=0`)—— 干净,但 GRPO 臂偏离了 SpaceTools 的发布配置;
-2. **两臂都保留 KL** —— GFlowRL 侧变成「分布匹配 + 额外 KL」,与论文配方不同。
+**Handling (pick one, must be fixed in advance):**
+1. **Turn KL off in both arms** (`kl_loss_coef=0`) — clean, but the GRPO arm deviates from SpaceTools' released config;
+2. **Keep KL in both arms** — the GFlowRL side becomes "distribution matching + extra KL", which differs from the paper's recipe.
 
-**推荐 ①**,并在报告里写明 GRPO 臂因此不是 SpaceTools 的原配置。
+**Recommend ①**, and state in the report that the GRPO arm is therefore not SpaceTools' original config.
 
-### Step 5 · eval(每个 ckpt 一次)
+### Step 5 · eval (once per checkpoint)
 
-复用 `tools/p4_run.sh` + `parse_dump.py --strict`,九个 key、greedy、
-`model_dtype=bf16`(40 GB 上)、`gmu` 随数字一并报。**约 2 h 10 m / ckpt。**
+Reuse `tools/p4_run.sh` + `parse_dump.py --strict`, nine keys, greedy,
+`model_dtype=bf16` (on 40 GB), `gmu` reported together with the numbers. **About 2 h 10 m / checkpoint.**
 
 ---
 
-## 2. 实现:改哪里
+## 2. Implementation: what to change
 
-`P7_PRIOR_ART.md` 已经查清:**我们的 fork 里 registry 与 `ref_log_prob` 都已就位。**
+`P7_PRIOR_ART.md` already established: **in our fork, both the registry and `ref_log_prob` are already in place.**
 
     SpaceTools-RL @ f0742338 · verl 0.8.0.dev
-      core_algos.py    register_policy_loss 已存在(11 个已注册 loss)
-      dp_actor.py:528  use_kl_loss 时 ref_log_prob 已选进 micro-batch
-      dp_actor.py:615  policy_loss_fn 调用点
-      ray_trainer.py:1528  token_level_scores(原始 r,advantages 是组内归一化过的)
+      core_algos.py    register_policy_loss already exists (11 registered losses)
+      dp_actor.py:528  with use_kl_loss, ref_log_prob is already selected into the micro-batch
+      dp_actor.py:615  policy_loss_fn call site
+      ray_trainer.py:1528  token_level_scores (raw r; advantages are group-normalized)
 
-**最小路径,约十行:**
-1. `actor.use_kl_loss=True` + `kl_loss_coef=0` —— 白拿 `ref_log_prob`,KL 乘 0 不生效
-2. `select_keys.append("token_level_scores")` —— GFlowRL 要原始 `r`
-3. `@register_policy_loss("gflowrl_cprime")` 写进 `core_algos.py`
-4. L615 调用点多传 `ref_log_prob` 与 `token_level_scores`
+**Minimal path, about ten lines:**
+1. `actor.use_kl_loss=True` + `kl_loss_coef=0` — get `ref_log_prob` for free; KL multiplied by 0 has no effect
+2. `select_keys.append("token_level_scores")` — GFlowRL needs the raw `r`
+3. Write `@register_policy_loss("gflowrl_cprime")` into `core_algos.py`
+4. At the L615 call site, also pass `ref_log_prob` and `token_level_scores`
 
-**C′ 的实现要点:`Eq.4` 与 `Eq.5/6` 都用 `masked_sum`,不用 `masked_mean`。**
-(FlowRL 的 `compute_flowrl_objective` 两种都有现成写法,但它建在 verl 0.4.0 上,
-**模式可迁、API 不一定,不要照抄**。)
+**Key point of the C′ implementation: both `Eq.4` and `Eq.5/6` use `masked_sum`, not `masked_mean`.**
+(FlowRL's `compute_flowrl_objective` has ready-made code for both, but it is built on verl 0.4.0;
+**the pattern transfers, the API not necessarily; do not copy it verbatim**.)
 
-**必须带的守卫**(`P7_STEP4_RESULTS.md` §2):`response_mask` 有两个同名不同义的来源,
-`ray_trainer.py:157` 的 fallback 是 `attention_mask[:,-L:]`(工具 token 全是 1)且**静默**。
-多轮样本上断言 `response_mask.sum() < attention_mask[:,-L:].sum()`。
+**Required guard** (`P7_STEP4_RESULTS.md` §2): `response_mask` has two sources with the same name and different meanings;
+the fallback at `ray_trainer.py:157` is `attention_mask[:,-L:]` (all tool tokens are 1) and is **silent**.
+On multi-turn samples assert `response_mask.sum() < attention_mask[:,-L:].sum()`.
 
-**β:不低于 2,起步用 8**(`P7_ROUTE_C_GATE.md` §4;
-`P7_STEP23_RESULTS.md` §1.4 的「β≈1」在 C′ 下已作废)。
+**β: no lower than 2, start with 8** (`P7_ROUTE_C_GATE.md` §4;
+the "β≈1" in `P7_STEP23_RESULTS.md` §1.4 is void under C′).
 
 ---
 
-## 3. 机器:当前这台跑不了 Step 4 —— 不是慢,是装不下
+## 3. Machine: the current one cannot run Step 4 — not slow, it does not fit
 
-工具实测(P6 开机,非估算):Molmo **34.6** + DepthPro **25.7** + RoboRefer **20.5** = **80.8 GB**。
-在 **40 GB 卡**上:Molmo 独占一张(87%);DepthPro + RoboRefer = 46.2 > 40,要两张。
-**工具吃掉 3 张,训练只剩 1 张。**
+Tools measured (P6 GPU session, not estimated): Molmo **34.6** + DepthPro **25.7** + RoboRefer **20.5** = **80.8 GB**.
+On **40 GB GPUs**: Molmo takes a whole GPU (87%); DepthPro + RoboRefer = 46.2 > 40, needs two.
+**Tools take 3 GPUs, leaving only 1 for training.**
 
-单卡训练态(4.066 B 参数,从 safetensors 头实读):
+Single-GPU training state (4.066 B parameters, read from the safetensors header):
 
-    fp32 master 15.1 + 梯度 15.1 + Adam m 15.1 + Adam v 15.1 = 60.6 GB  >>  40
-    即使 optimizer_offload=True(Adam 下放 CPU):30.2 GB + 激活 + sglang 池
-    (gmu=0.7 → 28 GB)                                      → 仍然爆
+    fp32 master 15.1 + grads 15.1 + Adam m 15.1 + Adam v 15.1 = 60.6 GB  >>  40
+    Even with optimizer_offload=True (Adam moved to CPU): 30.2 GB + activations + sglang pool
+    (gmu=0.7 → 28 GB)                                      → still OOM
 
-**`model_dtype=bf16` 不能用来救场** —— 那是 eval 专用的偏离 `[20]`,
-**fp32 master 正是优化器步骤需要的东西**。
+**`model_dtype=bf16` cannot rescue this** — that is the eval-only deviation `[20]`,
+and **the fp32 master is exactly what the optimizer step needs**.
 
-**三条出路:**
+**Three ways out:**
 
-| 出路 | 代价 | 它还是不是 C |
+| way out | cost | is it still C |
 |---|---|---|
-| **加卡到 2 节点 × 8**(脚本的原假设) | 租机器 | **是**,原样的 C |
-| **退到 LoRA** | 砍掉 base 的梯度与 Adam 状态那 45.4 GB | **不是** —— 全参 vs LoRA 是另一个实验,结论不能外推到论文配置 |
-| 重度 CPU offload + 极小 batch | 我估计按天算,**未实测** | 是,但吞吐可能让 §5 的预算翻几倍 |
+| **add GPUs to 2 nodes × 8** (the script's original assumption) | rent machines | **yes**, C as is |
+| **fall back to LoRA** | cuts the 45.4 GB of base gradients and Adam state | **no** — full-parameter vs LoRA is a different experiment; conclusions cannot be extrapolated to the paper's config |
+| heavy CPU offload + tiny batch | I estimate on the order of days, **not measured** | yes, but throughput could multiply §5's budget several times |
 
 ---
 
-## 4. 统计设计——这才是决定 C 值不值的地方
+## 4. Statistical design — this is what decides whether C is worth it
 
-### 4.1 效应量的天花板
+### 4.1 Ceiling on effect size
 
-`P6_REPORT.md` 的归因:换目标函数**动不了** 273 条工具错与工具集缺口(84.7%)。
-可动的是 **推理错 19 + 3b 14 + 2a 11 = 44 条**(3b 归属有争议,只算推理错则是 19)。
+`P6_REPORT.md`'s attribution: swapping the objective **cannot touch** the 273 tool errors and toolset gaps (84.7%).
+What can move is **reasoning errors 19 + 3b 14 + 2a 11 = 44 samples** (3b's attribution is disputed; counting only reasoning errors gives 19).
 
-    可动份额上界   19 – 44 / 2001 = 0.95 – 2.20 pp     且是「全部吃掉、一个不漏」
+    upper bound of movable share   19 – 44 / 2001 = 0.95 – 2.20 pp     and that is "eat all of it, miss none"
 
-### 4.2 用总分做主指标 → 功效不够,**即使效应拉满**
+### 4.2 Using the total score as primary metric → not enough power, **even at maximum effect**
 
-McNemar 的功效由**不一致对**的数量决定。两侧检验 α=0.05、功效 80% 需要
+McNemar's power is determined by the number of **discordant pairs**. Two-sided α=0.05, 80% power requires
 
-    净差 Δ  ≥  2.80 · √D          D = 不一致对总数
+    net diff Δ  ≥  2.80 · √D          D = total discordant pairs
 
-两个不同训练的模型在同一批样本上的不一致率:同模型运行间是 6.9–10%
-(`robospatial` 24/350、`blinkdepth` 13/124),换工具那次是 36.5%(145/397)。
-取中间的 15%:
+Discordance rate of two differently trained models on the same samples: between runs of the same model it is 6.9–10%
+(`robospatial` 24/350, `blinkdepth` 13/124); the tool-swap run was 36.5% (145/397).
+Taking 15% in between:
 
-    D ≈ 0.15 × 2001 ≈ 300   →   需要 Δ ≥ 48
-    而我们的**天花板**是 Δ = 44
+    D ≈ 0.15 × 2001 ≈ 300   →   need Δ ≥ 48
+    while our **ceiling** is Δ = 44
 
-> **所以以九个 benchmark 的总分为主指标,这个实验在效应拉满时仍然测不出来。**
+> **So with the total score over nine benchmarks as the primary metric, this experiment cannot detect anything even at maximum effect.**
 
-### 4.3 修法:把 `robospatial` 预登记为主指标
+### 4.3 Fix: pre-register `robospatial` as the primary metric
 
-P6 已经把可动份额定位得很干净 —— **44 条里约 42 条在 `robospatial`**:
+P6 already located the movable share cleanly — **about 42 of the 44 are in `robospatial`**:
 
-    3b 坐标系/语义   14 条   全部 robospatial(§3.1)
-    2a 该调没调      11 条   手工 3 条 + front/behind 8 条,全部 robospatial
-    推理错           19 条   其中 15 条来自 robospatial Vacant、1 条 robospatial 手工
+    3b coordinate frame/semantics   14   all robospatial (§3.1)
+    2a should have called, didn't   11   3 manual + 8 front/behind, all robospatial
+    reasoning errors                19   of which 15 from robospatial Vacant, 1 robospatial manual
 
-在 n=350 上重算:
+Recomputed on n=350:
 
-    D ≈ 0.15 × 350 ≈ 52   →   需要 Δ ≥ 20        天花板 Δ = 42
+    D ≈ 0.15 × 350 ≈ 52   →   need Δ ≥ 20        ceiling Δ = 42
 
-**功效够了。** 这条不是统计技巧,是 P6 归因的直接后果:**效应本来就只可能出现在那里。**
+**Enough power.** This is not a statistical trick; it is a direct consequence of P6's attribution: **the effect can only show up there in the first place.**
 
-### 4.4 预登记(跑之前写死)
+### 4.4 Pre-registration (fixed before running)
 
-- **主指标**:`robospatial` 350 条上的逐样本配对(McNemar),两臂同一批样本
-- **次指标**:其余六个准确率 benchmark,**作为「没有把别处弄坏」的检查,不作为收益**
-- **排除**:`boppose` / `bopgrasp`(`P7_DECISION.md` §0.2 —— `r` 对夹爪朝向不敏感)
-- **seed**:**两臂各 ≥3**。RL 训练的种子间方差通常大于 eval 噪声,
-  各 1 个 seed 什么都归因不了(§3.3 第 3 条:两侧的散布都要测)
-- **解码**:greedy,`val_kwargs` 默认口径;`--strict` 守门;`gmu` 与 KV 池随数字一并报
-- **失败也算结果**:「C′ 在 `robospatial` 上无效应」是对 P6 那条
-  「换目标函数动不了 84.7%」的独立确认
+- **Primary metric**: per-sample paired (McNemar) on the 350 `robospatial` samples, same samples for both arms
+- **Secondary metrics**: the other six accuracy benchmarks, **as a "did not break anything elsewhere" check, not as gains**
+- **Excluded**: `boppose` / `bopgrasp` (`P7_DECISION.md` §0.2 — `r` is insensitive to gripper orientation)
+- **seed**: **≥3 per arm**. Seed-to-seed variance in RL training is usually larger than eval noise;
+  1 seed per arm cannot attribute anything (§3.3 item 3: the spread on both sides must be measured)
+- **Decoding**: greedy, default `val_kwargs` definition; `--strict` as gatekeeper; `gmu` and KV pool reported with the numbers
+- **Failure counts as a result too**: "C′ has no effect on `robospatial`" is an independent confirmation of P6's
+  "swapping the objective cannot touch 84.7%"
 
 ---
 
-## 5. 成本
+## 5. Cost
 
-| | 配置 | 时间 |
+| | config | time |
 |---|---|---|
-| 实现 + 合成不动点自检 | 零 GPU | 1–2 天 |
-| Step 3 SFT(共用一次) | 8 卡 | 3–4 h(论文)· 4 卡估 8–12 h |
-| **Step 4 × 2 臂 × 3 seed** | **2 节点 × 8 卡** | 每次 8–12 h → **48–72 h** |
-| Step 5 eval × 6 ckpt(+SFT 基线) | 4 卡 | 每次 ~2 h 10 m → **13–15 h** |
-| **合计** | | **约 4–5 天 16 卡时** |
+| implementation + synthetic fixed-point self-check | zero GPU | 1–2 days |
+| Step 3 SFT (shared, once) | 8 GPUs | 3–4 h (paper) · 4 GPUs est. 8–12 h |
+| **Step 4 × 2 arms × 3 seeds** | **2 nodes × 8 GPUs** | 8–12 h each → **48–72 h** |
+| Step 5 eval × 6 checkpoints (+SFT baseline) | 4 GPUs | ~2 h 10 m each → **13–15 h** |
+| **Total** | | **about 4–5 days on 16 GPUs** |
 
-数据:SFT 6.32 GB + RL 3.38 GB(5425 文件)。存储 ~100 GB。
-
----
-
-## 6. 两个决策点
-
-**决策点 1:租不租 2 节点 × 8 卡。**
-当前 4×A100-40GB **跑不了 Step 4**(§3)。不租就只剩 LoRA(那是另一个实验)
-或重度 offload(未实测)。**这一条不做技术判断能解决,是花钱决定。**
-
-**决策点 2:接受不接受「主指标只报 `robospatial`」。**
-以总分为主指标必然测不出来(§4.2)。把主指标收窄到 `robospatial`
-在统计上是对的、在归因上有依据,但**报告里必须写明这是预登记的收窄,不是事后挑**。
+Data: SFT 6.32 GB + RL 3.38 GB (5425 files). Storage ~100 GB.
 
 ---
 
-## 7. 什么情况下不该做
+## 6. Two decision points
 
-- **若决策点 2 不接受** —— 那就没有一个有功效的主指标,不要跑。
-- **若只能用 LoRA** —— 结论无法外推到论文的全参配置,而 C 的全部意义是同起点对比。
-- **若 A′ 的结论还想再挖** —— C 花 4–5 天回答「分数动不动」,
-  而 A′ 那条(归一化不一致 + 它的两种修法各有代价)是**算法侧的结果**,
-  零 GPU 就能继续推进,而且**是这条线上唯一别人没做过的东西**
-  (`P7_PRIOR_ART.md`:没有找到任何 GFlowNet 式目标用在多轮工具轨迹上的实现)。
+**Decision point 1: rent 2 nodes × 8 GPUs or not.**
+The current 4×A100-40GB **cannot run Step 4** (§3). Without renting, only LoRA (a different experiment)
+or heavy offload (not measured) remains. **This is not something a technical judgment can settle; it is a spending decision.**
+
+**Decision point 2: accept "the primary metric reports `robospatial` only" or not.**
+With the total score as primary metric, detection is impossible (§4.2). Narrowing the primary metric to `robospatial`
+is statistically correct and grounded in attribution, but **the report must state this is a pre-registered narrowing, not post-hoc picking**.
 
 ---
 
-## 8. 局限
+## 7. When it should not be done
 
-- **§4.2 的 D ≈ 15% 是估计**,取自同模型运行间(6.9–10%)与换工具(36.5%)之间。
-  真实值只有跑完才知道;若 D 更大,`robospatial` 的功效也会下降。
-- **§5 的 4 卡 SFT 时间是估算**,没有实测。
-- **Step 4 的两臂差异不止目标函数**(KL 那条,§1),必须按 ① 或 ② 显式处置。
-- **闸门只测了起点**(`π_θ = π_old`);C′ 在真实训练动力学下的表现未验证。
-- **`d` 是框架差代理,不是训练漂移**(`P7_ROUTE_C_GATE.md` §5)。
+- **If decision point 2 is not accepted** — then there is no primary metric with power; do not run.
+- **If only LoRA is possible** — conclusions cannot be extrapolated to the paper's full-parameter config, and the whole point of C is a same-starting-point comparison.
+- **If A′'s conclusion is still worth digging into** — C spends 4–5 days answering "does the score move",
+  while A′'s item (normalization inconsistency + each of its two fixes has a cost) is an **algorithm-side result**
+  that can keep advancing with zero GPU, and **is the only thing on this line nobody else has done**
+  (`P7_PRIOR_ART.md`: no implementation found of any GFlowNet-style objective used on multi-turn tool trajectories).
+
+---
+
+## 8. Limitations
+
+- **The D ≈ 15% in §4.2 is an estimate**, taken between same-model run-to-run (6.9–10%) and tool swap (36.5%).
+  The real value is only known after running; if D is larger, power on `robospatial` drops too.
+- **The 4-GPU SFT time in §5 is an estimate**, not measured.
+- **The difference between the two Step 4 arms is not only the objective** (the KL item, §1); it must be handled explicitly via ① or ②.
+- **The gate only measured the starting point** (`π_θ = π_old`); C′'s behavior under real training dynamics is unverified.
+- **`d` is the framework-difference proxy, not training drift** (`P7_ROUTE_C_GATE.md` §5).

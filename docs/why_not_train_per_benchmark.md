@@ -1,197 +1,197 @@
-# 为什么不能按 benchmark 分开训练
+# Why we can't train per benchmark
 
-写于 2026-09-15 · 起因:为了省卡,考虑「训练某个 benchmark 时只部署那个 benchmark
-需要的工具」· 相关 `GFlowRL/README.md`、`RL 训练准备交接文档(未收录)`
-
----
-
-## 结论
-
-**机制上做得到,但不该做。** 四条理由,任何一条单独成立都足够;第 2 和第 3 条是硬的,
-第 4 条说明它连省钱这个初衷都达不到。
-
-末尾第 6 节记了这个想法里**唯一值得单独算的变体**,以及第 7 节一个能拿到同样省卡效果、
-且零偏离的替代做法。
+Written 2026-09-15 · Trigger: to save GPUs, the idea "when training a given benchmark, deploy only the tools that benchmark
+needs" came up · Related: `GFlowRL/README.md`, `RL training-prep handoff doc (not included)`
 
 ---
 
-## 1. 机制上做得到 —— 有先例
+## Conclusion
 
-工具集不是靠提示词约束的,是**在启动工具服务时就只注册想要的那几个**:
+**Mechanically it can be done, but it shouldn't be.** Four reasons, any one of which is enough on its own; reasons 2 and 3 are hard ones,
+and reason 4 shows it doesn't even achieve its original purpose of saving money.
+
+Section 6 at the end records **the only variant of this idea worth evaluating on its own**, and section 7 an alternative that gets the same GPU savings
+with zero deviation.
+
+---
+
+## 1. Mechanically it can be done — there is a precedent
+
+The tool set is not constrained through the prompt; **only the wanted tools are registered when the tool service starts**:
 
 ```
-examples/toolshed/run_rl_roborefer.sh      ← Step 1 就是这么干的,只注册 roborefer
+examples/toolshed/run_rl_roborefer.sh      ← this is exactly what Step 1 does, registers only roborefer
 examples/toolshed/generate_toolshed_config.py
-       从正在运行的服务反查工具 schema,再生成交给 verl 的 YAML
+       queries the tool schemas back from the running service, then generates the YAML handed to verl
 ```
 
-所以没注册的工具**真的会从 system prompt 的 `<tools>` 段里消失**,模型抽不出那个工具名;
-就算凭空编一个调用,也没有服务器接,直接报错。
+So unregistered tools **really do disappear from the `<tools>` section of the system prompt**, and the model can't produce that tool name;
+even if it invents a call out of thin air, there is no server to receive it and it errors out directly.
 
-这一节的意思只是:下面三条反对理由**不是"做不到"**,是"做了会坏"。
+This section only means: the three objections below are **not "it can't be done"**, they are "doing it breaks things".
 
 ---
 
-## 2. 没有「benchmark 的训练集」这个东西
+## 2. There is no such thing as "the training set of a benchmark"
 
-这是前提层面的错位,不是权衡。
+This is a mismatch at the level of the premise, not a trade-off.
 
 ```
-训练数据    spacetools-rlfulltools
+training data    spacetools-rlfulltools
 run_rl.sh:335   RL_PARQUET="$EXPERIMENT_DIR/rl_data/data/train.parquet"
-run_rl.sh:439   data.train_files="[$RL_PARQUET]"        ← 一个池化文件
+run_rl.sh:439   data.train_files="[$RL_PARQUET]"        ← one pooled file
 ```
 
-**benchmark 是 eval 侧的概念** —— 九个 key,各自一个 `data/<key>.parquet`,由 Step 5 的
-`run_eval.sh` 读取。训练侧只有一个混合池 `train.parquet`。
+**A benchmark is an eval-side concept** — nine keys, each with its own `data/<key>.parquet`, read by Step 5's
+`run_eval.sh`. The training side has only one mixed pool, `train.parquet`.
 
-所以「按 benchmark 分开训练」第一步就得**自己把训练池切开**,而:
+So the first step of "training per benchmark" would be **splitting the training pool yourself**, and:
 
-- 按什么切不清楚。`train.parquet` 里有没有能对应到 benchmark 的列(`data_source` 之类),
-  没有验证过。
-- 切完每块剩多少条不清楚。全量 5425 条 / `train_batch_size=64` ≈ 85–86 步 = 1 epoch。
-  切成 N 块之后每块可能只剩十几步,**不够训**。
-- 就算切得开,切出来的也是「训练分布的一个子集」,不是「那个 benchmark 的训练集」。
-  两者不是一回事。
+- It's unclear what to split on. Whether `train.parquet` has a column that maps to a benchmark (`data_source` or similar)
+  has not been verified.
+- It's unclear how many samples each piece would have left. Full set 5425 samples / `train_batch_size=64` ≈ 85–86 steps = 1 epoch.
+  After splitting into N pieces each might have only a dozen or so steps left, **not enough to train**.
+- Even if it could be split, what comes out is "a subset of the training distribution", not "that benchmark's training set".
+  The two are not the same thing.
 
 ---
 
-## 3. 它把 Step 4 变回 Step 1
+## 3. It turns Step 4 back into Step 1
 
-**Step 4 的全部目的就是学工具编排** —— 在 11–17 个工具里选、串起来、出错了怎么救。
-只部署某个子集需要的工具,模型就没有可选的了,搜索空间被人为塌缩。
+**The whole point of Step 4 is learning tool orchestration** — choosing among 11–17 tools, chaining them, recovering when something fails.
+Deploy only the tools a subset needs and the model has nothing to choose from; the search space is artificially collapsed.
 
-论文自己的消融给了这条的方向(Table 4):
+The paper's own ablation points the direction here (Table 4):
 
 ```
-完整四步流水线                       52.48
-从 base model 直接跑全工具 GRPO      19.79     ← 搜索空间太大,学不动
+full four-step pipeline                        52.48
+full-tool GRPO directly from the base model    19.79     ← search space too large, can't learn
 ```
 
-Step 1 之所以**只开一个工具**,正是因为搜索空间必须小到「瞎试也能撞对」,退化组才不会
-把训练卡死。而 Step 4 的前提恰好相反:模型已经会用工具了,这时候把全部工具打开,
-让它自己探索比示范更好的编排。
+Step 1 **opens only one tool** precisely because the search space must be small enough that "random tries still hit the right answer", so that degenerate groups don't
+stall training. Step 4's premise is exactly the opposite: the model already knows how to use the tools, and now all tools are opened
+so it can explore orchestrations better than the demonstrations on its own.
 
-**把工具集缩回子集,等于把 Step 4 的目标换成了 Step 1 的目标。** 训出来的是一组窄专家,
-而 Step 5 的 eval 要的是**一个模型**在九个 benchmark 上的表现。
+**Shrinking the tool set back to a subset swaps Step 4's goal for Step 1's goal.** What you get is a set of narrow experts,
+while Step 5's eval wants **one model**'s performance across nine benchmarks.
 
 ---
 
-## 4. prompt 分布与 eval 不匹配,外加灾难性遗忘
+## 4. Prompt distribution mismatched with eval, plus catastrophic forgetting
 
-工具清单是注入 system prompt 的,而且是 `generate_toolshed_config.py` 从运行中的服务
-**反查**出来的 —— 部署什么,prompt 里就写什么。
+The tool list is injected into the system prompt, and `generate_toolshed_config.py` **queries it back** from the running service
+— whatever is deployed is what the prompt says.
 
-于是分阶段训练会有两个连带后果:
+So staged training has two knock-on consequences:
 
-**① 最终 ckpt 是在一个 eval 时不存在的 prompt 分布下训出来的。**
-每个阶段模型看到的 `<tools>` 段都不同,也就是**任务格式不同**。而 Step 5 的 eval 一律
-开全部工具,prompt 里是完整清单。训练时从没见过完整清单的模型,在 eval 时面对的是
-一个陌生格式。
+**① The final ckpt is trained under a prompt distribution that doesn't exist at eval time.**
+In each stage the model sees a different `<tools>` section, i.e. a **different task format**. Step 5's eval always
+opens all tools, and the prompt has the complete list. A model that never saw the complete list in training faces
+an unfamiliar format at eval.
 
-**② 顺序训练会遗忘。** 前一阶段学会的工具用法,在后一阶段既没有对应的工具可调、
-也没有奖励维持它。最后一个阶段的工具会被过度强化,之前的会退化。
+**② Sequential training forgets.** Tool usage learned in an earlier stage has neither the corresponding tool to call
+nor a reward to maintain it in a later stage. The last stage's tools get over-reinforced; the earlier ones degrade.
 
-这两条合起来的意思是:**分阶段训练得到的最后那个 checkpoint,不是「学会了全部工具的
-模型」,而是「刚学完最后一个子集的模型」。**
-
----
-
-## 5. 成本反而更高
-
-初衷是省卡。但账要算完整的:
-
-```
-省的     每次训练少部署几个工具 → 工具侧少占 1–2 张卡
-付的     子集数 N 倍的训练次数
-```
-
-工具侧省下的是**每次运行的卡数**,而切分付出的是**运行次数**。后者是乘法。
-
-而且省下来的那部分本身有限:工具显存的大头是三个模型(见第 6 节),多数
-benchmark 至少要 pointing,也就是最大头之一的 `roborefer` 砍不掉。
+Taken together: **the last checkpoint from staged training is not "a model that has learned all the tools",
+but "a model that has just finished learning the last subset".**
 
 ---
 
-## 6. 唯一值得单独算的变体:能不能砍掉 `vlm`
+## 5. The cost is actually higher
 
-这个想法里真正有价值的部分不是「分 benchmark」,而是**「最占显存的那个工具是不是必需的」**。
-
-单实例显存(SFT eval 实测,GiB):
+The original intent was to save GPUs. But the full bill has to be added up:
 
 ```
-vlm (Molmo fp32)     30.2      ← 单个最大头
+saved     fewer tools deployed per training run → tool side uses 1–2 fewer GPUs
+paid      N× as many training runs, N = number of subsets
+```
+
+What the tool side saves is **GPUs per run**, while splitting costs **number of runs**. The latter is multiplicative.
+
+And the savings themselves are limited: the bulk of tool GPU memory is three models (see section 6), and most
+benchmarks need at least pointing, so `roborefer`, one of the biggest, can't be cut.
+
+---
+
+## 6. The only variant worth evaluating on its own: can `vlm` be dropped
+
+The genuinely valuable part of this idea is not "per benchmark" but **"is the tool that takes the most GPU memory actually required"**.
+
+Per-instance GPU memory (measured in SFT eval, GiB):
+
+```
+vlm (Molmo fp32)     30.2      ← single largest
 roborefer            17.2
 depth_estimator       7.9
 sam2 / bbox / grasp   1.3 / 0.5 / 1.0 each
 vision_ops            0
 ```
 
-压缩到 13 actor 的布局合计 **86.0 GiB**,其中 `vlm` 占 35%。砍掉它:
+The layout compressed to 13 actors totals **86.0 GiB**, of which `vlm` is 35%. Dropping it:
 
 ```
-86.0 → 55.8 GiB     一张 80 GB 卡装得下 roborefer×2
-                    或者两张 48 GB 卡能给 roborefer 更多副本
+86.0 → 55.8 GiB     one 80 GB GPU fits roborefer×2
+                    or two 48 GB GPUs can give roborefer more replicas
 ```
 
-这正好解掉「卡少时 `roborefer` 只能留 1 个副本」这个痛点 —— 而 `roborefer` 是调用最
-频繁的工具,它的并发直接决定整步时间。
+This resolves exactly the pain point "with few GPUs `roborefer` can only keep 1 replica" — and `roborefer` is the most
+frequently called tool; its concurrency directly determines the time per step.
 
-**但两件事挡在前面:**
+**But two things stand in the way:**
 
-**① 不能假设用不到它。** `p6/passk` 的 system prompt 里,`vlm` 和 `roborefer` 是**并列的
-pointing 选项**:
+**① You can't assume it's unused.** In the system prompt of `p6/passk`, `vlm` and `roborefer` are **parallel
+pointing options**:
 
 ```
 {"name": "vlm.detect_one",       "description": "Detect *one* instance of *obj_name*..."}
 {"name": "roborefer.detect_one", "description": "Detect *one* instance of *obj_name*..."}
 ```
 
-模型完全可能在一部分样本上走了 `vlm`。这是**可查的**:数一下 SFT 起点轨迹里
-`<tool_call>` 中 `vlm.*` 的占比。数据在 `eval/SFT/sft-eval-artifacts/rollouts/`
-—— 注意 `p6/passk/*/0.jsonl` **不够用**,那里面只有 prompt 和最后一轮,
-中间几轮的工具调用不在里面。
+The model may well have taken `vlm` on some of the samples. This is **checkable**: count the share of `vlm.*` among the
+`<tool_call>`s in the SFT starting-point trajectories. The data is in `eval/SFT/sft-eval-artifacts/rollouts/`
+— note that `p6/passk/*/0.jsonl` **is not enough**: it contains only the prompt and the final turn,
+the tool calls of the intermediate turns are not in it.
 
-**② 就算占比是 0,这仍然是「换工具」。** 用户 2026-09-02 已定不做,理由是
-「换目标函数与换工具正交,混在一起不可归因」。而且 P6 归因里那 84.7% 正是
-工具错 + 工具集缺口 —— 动工具集就动了那个归因的地基。
+**② Even if the share is 0, this is still "changing tools".** The user decided on 2026-09-02 not to do that, the reason being
+"changing the objective and changing the tools are orthogonal; mixing them makes results unattributable". And the 84.7% in the P6 attribution is exactly
+tool errors + tool-set gaps — touching the tool set touches the foundation of that attribution.
 
-**所以它要么不走,要么当成另一个实验走。**(「Step 4 只开 pointing 工具」本身是个
-干净的问题,但那是另一篇的事。)
+**So either don't do it, or run it as a separate experiment.** ("Step 4 with only pointing tools open" is a
+clean question in its own right, but that belongs to a different paper.)
 
 ---
 
-## 7. 想省卡,零偏离的做法
+## 7. Saving GPUs with zero deviation
 
-不动工具集,只压 `num_actors`:
+Don't touch the tool set; only reduce `num_actors`:
 
 ```python
 # roborefer 6→2 · vlm 2→1 · sam2 5→2 · depth 5→2
 # bbox 5→2 · grasp 5→2 · vision_ops 8→2
-# 共 13 actor,并发只降 2.8×,逻辑 GPU 需求 7.8 → 3.0
+# 13 actors total, concurrency drops only 2.8×, logical GPU demand 7.8 → 3.0
 ```
 
-**这是零偏离的** —— 工具清单不变、prompt 不变、一个数都不变,只是让 rollout 排队。
-它省卡的收益和「少部署工具」重叠很大,而代价只是时间,并且时间的代价**烟测三步就能
-量出来**(看 Toolshed 日志的 actor 忙/闲占比)。
+**This has zero deviation** — the tool list is unchanged, the prompt is unchanged, not a single number changes; rollouts just queue.
+Its GPU savings overlap heavily with "deploy fewer tools", and the only cost is time, and the time cost **can be measured with a three-step
+smoke test** (look at the actor busy/idle ratio in the Toolshed log).
 
-⚠ 压 `num_actors` 时必须同步抬 `TOOL_GPUS`:Ray 的 `num_gpus` 是**逻辑预留**,不是显存
-配额。PG 预留少于 actor 索取的总量时,PG 会 ready 而 actor 永远排不进去
-—— `run_rl.sh` 的 heredoc 里有一条 assert 拦这个。
+⚠ When reducing `num_actors` you must raise `TOOL_GPUS` accordingly: Ray's `num_gpus` is a **logical reservation**, not a GPU memory
+quota. When the PG reserves less than the total the actors request, the PG becomes ready but the actors can never be scheduled
+— there is an assert in the `run_rl.sh` heredoc that catches this.
 
 ---
 
-## 引用来源
+## Sources cited
 
-| 断言 | 出处 |
+| Claim | Source |
 |---|---|
-| 工具集靠注册决定,有单工具先例 | `examples/toolshed/run_rl_roborefer.sh`、`generate_toolshed_config.py` |
-| 训练数据是一个池化 parquet | `run_rl.sh:335`、`run_rl.sh:439` |
-| eval 按 benchmark 分 parquet | `交接 RL 训练准备.md` §6 数据 |
-| 5425 条 / 85–86 步 = 1 epoch | 同上 |
-| 跳过前三步只得 19.79 | 论文 Table 4 |
-| 单实例显存 | SFT eval 实测,`sft-eval-artifacts/gpu/gputrace_1hz.log` |
-| `vlm` 与 `roborefer` 并列为 pointing 选项 | `p6/passk/robospatial/0.jsonl` 的 system prompt |
-| `p6/passk` 不含中间轮的工具调用 | 2026-09-15 实查该文件结构 |
-| 换工具已被排除 | 用户 2026-09-02 决定,记于 `交接 RL 训练准备.md` §3 |
-| 压 `num_actors` 零偏离 / `TOOL_GPUS` 断言 | `交接 RL 训练准备.md` §4.1、§5.8 |
+| Tool set is decided by registration; single-tool precedent exists | `examples/toolshed/run_rl_roborefer.sh`, `generate_toolshed_config.py` |
+| Training data is one pooled parquet | `run_rl.sh:335`, `run_rl.sh:439` |
+| Eval has one parquet per benchmark | `交接 RL 训练准备.md` §6 data |
+| 5425 samples / 85–86 steps = 1 epoch | Same as above |
+| Skipping the first three steps gets only 19.79 | Paper Table 4 |
+| Per-instance GPU memory | Measured in SFT eval, `sft-eval-artifacts/gpu/gputrace_1hz.log` |
+| `vlm` and `roborefer` are parallel pointing options | System prompt of `p6/passk/robospatial/0.jsonl` |
+| `p6/passk` does not contain intermediate-turn tool calls | File structure checked on 2026-09-15 |
+| Changing tools has been ruled out | User decision on 2026-09-02, recorded in `交接 RL 训练准备.md` §3 |
+| Reducing `num_actors` has zero deviation / `TOOL_GPUS` assert | `交接 RL 训练准备.md` §4.1, §5.8 |

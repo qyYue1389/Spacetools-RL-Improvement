@@ -1,18 +1,18 @@
 #!/bin/bash
 # =============================================================================
-# 修三件事,都是"看起来建好了、其实是空的"
+# Fix three things, all of the "looks built, but is actually empty" kind
 #
-# ① GraspGenModels 的 .pth 全是 134 字节的 git-lfs 指针
-#    —— 克隆时没有 git-lfs,拿到的是指针不是权重。
-# ② /workspace/checkpoints/RoboRefer-8B-SFT 只有一个 .cache 空目录
-#    —— install_roborefer.sh 里 `hf download` 中断,而它紧跟着 `exit 1`,
-#       于是**后面克隆 RoboRefer 仓库那一步根本没执行**,llava 也就没装。
-#       真正的 16 GB 权重其实在 HF 缓存里(我的构建阶段 4 下过),只是没落到这里。
-# ③ depth / grasp 两个工具默认去 SpaceTools-Toolshed/checkpoints 找权重,
-#    而我们放在 /workspace/checkpoints —— 做个软链接让两边一致。
+# ① GraspGenModels' .pth files are all 134-byte git-lfs pointers
+#    — there was no git-lfs at clone time, so we got pointers, not weights.
+# ② /workspace/checkpoints/RoboRefer-8B-SFT has only an empty .cache directory
+#    — `hf download` in install_roborefer.sh was interrupted, and it is immediately followed by `exit 1`,
+#       so **the later step that clones the RoboRefer repo never ran at all**, and llava was never installed.
+#       The real 16 GB of weights are actually in the HF cache (downloaded in stage 4 of my build), they just never landed here.
+# ③ The depth / grasp tools look for weights in SpaceTools-Toolshed/checkpoints by default,
+#    while we keep them in /workspace/checkpoints — make a symlink so both sides agree.
 #
-# 第 ② 条是第十四个上游洞:Toolshed README 第 100 行写着 RoboRefer
-# "requires cloning a fork of RoboRefer",但那一步被放在一个会 exit 1 的下载之后。
+# Item ② is the fourteenth upstream hole: line 100 of the Toolshed README says RoboRefer
+# "requires cloning a fork of RoboRefer", but that step was placed after a download that can exit 1.
 # =============================================================================
 set -uo pipefail
 CONDA_DIR=/opt/conda-st
@@ -26,55 +26,55 @@ die(){ echo "✗ $*"; exit 1; }
 
 echo "############ 0. git-lfs ############"
 command -v git-lfs >/dev/null || (apt-get update -qq && apt-get install -y -qq git-lfs)
-git lfs install --skip-repo || die "git-lfs 装不上"
+git lfs install --skip-repo || die "cannot install git-lfs"
 git lfs version
 
-echo; echo "############ 1. 重新拉 GraspGenModels(带 lfs)############"
+echo; echo "############ 1. Re-fetch GraspGenModels (with lfs) ############"
 cd "$CKPT"
 if [ -d GraspGenModels ]; then
     ( cd GraspGenModels && git lfs pull 2>&1 | tail -3 )
 fi
 SZ=$(stat -c %s "$CKPT/GraspGenModels/checkpoints/graspgen_franka_panda_gen.pth" 2>/dev/null || echo 0)
 if [ "$SZ" -lt 1000000 ]; then
-    echo "  lfs pull 没生效($SZ 字节),整个重克隆"
+    echo "  lfs pull did not take effect ($SZ bytes), re-cloning the whole thing"
     rm -rf GraspGenModels
     GIT_LFS_SKIP_SMUDGE=0 git clone https://huggingface.co/adithyamurali/GraspGenModels 2>&1|tail -2
     SZ=$(stat -c %s "$CKPT/GraspGenModels/checkpoints/graspgen_franka_panda_gen.pth" 2>/dev/null || echo 0)
 fi
-echo "  graspgen_franka_panda_gen.pth = $SZ 字节"
-[ "$SZ" -gt 1000000 ] || die "GraspGen 权重仍是指针文件"
+echo "  graspgen_franka_panda_gen.pth = $SZ bytes"
+[ "$SZ" -gt 1000000 ] || die "GraspGen weights are still a pointer file"
 du -sh "$CKPT/GraspGenModels"
 
-echo; echo "############ 2. 把 RoboRefer 权重落到 checkpoints ############"
+echo; echo "############ 2. Put the RoboRefer weights into checkpoints ############"
 conda activate spacetools-tool-roborefer
-HFCLI=$(command -v hf || command -v huggingface-cli) || die "没有 hf CLI"
-echo "  用 $HFCLI(HF 缓存里已有 16 GB,应该很快)"
+HFCLI=$(command -v hf || command -v huggingface-cli) || die "no hf CLI"
+echo "  using $HFCLI (the HF cache already has 16 GB, should be fast)"
 $HFCLI download Zhoues/RoboRefer-8B-SFT --local-dir "$CKPT/RoboRefer-8B-SFT" 2>&1 | tail -3
-[ -f "$CKPT/RoboRefer-8B-SFT/config.json" ] || die "RoboRefer 权重还是没落地"
+[ -f "$CKPT/RoboRefer-8B-SFT/config.json" ] || die "RoboRefer weights still did not land"
 du -sh "$CKPT/RoboRefer-8B-SFT"
 
-echo; echo "############ 3. checkpoints 软链接 ############"
+echo; echo "############ 3. checkpoints symlink ############"
 if [ ! -e "$TOOLSHED/checkpoints" ]; then ln -s "$CKPT" "$TOOLSHED/checkpoints"; fi
 ls -ld "$TOOLSHED/checkpoints"
 ls "$TOOLSHED/checkpoints/" | head -5
 
-echo; echo "############ 4. 重跑 install_roborefer.sh(这次会跳过下载,直接克隆+装 llava)############"
+echo; echo "############ 4. Rerun install_roborefer.sh (this time it skips the download and goes straight to clone + install llava) ############"
 cd "$TOOLSHED"
 bash install_tools/tool_scripts/install_roborefer.sh 2>&1 | tail -20
-echo "  退出码 $?"
+echo "  exit code $?"
 
-echo; echo "############ 验收 ############"
+echo; echo "############ Acceptance check ############"
 E="$CONDA_DIR/envs/spacetools-tool-roborefer"
 fail=0
 chk(){ if eval "$2" >/dev/null 2>&1; then echo "  ✓ $1"; else echo "  ✗ $1"; fail=$((fail+1)); fi; }
-chk "RoboRefer 仓库已克隆"  "[ -d $TOOLSHED/RoboRefer ]"
-chk "llava 可导入"          "$E/bin/python -c 'import llava'"
+chk "RoboRefer repo cloned"  "[ -d $TOOLSHED/RoboRefer ]"
+chk "llava importable"          "$E/bin/python -c 'import llava'"
 chk "llava.media"           "$E/bin/python -c 'from llava.media import Image'"
-chk "roborefer 工具可导入"  "$E/bin/python -c 'from toolshed.tools.roborefer import RoboreferTool'"
-chk "RoboRefer 权重"        "[ -f $CKPT/RoboRefer-8B-SFT/config.json ]"
-chk "GraspGen 权重(真)"    "[ \$(stat -c %s $CKPT/GraspGenModels/checkpoints/graspgen_franka_panda_gen.pth) -gt 1000000 ]"
+chk "roborefer tool importable"  "$E/bin/python -c 'from toolshed.tools.roborefer import RoboreferTool'"
+chk "RoboRefer weights"        "[ -f $CKPT/RoboRefer-8B-SFT/config.json ]"
+chk "GraspGen weights (real)"    "[ \$(stat -c %s $CKPT/GraspGenModels/checkpoints/graspgen_franka_panda_gen.pth) -gt 1000000 ]"
 chk "depth_pro.pt"          "[ -f $CKPT/depth_pro.pt ]"
-chk "toolshed/checkpoints 链接" "[ -e $TOOLSHED/checkpoints/depth_pro.pt ]"
+chk "toolshed/checkpoints link" "[ -e $TOOLSHED/checkpoints/depth_pro.pt ]"
 echo
-[ "$fail" -eq 0 ] && echo "✓ 全部修好" || echo "✗ 还有 $fail 项不过"
+[ "$fail" -eq 0 ] && echo "✓ all fixed" || echo "✗ $fail item(s) still failing"
 exit "$fail"

@@ -10,7 +10,7 @@ done
 "$PY" - <<'PYEOF'
 import json, re
 NUM = re.compile(r'\(\s*(-?\d*\.?\d+)\s*,\s*(-?\d*\.?\d+)\s*\)')
-TAGS=['sft','p4','cp']; NAME={'sft':'SFT 起点','p4':'P4 官方 GRPO','cp':"C' step85"}
+TAGS=['sft','p4','cp']; NAME={'sft':'SFT start','p4':'P4 official GRPO','cp':"C' step85"}
 
 def pts(s):
     return set((round(float(a),3), round(float(b),3)) for a,b in NUM.findall(s or ''))
@@ -33,7 +33,7 @@ def classify(r):
 def grid05(ans):
     return all(abs(v*20 - round(v*20)) < 1e-6 for p in ans for v in p) if ans else False
 
-print(f'{"":14s} {"run":>4s} {"透传":>10s} {"改点":>10s} {"无工具":>7s} {"0.05网格":>8s}')
+print(f'{"":14s} {"run":>4s} {"pass-through":>10s} {"override":>10s} {"no-tool":>7s} {"0.05grid":>8s}')
 agg={}
 for t in TAGS:
     rows=[]
@@ -51,10 +51,10 @@ for t in TAGS:
         print(f'{NAME[t]:14s} {i:>4d} {f("passthrough"):>14s} {f("modified"):>14s} {c["no-tool"][0]:>7d} {g:>8d}')
         rows.append(c)
     agg[t]=rows
-print('\n--- 三次合计 ---')
+print('\n--- three-run total ---')
 for t in TAGS:
     tot={k:[sum(r[k][0] for r in agg[t]), sum(r[k][1] for r in agg[t])] for k in ('passthrough','modified','no-tool')}
     p,m = tot['passthrough'], tot['modified']
-    print(f'{NAME[t]:14s} 透传 {p[0]/3:.1f}/次 正确率 {100*p[1]/max(p[0],1):.1f}%   '
-          f'改点 {m[0]/3:.1f}/次 正确率 {100*m[1]/max(m[0],1):.1f}%   无工具 {tot["no-tool"][0]/3:.1f}')
+    print(f'{NAME[t]:14s} pass-through {p[0]/3:.1f}/run accuracy {100*p[1]/max(p[0],1):.1f}%   '
+          f'override {m[0]/3:.1f}/run accuracy {100*m[1]/max(m[0],1):.1f}%   no-tool {tot["no-tool"][0]/3:.1f}')
 PYEOF

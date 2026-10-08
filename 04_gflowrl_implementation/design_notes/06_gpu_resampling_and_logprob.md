@@ -1,428 +1,428 @@
-# P7 GPU 开机结果:迁移验收 · dump 补丁 · 第二组 5 次采样
+# P7 GPU session results: migration acceptance check · dump patch · second batch of 5 samples
 
-> 承接 `records/P7_GPU_HANDOFF.md`。机器:**4×A100-SXM4-40GB · sm_80 · CUDA 12.8 ·
-> 驱动 580.159.03**。日期 2026-09-02。
-> **本趟不训练**、不下 RL 数据、不写训练脚本(交接文档 ⚠③)。
+> Continues from `records/P7_GPU_HANDOFF.md`. Machine: **4×A100-SXM4-40GB · sm_80 · CUDA 12.8 ·
+> driver 580.159.03**. Date 2026-09-02.
+> **No training this session**, no RL data downloaded, no training scripts written (handoff doc ⚠③).
 >
-> **一条贯穿全文的限定**:第一组 `p6/passk/` 在 **80 GB** 机器上跑,本机是 **40 GB**。
-> 两组的 KV 池已对齐到 20 GB(见 §0),但仍存在**跨硬件漂移**
-> (P6 实测:RoboRefer 397 条里 226 条返回点有微小位移,中位 0.0040)。
-> **所以第二组测到的散布 = 采样噪声 + 跨硬件漂移,是采样散布的一个上界,不是纯采样散布。**
+> **A qualification that applies to the whole document**: the first batch `p6/passk/` ran on an **80 GB** machine; this machine is **40 GB**.
+> The KV pools of the two batches are aligned to 20 GB (see §0), but **cross-hardware drift** still exists
+> (P6 measured: of 397 RoboRefer calls, 226 returned points with tiny displacements, median 0.0040).
+> **So the spread measured on the second batch = sampling noise + cross-hardware drift; it is an upper bound on the sampling spread, not the pure sampling spread.**
 
 ---
 
-## 0. 配置:`gpu_memory_utilization = 0.5`,不是 0.25
+## 0. Config: `gpu_memory_utilization = 0.5`, not 0.25
 
-    P4 全量        4×A100-40GB   gmu=0.50  ->  KV 池 20 GB
-    第一组 passk   4×A100-80GB   gmu=0.25  ->  KV 池 20 GB      <- 日志里写的是 0.25
-    第二组 passk2  4×A100-40GB   gmu=0.50  ->  KV 池 20 GB      <- 本趟
+    P4 full run            4×A100-40GB   gmu=0.50  ->  KV pool 20 GB
+    batch 1 passk          4×A100-80GB   gmu=0.25  ->  KV pool 20 GB      <- the log says 0.25
+    batch 2 passk2         4×A100-40GB   gmu=0.50  ->  KV pool 20 GB      <- this session
 
-`gmu` 是占**整卡**的静态比例(偏离 `[23]`)。已从 `p6/passk/*/eval.log.gz` 三个文件
-逐一核实第一组确实是 `gpu_memory_utilization=0.25`,不是从文档转述的。
+`gmu` is a static fraction of the **whole GPU** (deviation `[23]`). Verified one by one from the three files
+`p6/passk/*/eval.log.gz` that batch 1 really used `gpu_memory_utilization=0.25`, not taken from what the docs say.
 
-### 0.1 ⚠ 新增偏离:`max_num_seqs` 256 -> 64
+### 0.1 ⚠ New deviation: `max_num_seqs` 256 -> 64
 
-**第一次 `robospatial` 尝试在 40 GB 上 OOM 了,而 ⚠① 的算术是对的。**
-问题是它只对齐了 **KV 池**,没对齐**余量**:
+**The first `robospatial` attempt OOMed on 40 GB, even though the arithmetic in ⚠① was correct.**
+The problem is that it only aligned the **KV pool**, not the **headroom**:
 
-| | 机器 | gmu | KV 池 | n | 策略卡 | 结果 |
+| | machine | gmu | KV pool | n | policy GPU | result |
 |---|---|--:|--:|--:|---|---|
-| P4 `robospatial` | 40 GB | 0.5 | 20 GB | **1** | 峰值 25.6 GB | 通过 |
-| 第一组 `passk` | **80 GB** | 0.25 | 20 GB | **5** | 卡上另有 ~60 GB 余量 | 通过 |
-| 第二组第一次尝试 | 40 GB | 0.5 | 20 GB | **5** | **39.45/39.49 GB** | **OOM** |
+| P4 `robospatial` | 40 GB | 0.5 | 20 GB | **1** | peak 25.6 GB | pass |
+| batch 1 `passk` | **80 GB** | 0.25 | 20 GB | **5** | ~60 GB extra headroom on the GPU | pass |
+| batch 2 first attempt | 40 GB | 0.5 | 20 GB | **5** | **39.45/39.49 GB** | **OOM** |
 
-    Process 2500371   8.09 GiB   <- FSDP policy(bf16 权重,正好 8.1 GB)
+    Process 2500371   8.09 GiB   <- FSDP policy (bf16 weights, exactly 8.1 GB)
     Process 2502296  31.36 GiB   <- sglang
     free                31 MiB
 
-**策略卡上没有工具 actor** —— 是这两个进程自己把卡填满的。
-80 GB 上 20 GB 的池子留下 60 GB 给权重与激活;40 GB 上同样的池子只留 20 GB。
+**There is no tool actor on the policy GPU** — these two processes filled the GPU by themselves.
+On 80 GB a 20 GB pool leaves 60 GB for weights and activations; on 40 GB the same pool leaves only 20 GB.
 
-**崩的位置是视觉编码器,不是 KV cache** —— 这一条把旋钮的选择从猜测变成对症:
+**The crash site is the vision encoder, not the KV cache** — this turns the choice of knob from a guess into a targeted fix:
 
     sglang/srt/layers/attention/vision.py:701   apply_rotary_pos_emb
     sglang/srt/layers/rotary_embedding.py:2733  rotate_half -> torch.cat
     torch.OutOfMemoryError: Tried to allocate 70.00 MiB
 
-爆的是**一次前向里同时处理的图像 patch 数**。`robospatial` 平均 **2.76 MP**,是九个
-benchmark 里最大的(`blinkdepth` 只有 0.18 MP);`n=5` 让同批图像数翻五倍。
+What blew up is **the number of image patches processed at once in a single forward pass**. `robospatial` averages **2.76 MP**, the largest of the nine
+benchmarks (`blinkdepth` is only 0.18 MP); `n=5` multiplies the number of images in the same batch by five.
 
-**决定:`max_num_seqs` 256 -> 64,`gpu_memory_utilization` 不动。**
-`max_num_seqs` 限制并发序列数、砍掉视觉塔的激活峰值,而**不改 KV 池大小** ——
-池子大小是两组可比性的唯一依据(偏离 `[23]`),必须保持 20 GB。
+**Decision: `max_num_seqs` 256 -> 64, `gpu_memory_utilization` unchanged.**
+`max_num_seqs` limits the number of concurrent sequences and cuts the activation peak of the vision tower, while **not changing the KV pool size** —
+the pool size is the only basis for comparability between the two batches (deviation `[23]`) and must stay at 20 GB.
 
-> **诚实标注**:并发数变了,batch 组成也会变,而 batch 组成正是本项目认定的
-> 运行间变动的唯一机制。**但这不新增一类误差** —— 跨硬件(80 -> 40 GB)本身
-> 已经引入同类漂移,交接文档 ⚠④ 已经要求把第二组的散布写成
-> **「采样噪声 + 跨硬件漂移」的上界**。`max_num_seqs` 归入同一条限定,限定语不变。
+> **Honest caveat**: changing concurrency also changes batch composition, and batch composition is exactly what this project identified
+> as the only mechanism of run-to-run variation. **But this does not add a new class of error** — going cross-hardware (80 -> 40 GB) by itself
+> already introduces the same kind of drift, and handoff doc ⚠④ already requires the spread of batch 2 to be written as
+> **an upper bound of "sampling noise + cross-hardware drift"**. `max_num_seqs` falls under the same qualification; the wording of the qualification stays the same.
 
-### 0.2 一次把整趟堵死的磁盘事故
+### 0.2 A disk incident that blocked the entire session
 
-那次 OOM 崩溃写了一个 **50 GB 的 core** 到**容器盘**(不是卷),把 `/` 写到 100%,
-之后**所有命令都 ENOSPC**,连 `df -h` 都跑不了。
-完整记录与处方(`ulimit -c 0`,已加进五个 runner)见 `records/CHANGES.md` §10.9。
+That OOM crash wrote a **50 GB core** to the **container disk** (not the volume), filling `/` to 100%;
+after that **every command hit ENOSPC**, not even `df -h` would run.
+Full record and prescription (`ulimit -c 0`, now added to all five runners) in `records/CHANGES.md` §10.9.
 
-**为什么它比一次普通失败严重**:core 是在**任务跑到一半**时把盘写满的,
-所以排在 `robospatial` 后面的两个 benchmark 即使从不接近 OOM 也会因磁盘满而挂 ——
-**一次崩溃污染整趟**,正是 `--strict` 要防、却看不见的那类故障。
+**Why it is worse than an ordinary failure**: the core filled the disk **halfway through the job**,
+so the two benchmarks queued after `robospatial` would die from a full disk even if they never came close to OOM —
+**one crash contaminates the entire session**, exactly the kind of failure `--strict` is meant to guard against but cannot see.
 
-**seed:这条交接要求需要更正。** 交接文档 §3 写「seed 必须与第一组不同」,
-但这条路径上**没有 seed 旋钮** —— `verl/trainer/config/rollout/rollout.yaml` 不含采样 seed,
-`verl/workers/rollout/sglang_rollout/` 也没有把 seed 透给 sglang,
-所以 sglang 每次起引擎自取一个随机 seed。**重跑一次本来就是独立抽样**,
-既不需要也无法「换 seed」。实际用到的 seed 从 eval 日志里抄录存证(§3)。
+**seed: this handoff requirement needs correcting.** Handoff doc §3 says "the seed must differ from batch 1",
+but **there is no seed knob** on this path — `verl/trainer/config/rollout/rollout.yaml` has no sampling seed,
+and `verl/workers/rollout/sglang_rollout/` does not pass a seed through to sglang either,
+so sglang picks its own random seed every time the engine starts. **Each rerun is already an independent draw**;
+"changing the seed" is neither needed nor possible. The seeds actually used are copied from the eval logs as a record (§3).
 
 ---
 
-## 1. 任务 0:迁移验收 —— 通过
+## 1. Task 0: migration acceptance check — passed
 
-数据不需要拷:`/workspace` 卷完整在位(`envs` 48G · `models` 34G · `hf` 31G ·
-`experiments/p4` · `eval-benchmarks` · `SpaceTools-RL @ f0742338`),路径与 P4 逐字相同。
-所以任务 0 从「拷贝 + 验收」缩成**纯验收**。
+No data needed copying: the `/workspace` volume is fully intact (`envs` 48G · `models` 34G · `hf` 31G ·
+`experiments/p4` · `eval-benchmarks` · `SpaceTools-RL @ f0742338`), with paths verbatim identical to P4.
+So task 0 shrinks from "copy + acceptance check" to **acceptance check only**.
 
-| 项 | 期望 | 实测 |
+| item | expected | measured |
 |---|---|---|
 | `compute_cap` | 8.0 | **8.0** ×4 · 40960 MiB |
 | `nvcc` | 12.x | **12.8** |
-| `verify_p1.sh` | 五个环境可用 | **全绿**(roborefer torch 2.5.1+cu124 / vlm 2.9.1+cu128 / bbox numpy-only / graspgen 2.3.1+cu121 / rl 2.9.1+cu128),8 个 toolshed 模块全部 import 成功 |
-| `pointnet2_ops` cubin | 含 sm_80 | **`sm_80 sm_86 sm_89`** |
+| `verify_p1.sh` | all five environments usable | **all green** (roborefer torch 2.5.1+cu124 / vlm 2.9.1+cu128 / bbox numpy-only / graspgen 2.3.1+cu121 / rl 2.9.1+cu128), all 8 toolshed modules import successfully |
+| `pointnet2_ops` cubin | contains sm_80 | **`sm_80 sm_86 sm_89`** |
 | `p2_tool_chain.py` | 12/12 | **12 passed · 0 warned · 0 failed** |
-| `--strict` | exit 0 | **PASS**,六项健康指标全 0 |
-| 显存 | 无卡超 34.6 GB | GPU0 21.1 · **GPU1 34.6(87%)** · GPU2 25.7 · GPU3 25.3 |
-| 墙钟 | ~7.5 m | 8m 07s |
+| `--strict` | exit 0 | **PASS**, all six health metrics 0 |
+| GPU memory | no GPU above 34.6 GB | GPU0 21.1 · **GPU1 34.6 (87%)** · GPU2 25.7 · GPU3 25.3 |
+| wall clock | ~7.5 m | 8m 07s |
 
-**标签用 `run12`,不是交接文档写的 `run9`** —— `/workspace/experiments/p4/` 里 `run1..run11`
-已占用(run9/run10 是 80 GB 上的 fp32 实验),`p4_run.sh` 的守卫会直接拒绝重名。
+**The label is `run12`, not `run9` as the handoff doc says** — `run1..run11` are already taken in `/workspace/experiments/p4/`
+(run9/run10 are the fp32 experiments on 80 GB), and the guard in `p4_run.sh` flatly rejects duplicate names.
 
-### 1.1 数值判读:单次落带 + 硬核对上
+### 1.1 Reading the numbers: single run inside the band + hard core matches
 
-按交接文档的新口径,**不看**旧文档那个来自 n=3 的 107–109 窄带。
+Per the handoff doc's new definition, we **do not use** the old doc's narrow 107–109 band that came from n=3.
 
-    单次        run12   107/124 = 86.29%          bf16 五次实际范围 106–109  -> 落带内
-    回归        每个 baseline 都对、run12 却错的样本         0 个
-    硬核        12 个  [20,22,37,43,55,61,76,84,93,94,114,119]   与文档记载的 12 个逐个对上
+    single run   run12   107/124 = 86.29%          bf16 actual range over five runs 106–109  -> inside the band
+    regression   samples every baseline got right but run12 got wrong      0
+    hard core    12  [20,22,37,43,55,61,76,84,93,94,114,119]   matches the 12 recorded in the doc one by one
 
-    参照的四次 bf16 baseline
+    The four bf16 baselines used as reference
       p4/dumps/run1/blinkdepth       107/124 = 86.29%   (40GB gmu=0.5)
       p4/dumps/run4/blinkdepth       106/124 = 85.48%   (40GB gmu=0.5)
       p6/gmu025/run5/blinkdepth      108/124 = 87.10%   (80GB gmu=0.25)
       p6/gmu025/run6/blinkdepth      109/124 = 87.90%   (80GB gmu=0.25)
 
-**结论:搬过来没走样。**
+**Conclusion: nothing got distorted by the move.**
 
-> **⚠ 一条必须按 `P7_HANDOFF.md` §3.3 第 1 条标注的事,不能写成好消息。**
-> 四个 baseline 合并时上界是 **111/124**、硬核 13;**加进 run12 之后变成 112/124、硬核 12**。
-> 上界又升了一格 —— 这正是「上界是抽样次数的单调增函数,未见饱和就不是不变量」说的那件事。
-> **112 = 90.32% 与论文相等这件事,本趟不作为证据使用。**
-> 验收依据是**单次落带 + 硬核对得上 + 零回归**,不是上界命中论文值。
+> **⚠ One thing that must be flagged per `P7_HANDOFF.md` §3.3 item 1, and must not be written up as good news.**
+> With the four baselines combined, the upper bound is **111/124** and the hard core is 13; **after adding run12 it becomes 112/124, hard core 12**.
+> The upper bound went up by one again — exactly what "the upper bound is a monotonically increasing function of the number of draws; without visible saturation it is not an invariant" means.
+> **The fact that 112 = 90.32% equals the paper's number is not used as evidence in this session.**
+> The acceptance check rests on **a single run inside the band + the hard core matching + zero regressions**, not on the upper bound hitting the paper value.
 
-### 1.2 补丁在验收期间是惰性的 —— 查过,不是论证
+### 1.2 The patch was inert during the acceptance check — checked, not argued
 
-验收开跑时 dump 补丁正在写,worker actor 的 import 时刻横跨了编辑。
-补丁在开关关闭时应当是 no-op,但那是论证不是测量,所以直接查:
+The dump patch was being written while the acceptance check was running, and the import time of the worker actors spanned the edits.
+With the switch off, the patch should be a no-op, but that is an argument, not a measurement, so we checked directly:
 
-- 验收日志里 `[P7]` 标记 **0 条**
-- run12 的 dump 字段列表 `acc answer gts image index input num_turns output reward score step uid`
-  —— 与 P4 **完全一致**,没有任何新字段
+- **0** `[P7]` markers in the acceptance log
+- run12's dump field list `acc answer gts image index input num_turns output reward score step uid`
+  — **exactly the same** as P4, no new fields at all
 
 ---
 
-## 2. 任务 1:dump 补丁 —— 已验证
+## 2. Task 1: dump patch — verified
 
-补丁只动一个文件:`verl/trainer/ppo/ray_trainer.py`,+141 行。
-形状抄 `patches/rl/0008`:**全部包 try/except,这是诊断,绝不能有能力搞坏一次 eval**。
-由 `+trainer.dump_token_diagnostics=True` 开关控制,**默认关**,普通 eval 行为不变。
-(另留了 `VERL_DUMP_TOKEN_DIAGNOSTICS=1` 环境变量作为 hydra struct mode 的后备,实测 `+` 可用。)
+The patch touches only one file: `verl/trainer/ppo/ray_trainer.py`, +141 lines.
+Shape copied from `patches/rl/0008`: **everything wrapped in try/except; this is a diagnostic and must never be able to break an eval**.
+Controlled by the switch `+trainer.dump_token_diagnostics=True`, **off by default**; normal eval behavior is unchanged.
+(The `VERL_DUMP_TOKEN_DIAGNOSTICS=1` environment variable is also kept as a fallback for hydra struct mode; in practice `+` works.)
 
-| 字段 | 内容 |
+| field | content |
 |---|---|
-| `response_mask_rle` | `[[value, run_length], ...]`,覆盖全部 4096 位,可逐位重建 |
-| `n_policy_tokens` | `response_mask.sum()`,即 `|y_i|` |
-| `n_response_tokens` | 非 padding 的 response 长度 |
-| `response_token_ids` | 原始 token id,裁到 `n_response_tokens`(保险字段) |
-| `rollout_log_probs` | sglang 侧,只取 `mask==1` 的位置 |
-| `trainer_log_probs` | FSDP 侧,同上 |
+| `response_mask_rle` | `[[value, run_length], ...]`, covers all 4096 positions, can be rebuilt bit for bit |
+| `n_policy_tokens` | `response_mask.sum()`, i.e. `|y_i|` |
+| `n_response_tokens` | non-padding response length |
+| `response_token_ids` | raw token ids, truncated to `n_response_tokens` (insurance field) |
+| `rollout_log_probs` | sglang side, only `mask==1` positions |
+| `trainer_log_probs` | FSDP side, same as above |
 
-### 2.1 交接文档留的那处未决:走 (a),不是 (b)
+### 2.1 The open item the handoff doc left: go with (a), not (b)
 
-`P7_GPU_HANDOFF.md` §2.2 明说没替我想清楚 trainer 侧 logprob 怎么拿。**答案是 (a),零重 tokenize。**
+`P7_GPU_HANDOFF.md` §2.2 says outright that it did not work out for me how to get the trainer-side logprob. **The answer is (a), zero re-tokenization.**
 
-理由在 `fit()` 里现成:训练循环 `generate_sequences()` 之后先
-`self.checkpoint_manager.sleep_replicas()`(放掉 sglang 的权重与 KV 池),再
-`_compute_old_log_prob`。`_validate()` 里照抄这个顺序即可。实测 GPU3 从 25 GB
-掉到 **9.4 GB**,FSDP 前向在腾出来的显存里跑通。
+The reasoning is already in `fit()`: after `generate_sequences()` the training loop first calls
+`self.checkpoint_manager.sleep_replicas()` (releasing sglang's weights and KV pool), then
+`_compute_old_log_prob`. Copying this order into `_validate()` is enough. Measured: GPU3 dropped from 25 GB
+to **9.4 GB**, and the FSDP forward pass ran fine in the freed GPU memory.
 
     [P7] trainer-side log_probs computed: shape (160, 4096)
     [P7] rollout log_probs present:      shape (160, 4096)
 
-**一个原文档没料到的边界,已加守卫。** `val_batch_size` 为 null 时 verl 取
-`len(val_dataset)`,所以**整个 benchmark 只有一个 val batch** —— 睡掉引擎之后不必唤醒。
-但若有人设了 `val_batch_size`,睡在循环中间会毁掉后续 batch 的生成。
-所以判 `len(self.val_dataloader) != 1` 就**跳过 trainer 侧并打 warning**,不默默弄坏 eval。
+**One edge case the original doc did not anticipate; a guard has been added.** When `val_batch_size` is null, verl uses
+`len(val_dataset)`, so **the whole benchmark is a single val batch** — after putting the engine to sleep there is no need to wake it.
+But if someone sets `val_batch_size`, sleeping in the middle of the loop would ruin generation for the subsequent batches.
+So if `len(self.val_dataloader) != 1`, it **skips the trainer side and prints a warning**, instead of silently breaking the eval.
 
-### 2.2 `response_mask` 语义守卫:160/160 通过
+### 2.2 `response_mask` semantics guard: 160/160 pass
 
     [P7] response_mask semantics check on 160 multi-turn samples: OK
 
-守的是 `ray_trainer.py:157` 那个**静默** fallback `compute_response_mask()`
-(= `attention_mask[:, -L:]`,工具 token 全是 1)。判据挂在多轮样本上
-(`num_turns > 2` 时策略 token 必须严格少于非 padding token)。
-**做成打印 + warning 而不是 assert** —— 同 §2 的契约,诊断不该有能力让 eval 崩掉。
+What it guards against is the **silent** fallback `compute_response_mask()` at `ray_trainer.py:157`
+(= `attention_mask[:, -L:]`, all tool tokens are 1). The criterion is applied to multi-turn samples
+(when `num_turns > 2`, policy tokens must be strictly fewer than non-padding tokens).
+**Implemented as print + warning rather than assert** — same contract as §2: a diagnostic should not be able to crash the eval.
 
-顺带从源码确认了一条本来担心会错位的事:`rollout_log_probs` 与 `response_mask` **逐位对齐**。
-`tool_agent_loop.py:432-433, 464-465` 给工具响应块补 `[0.0] * len(response_ids)`,
-`agent_loop.py:628-629` 再把尾部补齐到 `response_length`。所以按 `mask==1` 取到的
-正好是策略生成的那些 token。
+Along the way, confirmed from the source something we had worried might be misaligned: `rollout_log_probs` and `response_mask` are **aligned bit for bit**.
+`tool_agent_loop.py:432-433, 464-465` pads tool-response blocks with `[0.0] * len(response_ids)`,
+and `agent_loop.py:628-629` then pads the tail to `response_length`. So what is taken by `mask==1`
+is exactly the policy-generated tokens.
 
-### 2.3 子集冒烟(boppose 32 行 × 5)
+### 2.3 Subset smoke test (boppose 32 rows × 5)
 
     rows                       160
-    RLE 重建长度 == 4096                    160/160
+    RLE rebuilt length == 4096              160/160
     sum(mask) == n_policy_tokens            160/160
     len(rollout_log_probs) == n_policy      160/160
     len(trainer_log_probs) == n_policy      160/160
     len(response_token_ids) == n_response   160/160
-    n_policy < n_response(多轮必然)         160/160
-    parse_dump --strict                     exit=0,六项健康指标全 0
+    n_policy < n_response (necessarily, multi-turn)   160/160
+    parse_dump --strict                     exit=0, all six health metrics 0
 
-**第一个实质结果,而且它修正了一个已有数字。**
+**The first substantive result, and it corrects an existing number.**
 
-| | 字符代理(`P7_STEP23_RESULTS.md` §1.2) | **真实 token(本次)** |
+| | character proxy (`P7_STEP23_RESULTS.md` §1.2) | **real tokens (this run)** |
 |---|--:|--:|
-| `boppose` 原始 response / assistant | 2.40× | **3.22×** |
+| `boppose` raw response / assistant | 2.40× | **3.22×** |
 
-`P7_DECISION.md` §5.1 第 2 条那个陷阱**比字符代理显示的更严重**:若 `|y_i|` 误用原始
-response 长度,`boppose` 的有效温度会被工具输出的啰嗦程度放大三倍多。
-**限定**:32 行子集、n=1。全量数字见 §3。
+The trap in `P7_DECISION.md` §5.1 item 2 is **more severe than the character proxy showed**: if `|y_i|` mistakenly uses the raw
+response length, the effective temperature of `boppose` gets amplified more than threefold by the verbosity of the tool output.
+**Qualification**: 32-row subset, n=1. Full numbers in §3.
 
 ---
 
-## 3. 任务 2:第二组 5 次采样 —— 完成
+## 3. Task 2: second batch of 5 samples — done
 
-    robospatial  1750 行  06:59:22 -> 08:23:46   --strict exit=0
-    blinkdepth    620 行  08:23:47 -> 08:47:51   --strict exit=0
-    boppose       300 行  08:47:52 -> 09:05:47   --strict exit=0
+    robospatial  1750 rows  06:59:22 -> 08:23:46   --strict exit=0
+    blinkdepth    620 rows  08:23:47 -> 08:47:51   --strict exit=0
+    boppose       300 rows  08:47:52 -> 09:05:47   --strict exit=0
 
-配置:`n=5 · T=1.0 · top_p=1.0 · gmu=0.5(20 GB KV 池)· model_dtype=bf16 ·
-calculate_log_probs=True · max_num_seqs=64`(见 §0.1)。归档在 `p6/passk2/`,**未覆盖 `p6/passk/`**。
+Config: `n=5 · T=1.0 · top_p=1.0 · gmu=0.5 (20 GB KV pool) · model_dtype=bf16 ·
+calculate_log_probs=True · max_num_seqs=64` (see §0.1). Archived in `p6/passk2/`, **`p6/passk/` not overwritten**.
 
-### 3.1 健康与准确率:两组并排
+### 3.1 Health and accuracy: both batches side by side
 
-| | 组1(80 GB) | 组2(40 GB) | 差 |
+| | batch 1 (80 GB) | batch 2 (40 GB) | diff |
 |---|---|---|---|
-| `robospatial` | 1113/1750 = 63.60% | **1123/1750 = 64.17%** | +10 样本 / +0.57 pp |
-| `blinkdepth` | 527/620 = 85.00% | **543/620 = 87.58%** | +16 样本 / +2.58 pp |
-| `boppose`(mean IoU) | 63.00% | **62.67%** | −1 样本 |
+| `robospatial` | 1113/1750 = 63.60% | **1123/1750 = 64.17%** | +10 samples / +0.57 pp |
+| `blinkdepth` | 527/620 = 85.00% | **543/620 = 87.58%** | +16 samples / +2.58 pp |
+| `boppose` (mean IoU) | 63.00% | **62.67%** | −1 sample |
 
-**两组都不是干净的全零,而且不对称的方式不同**:组1 有 `malformed tool_call 1`,
-组2 有 `cut-off generation 1` + `no <answer> 1` —— 各 1/1750(0.06%),
-两组都通过 `--strict`(没有改动污染判据)。**报的时候两组都要提,不能只提一组。**
+**Neither batch is cleanly all-zero, and they are asymmetric in different ways**: batch 1 has `malformed tool_call 1`,
+batch 2 has `cut-off generation 1` + `no <answer> 1` — 1/1750 (0.06%) each;
+both batches pass `--strict` (no change contaminated the criterion). **When reporting, mention both batches, not just one.**
 
-### 3.2 §3.2 那条 n=1 观察 —— **复现了**
+### 3.2 The n=1 observation from §3.2 — **reproduced**
 
-「一半到四分之三的 prompt,五条 rollout 拿到同一个奖励」是 `P7_DECISION.md` §3.2
-最值得下注的一条,当时标注为「单次采样、待复核」。
+"For half to three quarters of prompts, all five rollouts get the same reward" was the item in `P7_DECISION.md` §3.2
+most worth betting on, at the time marked "single sampling, to be rechecked".
 
-| 奖励简并组比例 | 组1 | **组2** |
+| fraction of reward-degenerate groups | batch 1 | **batch 2** |
 |---|--:|--:|
-| `robospatial` | 56.9%(199/350) | **56.3%(197/350)** |
-| `blinkdepth` | 75.8%(94/124) | **79.0%(98/124)** |
-| `boppose` | 53.3%(32/60) | **58.3%(35/60)** |
+| `robospatial` | 56.9% (199/350) | **56.3% (197/350)** |
+| `blinkdepth` | 75.8% (94/124) | **79.0% (98/124)** |
+| `boppose` | 53.3% (32/60) | **58.3% (35/60)** |
 
-**复现,可以从「待复核的观察」升为结论。**
+**Reproduced; can be promoted from "observation to be rechecked" to a conclusion.**
 
-### 3.3 clip 饱和率 —— **也复现了,而且是逐字复现**
+### 3.3 clip saturation rate — **also reproduced, verbatim**
 
-| 非简并 rollout 的饱和率 | 组1 | **组2** |
+| saturation rate of non-degenerate rollouts | batch 1 | **batch 2** |
 |---|--:|--:|
-| `robospatial` | 100% | **100%(765/765)** |
-| `blinkdepth` | 100% | **100%(130/130)** |
-| `boppose` | 41.4% | **39.2%(49/125)** |
+| `robospatial` | 100% | **100% (765/765)** |
+| `blinkdepth` | 100% | **100% (130/130)** |
+| `boppose` | 41.4% | **39.2% (49/125)** |
 
-`P7_STEP23_RESULTS.md` 摘要那条「起点上 flow gap 只取 `{−ε_low, 0, +ε_high}` 三个值」
-在第二组上原样成立。**由此推出的「β 应从 1 附近起步而不是 8」仍然站得住。**
+The summary item in `P7_STEP23_RESULTS.md`, "at the starting point the flow gap takes only the three values `{−ε_low, 0, +ε_high}`",
+holds unchanged on batch 2. **The inference drawn from it, "β should start near 1, not 8", still stands.**
 
-### 3.4 ⚠ 多数表决@5:**效应消失了,而且方向不一致**
+### 3.4 ⚠ Majority vote@5: **the effect disappeared, and the direction is inconsistent**
 
-这是第二组采样的**第一个存在理由**(`P7_HANDOFF.md` §3.3 第 3 条:两侧散布都要测)。
+This is the **first reason the second sampling batch exists** (`P7_HANDOFF.md` §3.3 item 3: the spread on both sides must be measured).
 
-组1 只跑了一个表决臂,VQA 上得 **176/228**;组2 的表决臂得 **166/228**。
-**表决臂自己的散布是 10 个样本 —— 与四次 greedy 的散布(161/167/168/169,极差 8)同量级。**
+Batch 1 ran only one voting arm, scoring **176/228** on VQA; batch 2's voting arm scored **166/228**.
+**The voting arm's own spread is 10 samples — the same order of magnitude as the spread of the four greedy runs (161/167/168/169, range 8).**
 
-逐样本配对(双尾精确 McNemar,vs 同样四次 greedy):
+Per-sample paired (two-sided exact McNemar, vs the same four greedy runs):
 
-| | 组1 净差 / p | **组2 净差 / p** |
+| | batch 1 net diff / p | **batch 2 net diff / p** |
 |---|---|---|
 | VQA | +9 / +8 / **+15** / +7 · p=0.163 / 0.230 / **0.014** / 0.281 | **−1 / −2 / +5 / −3 · p=1.000 / 0.868 / 0.500 / 0.720** |
-| Vacant | 净 −2 ~ 0 · p 全 ≥ 0.75 | **−2 / −3 / −1 / −2 · p 全 ≥ 0.607** |
-| `blinkdepth` | — | **+2 / +3 / +1 / +0 · p 全 ≥ 0.453** |
+| Vacant | net −2 ~ 0 · p all ≥ 0.75 | **−2 / −3 / −1 / −2 · p all ≥ 0.607** |
+| `blinkdepth` | — | **+2 / +3 / +1 / +0 · p all ≥ 0.453** |
 
-**0/12 次比较显著,而且 VQA 的方向在两组之间翻了号。**
+**0/12 comparisons are significant, and the VQA direction flipped sign between the two batches.**
 
-> **结论:多数表决@5 在这三个 benchmark 上没有效应。**
-> 组1 那次「四次里有一次 p=0.014」正是 §3.3 纪律警告的那类假象 ——
-> **四次比较共用同一个表决臂,而那个臂当时没有散布。** 现在它有了,效应就没了。
+> **Conclusion: majority vote@5 has no effect on these three benchmarks.**
+> Batch 1's "one in four with p=0.014" is exactly the kind of artifact the §3.3 discipline warns about —
+> **the four comparisons share the same voting arm, and that arm had no spread at the time.** Now it does, and the effect is gone.
 >
-> **连带后果:`records/P6_REPORT.md` 与项目文档里「自洽性能补掉缺口约六成」
-> 那条(已降级为「方向一致、未达显著」)必须再降一级:「无效应」。
-> `robospatial` VQA 的 −6.46 pp 缺口因此仍然整个未解释,而且少了一个候选解释。**
+> **Knock-on consequence: the item in `records/P6_REPORT.md` and the project docs "self-consistency fills about 60% of the gap"
+> (already downgraded to "consistent direction, not significant") must be downgraded one more step: "no effect".
+> The −6.46 pp gap on `robospatial` VQA therefore remains entirely unexplained, and has one fewer candidate explanation.**
 
-**一条正面的复现**:「Vacant 的纯决策翻转 = 0」在两组都成立(组1 0/51,组2 0/47),
-`blinkdepth` 也都只有个位数(3 / 4)。VQA 的纯决策翻转两组分别是 46 / 62 ——
-**现象在,收益不在**:模型确实在同一批证据上摇摆,但摇摆是对称的,投票捞不回来。
+**One positive reproduction**: "pure decision flips on Vacant = 0" holds in both batches (batch 1 0/51, batch 2 0/47),
+and `blinkdepth` is single-digit in both (3 / 4). Pure decision flips on VQA are 46 / 62 in the two batches —
+**the phenomenon is there, the gain is not**: the model really does waver on the same evidence, but the wavering is symmetric, and voting cannot recover it.
 
 ---
 
-## 4. 本趟最重要的产出:两侧 logprob 的差
+## 4. The most important output of this session: the difference between the two sides' logprobs
 
-### 4.1 `|y|` 的真实 token 数 —— 字符代理**系统性低估**了那个陷阱
+### 4.1 Real token counts of `|y|` — the character proxy **systematically underestimated** the trap
 
-| | 字符代理(`P7_STEP23_RESULTS.md` §1.2) | **真实 token** | `|y|` 中位(token) |
+| | character proxy (`P7_STEP23_RESULTS.md` §1.2) | **real tokens** | `|y|` median (tokens) |
 |---|--:|--:|--:|
 | `robospatial` | 1.14× | **1.22×** | 334 |
 | `blinkdepth` | 1.41× | **1.67×** | 423 |
 | `boppose` | 2.40× | **3.22×** | 305 |
 
-**三个都比字符代理更大,而且仍然按 benchmark 系统性不同。**
-`P7_DECISION.md` §5.1 第 2 条那个陷阱(`|y_i|` 误用原始 response 长度 = 让工具输出的
-啰嗦程度决定有效温度)**比之前记录的更严重**。字符代理给的比值可信但偏低,已按承诺替换。
+**All three are larger than the character proxy, and still systematically different per benchmark.**
+The trap in `P7_DECISION.md` §5.1 item 2 (`|y_i|` mistakenly using the raw response length = letting the verbosity
+of the tool output decide the effective temperature) **is more severe than previously recorded**. The ratios from the character proxy were credible but low; replaced as promised.
 
-### 4.2 T6 的量纲失配,换成真实量级
+### 4.2 T6's dimensional mismatch, with real magnitudes
 
-| | 每 token log π(trainer 臂) | `|y|` 中位 | 整条 log π | vs `β·r ∈ [0,8]` |
+| | per-token log π (trainer arm) | `|y|` median | whole-sequence log π | vs `β·r ∈ [0,8]` |
 |---|--:|--:|--:|--:|
 | `robospatial` | −0.1717 | 334 | **−57.3** | **≈ 7×** |
 | `blinkdepth` | −0.1255 | 423 | **−53.1** | **≈ 7×** |
 
-`P7_STEP23_RESULTS.md` §2.5 的论断(`Z_t` 按 `|y|` 的**和**增长,被它中心化的项是
-**每 token 均值**)**得到真实量级的确认**:被平均的那一项比 `β·r` 的整个量程大约七倍,
-且随 `|y|` 线性增长。
+The claim in `P7_STEP23_RESULTS.md` §2.5 (`Z_t` grows with the **sum** over `|y|`, while the term it centers is
+the **per-token mean**) **is confirmed at real magnitudes**: the term being averaged is about seven times the whole range of `β·r`,
+and grows linearly with `|y|`.
 
-### 4.3 分布形状 —— 判据 i-b 的落点
+### 4.3 Distribution shape — where criterion i-b lands
 
-⚠ 量的是 **rollout(sglang)vs trainer(FSDP)的框架差**,不是训练漂移
-(`π_old = π_ref`,GFlowRL 的 `log π_ref − log π_old` 在这些数据上恒为 0)。
-它是漂移的**第一个真实代理**(IS 权重 `w_i` 正是为它设的),**单位与量级可比,不是同一个量**。
+⚠ What is measured is the **framework difference between rollout (sglang) and trainer (FSDP)**, not training drift
+(`π_old = π_ref`; GFlowRL's `log π_ref − log π_old` is identically 0 on this data).
+It is the **first real proxy** for drift (the IS weight `w_i` exists precisely for it); **the units and magnitudes are comparable, but it is not the same quantity**.
 
-| 逐序列求和的 gap | skew | 超额峰度 | Sarle BC | 判读 |
+| per-sequence summed gap | skew | excess kurtosis | Sarle BC | reading |
 |---|--:|--:|--:|---|
-| `robospatial` | +1.02 | +3.8 | 0.208 | 单峰 · 右偏 · 轻度重尾 |
-| `blinkdepth` | +0.67 | +3.3 | 0.155 | 同上 |
-| `boppose`(范围外) | +5.10 | +45.4 | 0.526 | 明显更重尾 |
+| `robospatial` | +1.02 | +3.8 | 0.208 | unimodal · right-skewed · mildly heavy-tailed |
+| `blinkdepth` | +0.67 | +3.3 | 0.155 | same as above |
+| `boppose` (out of scope) | +5.10 | +45.4 | 0.526 | clearly heavier-tailed |
 
-**`P7_CRITERION_IB.md` §4 那条先验被推翻了。** 原文写:「我们的奖励在两个准确率
-benchmark 上接近二值 —— 若漂移项也接近双峰,**算术平均反而是三者里最好的那个**,
-GFlowRL 的选择在我们这里站得住。」**实测不是双峰**(BC 0.155–0.208,门槛 0.5556)。
+**The prior in `P7_CRITERION_IB.md` §4 is overturned.** It said: "our rewards are close to binary on the two accuracy
+benchmarks — if the drift term is also close to bimodal, **the arithmetic mean is actually the best of the three**,
+and GFlowRL's choice holds up for us." **Measured, it is not bimodal** (BC 0.155–0.208, threshold 0.5556).
 
-在**实测**分布上重抽 G=5 比三个常数的方差(`tools/p7/p7_ib_real.py`):
+Resampling G=5 on the **measured** distribution and comparing the variance of the three constants (`tools/p7/p7_ib_real.py`):
 
-| | mean(GFlowRL Eq.4) | median | **huber** |
+| | mean (GFlowRL Eq.4) | median | **huber** |
 |---|--:|--:|--:|
 | `robospatial` | 1.00× | 0.89× | **0.83×** |
 | `blinkdepth` | 1.00× | 1.00× | **0.93×** |
-| `boppose`(范围外) | 1.00× | 0.39× | 0.40× |
+| `boppose` (out of scope) | 1.00× | 0.39× | 0.40× |
 
-> **判据 i-b 的答案:方向是 median/huber 略优,但幅度只有 7–17%。**
-> 合成表里 t3 给的是 0.6×、双峰给的是 3.5–7.4× —— **实测两者都不是。**
-> **正确表述:常数的选择不是问题所在。** 这与「GFlowRL 选错了」是不同的结论,
-> 不要写成后者。(`boppose` 的 0.39× 更像重尾情形,但它按 §0.2 在 P7 范围之外。)
+> **The answer to criterion i-b: median/huber are slightly better in direction, but only by 7–17%.**
+> In the synthetic table, t3 gave 0.6× and bimodal gave 3.5–7.4× — **the measurement is neither.**
+> **Correct statement: the choice of constant is not where the problem lies.** That is a different conclusion from "GFlowRL chose wrong";
+> do not write it as the latter. (`boppose`'s 0.39× looks more like the heavy-tailed case, but per §0.2 it is outside P7's scope.)
 
-### 4.4 量级:**在零训练下就已经越过阈值**
+### 4.4 Magnitude: **already over the threshold with zero training**
 
-`P7_CRITERION_IB.md` §3 把「归一化不一致开始抹掉奖励贡献」的阈值定在
-每 token 约 **5.0e-4**(`robospatial`)/ **7.5e-4**(`boppose`)nat。
+`P7_CRITERION_IB.md` §3 set the threshold at which "the normalization inconsistency starts erasing the reward contribution" at
+about **5.0e-4** (`robospatial`) / **7.5e-4** (`boppose`) nat per token.
 
-| 每 rollout 的平均 \|每 token gap\| | 实测 | vs 阈值 |
+| mean \|per-token gap\| per rollout | measured | vs threshold |
 |---|--:|---|
-| `robospatial` | **1.856e-3** | **超出 3.7×** |
-| `blinkdepth` | **1.538e-3** | **超出 3.1×** |
-| `boppose` | 4.481e-4 | 未超 |
+| `robospatial` | **1.856e-3** | **3.7× over** |
+| `blinkdepth` | **1.538e-3** | **3.1× over** |
+| `boppose` | 4.481e-4 | not over |
 
-**两个在范围内的 benchmark,框架差单独一项就已经是阈值的 3–4 倍,而这时还没有任何训练发生。**
-真实训练漂移会叠在它上面,只会更大。
+**On both in-scope benchmarks, the framework difference alone is already 3–4 times the threshold, before any training has happened.**
+Real training drift stacks on top of it and can only make it larger.
 
-### 4.5 §6 候选修法:**在真实漂移上确认有效**
+### 4.5 §6 candidate fix: **confirmed effective on real drift**
 
-把 `Eq. 4` 的 logprob 项也按 `|y|` 归一化(`P7_CRITERION_IB.md` §6),`β=8`:
+Normalizing the logprob term of `Eq. 4` by `|y|` as well (`P7_CRITERION_IB.md` §6), `β=8`:
 
-| 整组 `g̃` 被削成同值的比例 | 原样 Eq.4 | **归一化后** |
+| fraction of groups whose whole `g̃` is clipped to the same value | Eq.4 as is | **after normalization** |
 |---|--:|--:|
 | `robospatial` | 26.9% | **0.0%** |
 | `blinkdepth` | 46.0% | **0.0%** |
 | `boppose` | 3.3% | **0.0%** |
 
-clip 饱和率同时从 69.6% → 43.7%(`robospatial`)、66.9% → 21.0%(`blinkdepth`)。
-**合成数据上的结论(36%–93% → 0.0%)在真实漂移上成立。**
+At the same time the clip saturation rate drops from 69.6% → 43.7% (`robospatial`), 66.9% → 21.0% (`blinkdepth`).
+**The conclusion on synthetic data (36%–93% → 0.0%) holds on real drift.**
 
-顺带一条:mean 与 huber 给出**相反更新方向**的 rollout 占 10.0%–14.6%
-(合成预测 11%–20%),也复现了。
+One more thing in passing: rollouts where mean and huber give **opposite update directions** make up 10.0%–14.6%
+(synthetic prediction 11%–20%); also reproduced.
 
 ---
 
-## 5. 对 A′ 的净影响
+## 5. Net effect on A′
 
-| 条目 | 处置 |
+| item | disposition |
 |---|---|
-| 判据 (i) `Var(Z_t)` | 起点无关紧要这条**复现**(饱和率 100% 逐字重现) |
-| **判据 i-b** | **可以关闭**:实测形状单峰轻度重尾,三个常数差 7–17%。**常数的选择不是问题所在** |
-| 判据 (iii) 简并组 | 简并率 56.3% / 79.0% / 58.3%,**复现**,从观察升为结论 |
-| **归一化不一致** | **升为 A′ 的头号发现**:阈值 5e-4,实测 1.5–1.9e-3(超 3–4×),**零训练下就已越过**;而且**有修法且修法在真实数据上有效** |
-| 多数表决@5 | **降级为「无效应」**,VQA 缺口少一个候选解释 |
-| `|y|` 与 T6 | 字符代理替换为真 token;量纲失配比 ≈ 7×,确认 |
+| criterion (i) `Var(Z_t)` | "does not matter at the starting point" **reproduced** (100% saturation rate reproduced verbatim) |
+| **criterion i-b** | **can be closed**: measured shape unimodal, mildly heavy-tailed; the three constants differ by 7–17%. **The choice of constant is not where the problem lies** |
+| criterion (iii) degenerate groups | degeneracy rates 56.3% / 79.0% / 58.3%, **reproduced**, promoted from observation to conclusion |
+| **normalization inconsistency** | **promoted to A′'s top finding**: threshold 5e-4, measured 1.5–1.9e-3 (3–4× over), **already crossed with zero training**; and **there is a fix and the fix works on real data** |
+| majority vote@5 | **downgraded to "no effect"**; the VQA gap has one fewer candidate explanation |
+| `|y|` and T6 | character proxy replaced with real tokens; dimensional mismatch ratio ≈ 7×, confirmed |
 
-**A′ 的答案**:`Z_t` 在我们这里不可用,**原因不是批内 MC 的方差,也不是常数选得不对,
-而是 `Eq. 4` 与 `Eq. 5/6` 的长度归一化不一致**。
+**A′'s answer**: `Z_t` is not usable in our setting, **and the reason is neither the variance of the within-batch MC nor a wrong choice of constant,
+but the length normalization inconsistency between `Eq. 4` and `Eq. 5/6`**.
 
 ---
 
-## 6. 修法的不动点代价 —— 已测(2026-09-02,零 GPU)
+## 6. Fixed-point cost of the fix — measured (2026-09-02, zero GPU)
 
-`P7_CRITERION_IB.md` §6 的待办已关闭,完整推导与数值见该文 **§6.1–6.3**;
-脚本 `tools/p7/p7_fix_cost.py`。结论一句话:**修法不是免费的。**
+The to-do in `P7_CRITERION_IB.md` §6 is closed; full derivation and numbers in **§6.1–6.3** of that doc;
+script `tools/p7/p7_fix_cost.py`. Conclusion in one sentence: **the fix is not free.**
 
-    存在性:修好了。归一化后的 Eq.4 在零损失点上自洽是**恒等式**
-            (|Z_t − Z*| = 8.9e-16,loss 6.9e-34);论文原样在同一点上差 4.9–6.4,loss 24–40。
-    代价:  在不动点的**位置**。零损失条件本身迫使 log π* = log π_ref + L·(β·r − Z),
-            即 Remark B.4 的 inverse temperature **L·β**。
+    Existence: fixed. Self-consistency of the normalized Eq.4 at the zero-loss point is an **identity**
+               (|Z_t − Z*| = 8.9e-16, loss 6.9e-34); the paper as is misses by 4.9–6.4 at the same point, loss 24–40.
+    Cost:      in the **location** of the fixed point. The zero-loss condition itself forces log π* = log π_ref + L·(β·r − Z),
+               i.e. Remark B.4's inverse temperature **L·β**.
 
-    同质长度扫描(有效支撑 / max p)
-        L=1     21.006 / 0.1388     <- 与 Prop.B.1 的 β-tilt 逐位相同(机械自查)
+    Homogeneous length sweep (effective support / max p)
+        L=1     21.006 / 0.1388     <- bit-for-bit identical to Prop.B.1's β-tilt (mechanical self-check)
         L=10     1.910 / 0.7500
         L=50     1.004 / 0.9996
-        L=334    1.000 / 1.000000   <- robospatial 实测 |y| 中位
+        L=334    1.000 / 1.000000   <- measured median |y| on robospatial
 
-**`L = 334` 时不动点是一个点质量:分布匹配退化成奖励最大化** —— 恰恰是 GFlowRL 要避免的。
+**At `L = 334` the fixed point is a point mass: distribution matching degenerates into reward maximization** — exactly what GFlowRL is meant to avoid.
 
-| 配置 | 整组 `g̃` 同值 | 自洽零点 | 不动点 tilt |
+| config | whole-group `g̃` same value | self-consistent zero | fixed-point tilt |
 |---|---|---|---|
-| **A. 论文原样** | 26.9%–46.0%(实测) | **不存在** | 极小点 `c ≈ 1` |
-| **B. §6 修法** | **0.0%**(实测) | **存在** | **`L·β` → argmax** |
-| **C. 两边都不归一化** | — | 存在 | `β`,熵与 `π_ref` 同量级 |
+| **A. paper as is** | 26.9%–46.0% (measured) | **does not exist** | minimizer `c ≈ 1` |
+| **B. §6 fix** | **0.0%** (measured) | **exists** | **`L·β` → argmax** |
+| **C. no normalization on either side** | — | exists | `β`, entropy of the same order as `π_ref` |
 
-**A 的病与 B 的病是同一个长度归一化的两面。** 唯一两个指标都健康的是 **C**,
-而 C 的代价正是论文当初引入长度归一化要解决的问题(长序列在 loss 里权重更大)。
+**A's illness and B's illness are two sides of the same length normalization.** The only one healthy on both metrics is **C**,
+and C's cost is exactly the problem the paper introduced length normalization to solve in the first place (long sequences weigh more in the loss).
 
-> **与 `P7_STEP23_RESULTS.md` §2.3 收回的那条不矛盾**:那条说论文原样下极小点落在
-> `c ≈ 1` 而非 `c = L` —— 成立,因为那里根本没有零点。**修法让零点真的存在了,
-> `L·β` 的读法在修法之下回来了。** 两条陈述适用于不同的目标函数。
+> **No contradiction with the item retracted in `P7_STEP23_RESULTS.md` §2.3**: that item said that with the paper as is, the minimizer lands at
+> `c ≈ 1` rather than `c = L` — true, because there is no zero there at all. **The fix makes the zero actually exist,
+> and under the fix the `L·β` reading comes back.** The two statements apply to different objective functions.
 
 ---
 
-## 7. A′ 的完整答案
+## 7. The full answer to A′
 
-> **在 SpaceTools 的多轮工具轨迹上,GFlowRL 的批内 MC 估计量 `Z_t` 还能不能用?**
+> **On SpaceTools' multi-turn tool trajectories, is GFlowRL's within-batch MC estimator `Z_t` still usable?**
 >
-> **不能,而且原因是可归因的、具体的、且不在「批内 MC」这个想法上。**
+> **No, and the reason is attributable, specific, and not in the "within-batch MC" idea itself.**
 
-1. **不是方差。** 判据 (i):起点上 flow gap 100% 被 clip 削平(两组复现),
-   `Var(Z_t)` 在那里无关紧要。
-2. **不是常数选错。** 判据 i-b:实测漂移代理单峰、轻度重尾(Sarle BC 0.155–0.208),
-   三个常数的方差差 **7–17%**。**常数的选择不是问题所在。**
-3. **是 `Eq. 4` 与 `Eq. 5/6` 的长度归一化不一致。** 阈值每 token 约 5e-4;
-   **零训练下的框架差就已经是 1.5–1.9e-3(超 3–4×)**,真实训练漂移只会更大。
-   后果是整组 `g̃` 被削成同值、**奖励贡献被完全抹掉**(实测 26.9%–46.0% 的组)。
-4. **而这个不一致没有免费的修法。** 归一化 `Eq. 4` 消除症状(0.0%),
-   但把不动点推成点质量;两边都不归一化则回到 Prop. B.1,代价是长序列主导 loss。
+1. **Not the variance.** Criterion (i): at the starting point the flow gap is 100% flattened by the clip (reproduced in both batches),
+   so `Var(Z_t)` does not matter there.
+2. **Not a wrong constant.** Criterion i-b: the measured drift proxy is unimodal and mildly heavy-tailed (Sarle BC 0.155–0.208);
+   the variances of the three constants differ by **7–17%**. **The choice of constant is not where the problem lies.**
+3. **It is the length normalization inconsistency between `Eq. 4` and `Eq. 5/6`.** Threshold about 5e-4 per token;
+   **the framework difference with zero training is already 1.5–1.9e-3 (3–4× over)**, and real training drift can only be larger.
+   The consequence is that the whole group's `g̃` is clipped to the same value and **the reward contribution is completely erased** (measured in 26.9%–46.0% of groups).
+4. **And this inconsistency has no free fix.** Normalizing `Eq. 4` removes the symptom (0.0%),
+   but pushes the fixed point to a point mass; normalizing neither side goes back to Prop. B.1, at the cost of long sequences dominating the loss.
 
-**范围**:以上不含 `bopgrasp` / `boppose`(`P7_DECISION.md` §0.2),
-且全部基于**框架差**这个漂移代理,不是训练漂移(`π_old = π_ref`,该项恒为 0)。
+**Scope**: none of the above includes `bopgrasp` / `boppose` (`P7_DECISION.md` §0.2),
+and all of it is based on the **framework difference** as a drift proxy, not training drift (`π_old = π_ref`, that term is identically 0).

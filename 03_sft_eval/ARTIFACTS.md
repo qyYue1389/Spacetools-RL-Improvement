@@ -1,134 +1,134 @@
-# SFT eval 原始产物 · 2026-09-11/12
+# SFT eval raw artifacts · 2026-09-11/12
 
-来自 `qzpm55555/spacetools-sft-v1-4xa6000` @ `91fd4bdf6d2ffe3b355cc650e71925c6e91a15c5`
-在 4× RTX A6000 上的 eval。分析结论见 `03_sft_eval/sft_eval_report.md`。
+Eval of `qzpm55555/spacetools-sft-v1-4xa6000` @ `91fd4bdf6d2ffe3b355cc650e71925c6e91a15c5`
+on 4× RTX A6000. For the analysis and conclusions see `03_sft_eval/sft_eval_report.md`.
 
-机器已 terminate,这里是全部可留存的东西。
+The machine has been terminated; this is everything that could be kept.
 
 ---
 
-## rollouts/ —— 轨迹,最有价值的部分
+## rollouts/ — trajectories, the most valuable part
 
 ```
-reflocation.jsonl         100 行
-refplacement.jsonl        100 行
-refunseen.jsonl            77 行
-robospatial_run1.jsonl    350 行   ← 第一次运行
-robospatial_run2.jsonl    350 行   ← 第二次运行,同一 ckpt、同一配置
+reflocation.jsonl         100 rows
+refplacement.jsonl        100 rows
+refunseen.jsonl            77 rows
+robospatial_run1.jsonl    350 rows   ← first run
+robospatial_run2.jsonl    350 rows   ← second run, same checkpoint, same config
 ```
 
-每行是一个样本的完整记录,JSON:
+Each row is the full record of one sample, JSON:
 
-| 字段 | 内容 |
+| Field | Content |
 |---|---|
-| `index` | 样本序号,两次运行之间可对齐 |
-| `input` | 完整 prompt:system 提示 + 七工具的 schema + 图(base64)+ 问题,约 10 KB |
-| `output` | **模型的生成**,含 `<think>` / `<tool_call>` / `<tool_response>` / `<answer>` 全部轮次 |
-| `gts` | 真值。VQA 是 `Yes`/`No`;Vacant 是 10 个点;部分 RefSpatial 是 base64 PNG |
-| `acc` `score` `reward` | 判分结果,本任务下三者相同 |
+| `index` | Sample index, alignable across the two runs |
+| `input` | Full prompt: system prompt + schemas of the seven tools + image (base64) + question, about 10 KB |
+| `output` | **The model's generation**, including all `<think>` / `<tool_call>` / `<tool_response>` / `<answer>` turns |
+| `gts` | Ground truth. For VQA it is `Yes`/`No`; for Vacant it is 10 points; for some RefSpatial it is a base64 PNG |
+| `acc` `score` `reward` | Scoring result; for this task all three are the same |
 
-**robospatial 的两份可以逐样本对比**,这是量化非确定性的数据来源:
-两次之间 29 个样本翻转、199/350 条生成逐字节不同,而工具响应零差异。
+**The two robospatial files can be compared per-sample**; this is the data source for quantifying non-determinism:
+between the two runs 29 samples flip, 199/350 generations differ byte-for-byte, while the tool responses have zero differences.
 
-### VQA / Vacant 怎么拆
+### How to split VQA / Vacant
 
-按 `gts` 的形态,不需要额外元数据:
+By the shape of `gts`, no extra metadata needed:
 
 ```python
 import re, json
-def is_vacant(r):                       # 点列表 → Vacant(122 题)
+def is_vacant(r):                       # list of points → Vacant (122 questions)
     return bool(re.search(r"\(\s*-?[0-9.]*\s*,", r["gts"]))
-# 其余是 VQA(228 题),gts 为 Yes / No
+# the rest are VQA (228 questions), gts is Yes / No
 ```
 
-### 判分函数
+### Scoring functions
 
 `verl/utils/reward_score/robos_all.py`:
 
-- 点类问题:`compute_points_score(..., point_evaluation_method="convex_hull")`
-  —— **预测点是否落在 10 个 GT 点的凸包内,二值**。
-  注意不是「到最近 GT 点的距离」:一个点可以离某个 GT 点很近却在凸包外而判 0。
-  分析错题要算到**凸包边界**的距离,用仓库自己的 `_convex_hull` /
-  `_is_point_in_convex_polygon`(已验证与落盘 acc 122/122 一致)。
-- Yes/No 问题:`compute_yesno_score`
+- Point questions: `compute_points_score(..., point_evaluation_method="convex_hull")`
+  — **whether the predicted point falls inside the convex hull of the 10 GT points, binary**.
+  Note it is not "distance to the nearest GT point": a point can be very close to some GT point yet outside the convex hull and score 0.
+  When analyzing wrong answers, compute the distance to the **convex hull boundary**, using the repo's own `_convex_hull` /
+  `_is_point_in_convex_polygon` (verified to agree with the on-disk acc 122/122).
+- Yes/No questions: `compute_yesno_score`
 
 ---
 
-## logs/ —— eval 日志
+## logs/ — eval logs
 
 ```
-run1_all4benchmarks.log    15.8 MB   四个 benchmark 的完整运行(32 分 41 秒)
-run2_robospatial.log        8.7 MB   robospatial 补跑
-blinkdepth_attempt1.log             blinkdepth 两次尝试,都死在 verl 侧
-blinkdepth_attempt2.log             (GPU 预算问题,见报告 §6.2)
-perbench_<key>.log                  verl 按 benchmark 分开落的日志
+run1_all4benchmarks.log    15.8 MB   full run of all four benchmarks (32 min 41 s)
+run2_robospatial.log        8.7 MB   robospatial rerun
+blinkdepth_attempt1.log             two blinkdepth attempts, both died on the verl side
+blinkdepth_attempt2.log             (GPU budget problem, see report §6.2)
+perbench_<key>.log                  logs written separately per benchmark by verl
 ```
 
-日志里带大量 ANSI 和进度条。有用的 grep:
+The logs contain lots of ANSI codes and progress bars. Useful greps:
 
 ```bash
 grep -oE "val-core/[A-Za-z0-9/-]+/acc/mean@1:[0-9.]+" run1_all4benchmarks.log | sort -u
 grep -c OutOfMemoryError run1_all4benchmarks.log
-grep -cE "Error:|ERROR:toolshed" run1_all4benchmarks.log    # 子串匹配,能抓到 TypeError:
+grep -cE "Error:|ERROR:toolshed" run1_all4benchmarks.log    # substring match, also catches TypeError:
 grep -c "Version mismatch" run1_all4benchmarks.log
 ```
 
 ---
 
-## verify/ —— 验收产物
+## verify/ — acceptance-check artifacts
 
 ```
-VERIFY_run_initial.log              首次四项验收
-VERIFY_run_after_patch.log          Ray Python 补丁之后的验收(七工具 7/7)
-<tool>.log × 7                      七个工具各自的冒烟输出(真加载权重、真出结果)
-chain_raw.log                       Ray 跨 conda 环境工具链测试的原始输出
-chain_rerun_after_cleanup.log       清掉残留 ray 地址文件后重跑
-ray_python_patch.log                minor 档补丁的应用与回读验证
-```
-
----
-
-## gpu/ —— GPU 轨迹,不可再生
-
-```
-gputrace_1hz.log        eval 运行期间 1 Hz × 75 采样,每卡 used_MiB + util%
-                        末尾带进程级归属(哪个 actor 在哪张卡、占多少)
-gputrace_summary.log    每卡峰值/均值汇总
-```
-
-**跑完再查 nvidia-smi 只能看到 0 MiB**,所以这份只能在运行中采。
-后续 eval / RL 建议常态化这一步。
-
----
-
-## config/ —— 出处
-
-```
-toolshed_config.yaml    本次实际生效的七工具配置(由 generate_toolshed_config.py 产出)
-run_eval.sh.asrun       跑的时候那一版 run_eval.sh
-WEIGHTS_PINS.txt        七个模型权重钉死的 revision
-pkg_MANIFEST.txt        环境包清单(含五环境 Python 版本表、GPU 预算实测)
-SHA256SUMS.remote       环境包各文件哈希
-POSTRESTORE.sh          还原后要补的三件事(已推到 HF repo)
-VERIFY.sh.new           改成四项之后的验收脚本(已推到 HF repo)
+VERIFY_run_initial.log              first four-item acceptance check
+VERIFY_run_after_patch.log          acceptance check after the Ray Python patch (seven tools 7/7)
+<tool>.log × 7                      smoke-test output of each of the seven tools (real weights loaded, real results)
+chain_raw.log                       raw output of the Ray cross-conda-env tool-chain test
+chain_rerun_after_cleanup.log       rerun after clearing leftover ray address files
+ray_python_patch.log                applying the minor-version patch and read-back verification
 ```
 
 ---
 
-## scripts/ 与 analysis/ —— 分析脚本及其输出,可复用
+## gpu/ — GPU traces, not reproducible
 
-| 脚本 | 做什么 |
+```
+gputrace_1hz.log        1 Hz × 75 samples during the eval run, per-GPU used_MiB + util%
+                        with per-process attribution at the end (which actor on which GPU, using how much)
+gputrace_summary.log    per-GPU peak/mean summary
+```
+
+**Checking nvidia-smi after the run only shows 0 MiB**, so this can only be sampled while running.
+Recommend making this step routine for future eval / RL.
+
+---
+
+## config/ — provenance
+
+```
+toolshed_config.yaml    the seven-tool config actually in effect this time (produced by generate_toolshed_config.py)
+run_eval.sh.asrun       the version of run_eval.sh used for the run
+WEIGHTS_PINS.txt        pinned revisions of the seven model weights
+pkg_MANIFEST.txt        environment package manifest (incl. Python version table of the five envs, measured GPU budget)
+SHA256SUMS.remote       hashes of the environment package files
+POSTRESTORE.sh          the three things to fix up after restore (pushed to the HF repo)
+VERIFY.sh.new           acceptance-check script after changing to four items (pushed to the HF repo)
+```
+
+---
+
+## scripts/ and analysis/ — analysis scripts and their outputs, reusable
+
+| Script | What it does |
 |---|---|
-| `audit2.sh` | 逐样本核工具调用与错误文本(判读第二步,只看日志不够) |
-| `health.sh` | 五项健康指标 + 每样本工具调用次数分布 |
-| `nondet.sh` | 把两次运行的分歧拆成策略侧 / 工具侧 |
-| `stable.sh` | 恒对 / 恒错 / 翻转分解,给出期望值与判据通过概率 |
-| `hull.sh` | 用仓库自己的几何函数按凸包判据重算 Vacant |
-| `vacant.sh` | Vacant 错题的偏差分布 |
-| `split.sh` | 按 GT 形态拆 VQA / Vacant |
-| `material.sh` | VQA 混淆矩阵 + 代表性轨迹导出 |
-| `compare.sh` | 两次运行逐样本对比 |
-| `gputrace.sh` | 1 Hz GPU 采样 |
+| `audit2.sh` | Per-sample check of tool calls and error text (second step of interpretation; looking only at logs is not enough) |
+| `health.sh` | Five health metrics + per-sample distribution of tool-call counts |
+| `nondet.sh` | Splits the divergence between the two runs into policy side / tool side |
+| `stable.sh` | Always-correct / always-wrong / flip decomposition, gives expected value and probability of passing the criterion |
+| `hull.sh` | Recomputes Vacant with the convex-hull criterion using the repo's own geometry functions |
+| `vacant.sh` | Deviation distribution of Vacant wrong answers |
+| `split.sh` | Splits VQA / Vacant by GT shape |
+| `material.sh` | VQA confusion matrix + export of representative trajectories |
+| `compare.sh` | Per-sample comparison of the two runs |
+| `gputrace.sh` | 1 Hz GPU sampling |
 
-脚本里的路径是那台机器上的绝对路径,复用时要改。
-`analysis/` 是它们当时的输出,可以直接对照报告里的数字。
+Paths in the scripts are absolute paths on that machine; change them when reusing.
+`analysis/` holds their outputs from that time; you can check them directly against the numbers in the report.

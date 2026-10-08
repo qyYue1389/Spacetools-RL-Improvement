@@ -1,239 +1,239 @@
-# P7 步骤 2–3 结果:Z_t 的离线拆解与合成不动点检验
+# P7 steps 2–3 results: offline decomposition of Z_t and the synthetic fixed-point test
 
-> 承接 `records/P7_DECISION.md` §6 的第 2、3 步。**零 GPU、零机时、没碰真实模型。**
-> 写于 2026-09-01。
-> 脚本:`tools/p7/p7_zt_offline.py`(真实数据)· `tools/p7/p7_fixedpoint.py`(合成)
-> 两个脚本都只用标准库 + numpy,可直接重跑。
+> Follows on from steps 2 and 3 in `records/P7_DECISION.md` §6. **Zero GPU, zero machine time, no real model touched.**
+> Written 2026-09-01.
+> Scripts: `tools/p7/p7_zt_offline.py` (real data) · `tools/p7/p7_fixedpoint.py` (synthetic)
+> Both scripts use only the stdlib + numpy and can be rerun directly.
 
 ---
 
-## 摘要
+## Summary
 
-**最重要的一条,是一个把 P7 的问题本身重新定位的观察:**
+**The most important item is an observation that relocates P7's question itself:**
 
-> **在 `β = 8`、`G = 5` 的配置下,两个准确率 benchmark 上 flow gap `g_i` 只取三个值
-> —— `0`、`−ε_low`、`+ε_high`。没有任何一条 rollout 携带未被削平的 flow gap。**
+> **Under the `β = 8`, `G = 5` configuration, on the two accuracy benchmarks the flow gap `g_i` takes only three values
+> — `0`, `−ε_low`, `+ε_high`. Not a single rollout carries an unclipped flow gap.**
 >
->     robospatial   简并组 995 条(g 恒为 0) + clip 饱和 755 条 = 1750  (100%)
->     blinkdepth    简并组 470 条            + clip 饱和 150 条 =  620  (100%)
->     boppose       简并组 160 条            + clip 饱和  58 条 =  218 / 300 (72.7%)
+>     robospatial   degenerate groups 995 (g always 0) + clip-saturated 755 = 1750  (100%)
+>     blinkdepth    degenerate groups 470               + clip-saturated 150 =  620  (100%)
+>     boppose       degenerate groups 160               + clip-saturated  58 =  218 / 300 (72.7%)
 >
-> 也就是说:**训练起点上,`Z_t` 与 `β·r` 的全部数值信息都被 clip 削掉了,只剩符号。**
-> 只有 `boppose`(连续 IoU 奖励)保留了 82/300 条有梯度分级的 rollout。
+> In other words: **at the training starting point, all numerical information in `Z_t` and `β·r` is clipped away, only the sign remains.**
+> Only `boppose` (continuous IoU reward) keeps 82/300 rollouts with graded gradients.
 
-这条改变了判据 (i) 的时序:**`Var(Z_t)` 在起点不重要**(那时 `π_old = π_ref`,
-`Z_t` 退化成 `mean(β·r)`,而它又被 clip 削掉);
-**它开始重要的时刻,正好是 T6 那个量纲失配开始显形的时刻** —— 两者是同一个东西
-(`log π_ref − log π_old` 这一项)在起作用。
+This changes the timing of criterion (i): **`Var(Z_t)` does not matter at the starting point** (there `π_old = π_ref`,
+`Z_t` reduces to `mean(β·r)`, which is then clipped away);
+**the moment it starts to matter is exactly the moment the T6 unit mismatch starts to show** — both are the same thing
+(the `log π_ref − log π_old` term) at work.
 
-其余三条:
+The other three:
 
-| | 结论 |
+| | Conclusion |
 |---|---|
-| **`|y|` 的定义** | 用原始 response 长度会把 `|y|` 放大 **1.14× / 1.41× / 2.40×**,而且**按 benchmark 系统性不同** |
-| **Remark B.4** | 加长度归一化后,**自洽的零损失不动点不存在**(不是「挪了位置」)。但**「有效逆温度变成 L·β」这个吓人的读法不成立** —— 已收回 |
-| **`G = 16 → 5`** | `Var(Z_t)` **3.17×**、`sd` **1.78×**,数值确认 `O(1/G)` |
+| **Definition of `|y|`** | Using the raw response length inflates `|y|` by **1.14× / 1.41× / 2.40×**, and **differs systematically by benchmark** |
+| **Remark B.4** | With length normalization, **a self-consistent zero-loss fixed point does not exist** (not "moved"). But **the scary reading "the effective inverse temperature becomes L·β" does not hold** — withdrawn |
+| **`G = 16 → 5`** | `Var(Z_t)` **3.17×**, `sd` **1.78×**, numerically confirming `O(1/G)` |
 
 ---
 
-## 1. 步骤 2:真实数据(`p6/passk`,G=5)
+## 1. Step 2: real data (`p6/passk`, G=5)
 
     python3 tools/p7/p7_zt_offline.py
 
-**切分沿用 `tools/parse_dump.py` 的 `TURN_SPLIT` 与 `leading_is_assistant` 约定,
-不自己重写**(P3 踩过:自建切分器静默丢掉 assistant 第一轮)。
-脚本自带回归校验:**切分轮数 vs verl `num_turns`,2670/2670 全部相符。**
+**Splitting reuses the `TURN_SPLIT` and `leading_is_assistant` conventions of `tools/parse_dump.py`,
+not a rewrite of our own** (P3 got burned: a homemade splitter silently dropped the first assistant turn).
+The script has a built-in regression check: **split turn count vs verl `num_turns`, 2670/2670 all match.**
 
-### 1.1 A · `β·r` 的组内散布
+### 1.1 A · Within-group spread of `β·r`
 
-| | 组内 sd(均值) | 组内极差(均值) | 奖励简并组 |
+| | Within-group sd (mean) | Within-group range (mean) | Reward-degenerate groups |
 |---|--:|--:|--:|
 | `robospatial` | 1.514 | 3.451 | 199/350 = 56.9% |
 | `blinkdepth` | 0.826 | 1.935 | 94/124 = 75.8% |
 | `boppose` | 0.393 | 0.927 | 32/60 = 53.3% |
 
-三处**中位数都是 0.000** —— 一半以上的组内奖励完全相同。
+In all three the **median is 0.000** — more than half the groups have exactly identical rewards.
 
-### 1.2 B · `|y|` 的分解:assistant 生成 vs `<tool_response>`
+### 1.2 B · Decomposition of `|y|`: assistant-generated vs `<tool_response>`
 
-⚠ **单位是字符,不是 token**(本机没有 tokenizer,`models/` 在 GPU 机器上)。
-比值与散布的量级可信,绝对值不可信;精确 token 数在前向 pass 那一步免费得到,届时应重跑。
+⚠ **The unit is characters, not tokens** (no tokenizer on this machine, `models/` is on the GPU machine).
+Ratios and the magnitude of the spread are credible, absolute values are not; exact token counts come for free in the forward-pass step, and this should be rerun then.
 
-| | assistant `|y|`(中位) | 原始 response(中位) | **倍数(中位)** |
+| | assistant `|y|` (median) | Raw response (median) | **Ratio (median)** |
 |---|--:|--:|--:|
 | `robospatial` | 1258 | 1418 | **1.14×** |
 | `blinkdepth` | 1561 | 2200 | **1.41×** |
 | `boppose` | 839 | 2004 | **2.40×** |
 
-> **这就是 `P7_DECISION.md` §5.1 第 2 条那个陷阱的量级。**
-> 若 `|y_i|` 误用原始 response 长度,归一化分母被放大 1.14–2.40 倍,
-> **而且放大倍数按 benchmark 系统性不同** —— `boppose` 的工具输出(深度 + 点云 + 8 个角点)
-> 远比 `robospatial` 的两个坐标啰嗦。
-> **后果不是加了噪声,是给不同任务施加了不同的、由工具啰嗦程度决定的有效温度。**
+> **This is the magnitude of the trap in item 2 of `P7_DECISION.md` §5.1.**
+> If `|y_i|` mistakenly uses the raw response length, the normalization denominator is inflated 1.14–2.40×,
+> **and the inflation factor differs systematically by benchmark** — `boppose`'s tool output (depth + point cloud + 8 corner points)
+> is far more verbose than `robospatial`'s two coordinates.
+> **The consequence is not added noise; it imposes on different tasks different effective temperatures set by tool verbosity.**
 
-### 1.3 C · 组内 `|y|` 相对极差 `(max−min)/mean`
+### 1.3 C · Within-group relative range of `|y|`, `(max−min)/mean`
 
-| | assistant 长度 | 原始 response |
+| | assistant length | Raw response |
 |---|--:|--:|
-| `robospatial` | 均值 0.41 · 中位 0.33 | 0.37 · 0.30 |
-| `blinkdepth` | 均值 0.34 · 中位 0.28 | 0.30 · 0.21 |
-| `boppose` | 均值 0.28 · 中位 0.05 | 0.15 · 0.03 |
+| `robospatial` | mean 0.41 · median 0.33 | 0.37 · 0.30 |
+| `blinkdepth` | mean 0.34 · median 0.28 | 0.30 · 0.21 |
+| `boppose` | mean 0.28 · median 0.05 | 0.15 · 0.03 |
 
-论文 Remark B.4 的前提是「response lengths vary only modestly within rollout groups」。
-**实测组内相对极差 0.28–0.41(最大到 1.78)。** 这个前提在我们这里成立得比在数学题上弱,
-但**没有弱到灾难性** —— 见 §2.3 的收回。
+The premise of the paper's Remark B.4 is "response lengths vary only modestly within rollout groups".
+**Measured within-group relative range is 0.28–0.41 (up to 1.78).** This premise holds more weakly for us than on math problems,
+but **not catastrophically weakly** — see the withdrawal in §2.3.
 
-### 1.4 D · flow gap 的 clip 饱和(见摘要)
+### 1.4 D · Clip saturation of the flow gap (see summary)
 
-    起点 π_old = π_ref  =>  g_i = β·(r̄ − r_i)
-    |g| 越出 clip 区间 [−0.2, +0.28] 只需 |r̄ − r_i| > 0.035
-    二值奖励 + G=5:混合组里 |r̄ − r_i| >= 1/5 = 0.2  ->  必然饱和
+    Starting point π_old = π_ref  =>  g_i = β·(r̄ − r_i)
+    |g| leaving the clip interval [−0.2, +0.28] only needs |r̄ − r_i| > 0.035
+    binary reward + G=5: in a mixed group |r̄ − r_i| >= 1/5 = 0.2  ->  necessarily saturated
 
-| | 全部 rollout | **仅非简并组** |
+| | All rollouts | **Non-degenerate groups only** |
 |---|--:|--:|
 | `robospatial` | 755/1750 = 43.1% | **755/755 = 100.0%** |
 | `blinkdepth` | 150/620 = 24.2% | **150/150 = 100.0%** |
 | `boppose` | 58/300 = 19.3% | 58/140 = 41.4% |
 
-**两个二值奖励 benchmark 上,所有非简并 rollout 一条不剩全部饱和。**
+**On both binary-reward benchmarks, every single non-degenerate rollout is saturated, none left.**
 
-> **两种读法都要报。**
-> **① 这未必是 bug。** clip 本来就是 trust region,论文消融显示去掉它掉 3.9 分、
-> 梯度均值涨 6.3×,**clip 不是可选项**。
-> **② 但它决定了 `β` 的作用。** 饱和之后 `β` 不再设定 tilt 的大小,只决定符号阈值;
-> 分布匹配的性质此时几乎全部由 `(1/|y_i|)·log(π_θ/π_old)` 那一项承担,
-> 结构上非常接近一个**带 clip 的、按符号走的 policy gradient**。
-> **这也给了论文自己那句「β 在 [1,10] 内不敏感」一个可检验的解释:β 大半被 clip 削掉了。**
+> **Both readings have to be reported.**
+> **① This is not necessarily a bug.** Clip is a trust region by design; the paper's ablation shows removing it loses 3.9 points
+> and raises the mean gradient by 6.3×; **clip is not optional**.
+> **② But it determines what `β` does.** After saturation `β` no longer sets the size of the tilt, only the sign threshold;
+> the distribution-matching property is then carried almost entirely by the `(1/|y_i|)·log(π_θ/π_old)` term,
+> which is structurally very close to a **clipped, sign-driven policy gradient**.
+> **This also gives a testable explanation for the paper's own sentence "β is insensitive within [1,10]": most of β is clipped away.**
 
-**由此得到一条与交接文档相反的、可操作的建议:**
-二值奖励 + `G=5` 下,要让 flow gap 不恒饱和需要 `β ≲ 0.28/0.2 ≈ 1.4`。
-~~**`β` 应当从 1 附近起步,而不是 8。**~~ 注意这条理由与 §2.3 收回的那条(`L·β`)完全无关。
+**This yields an actionable recommendation that is the opposite of the handoff document:**
+with binary reward + `G=5`, keeping the flow gap from always saturating needs `β ≲ 0.28/0.2 ≈ 1.4`.
+~~**`β` should start around 1, not 8.**~~ Note that this reason is completely unrelated to the one withdrawn in §2.3 (`L·β`).
 
-> **⚠ 2026-09-02 · 这条建议的适用范围被收窄了,在 C′ 配置下作废。**
-> 见 `records/P7_ROUTE_C_GATE.md` §4。上面的推导前提是**配置 A 且漂移为零**(训练起点)。
-> 一旦走 C′(两边都不做长度归一化,即 A′ 选定的训练臂),饱和主要由**漂移项**驱动、
-> 与 β 关系不大;而 `Var(奖励项) = β²·Var(r)`、`Var(漂移项)` 与 β 无关,于是
-> **漂移/奖励 ∝ 1/β²** —— 实测 β=8 时 0.042,**β=1 时漂移反过来主导奖励 2.7×**。
-> **C′ 下 β 不低于 2,起步仍用论文的 8。**
+> **⚠ 2026-09-02 · The scope of this recommendation has been narrowed; it is void under the C′ configuration.**
+> See `records/P7_ROUTE_C_GATE.md` §4. The derivation above assumes **configuration A with zero drift** (the training starting point).
+> Once on C′ (no length normalization on either side, i.e. the training arm chosen after A′), saturation is mainly driven by the **drift term**
+> and has little to do with β; and `Var(reward term) = β²·Var(r)` while `Var(drift term)` is independent of β, so
+> **drift/reward ∝ 1/β²** — measured 0.042 at β=8, **at β=1 drift instead dominates reward 2.7×**.
+> **Under C′ β is no lower than 2; still start at the paper's 8.**
 
 ---
 
-## 2. 步骤 3:合成不动点检验
+## 2. Step 3: synthetic fixed-point test
 
-    python3 tools/p7/p7_fixedpoint.py      # 全部 PASS
+    python3 tools/p7/p7_fixedpoint.py      # all PASS
 
-**目的是把「我们的 loss 写得对不对」从 P7 的问题里摘出去**(`P7_DECISION.md` §0)。
-在可穷举的离散 `y` 空间上验证论文自己的断言;此后真实数据上的异常不能再归咎于实现。
+**The purpose is to take "is our loss written correctly" out of P7's question** (`P7_DECISION.md` §0).
+The paper's own claims are verified on an enumerable discrete `y` space; after this, anomalies on real data can no longer be blamed on the implementation.
 
-### 2.1 T1 / T2 · Prop. B.1 与 Remark B.3,逐条复现
+### 2.1 T1 / T2 · Prop. B.1 and Remark B.3, reproduced item by item
 
     Z_t == log Z(x)              6.155376796568 == 6.155376796568
-    每个 y 的残差                 max|Δ| = 1.8e-15
+    residual for each y           max|Δ| = 1.8e-15
     loss                          7.9e-31
-    反证:π_θ = π_ref            loss = 0.0560          (非不动点处确实 > 0)
-    不动点处 flow gap             max|g| = 1.8e-15  <  ε_low = 0.2   -> clip 天然失效
+    counter-check: π_θ = π_ref    loss = 0.0560          (indeed > 0 away from the fixed point)
+    flow gap at the fixed point   max|g| = 1.8e-15  <  ε_low = 0.2   -> clip naturally inactive
 
-### 2.2 T3(b) · **加了长度归一化,自洽的零损失不动点不存在**
+### 2.2 T3(b) · **With length normalization, a self-consistent zero-loss fixed point does not exist**
 
-零损失要求 `log π = log π_ref + L·(β·r − Z_t)`,归一化把 `Z_t` 定死为 `logZ_L / L`;
-而 Eq. 4 的自洽又要求 `Z_t = (1−L)·E[β·r] + L·Z_t`,`L ≠ 1` 时给出 `Z_t = E[β·r]`。
-两者同时成立需要 `(1/L)·logZ_L == E_{p_L}[β·r]` —— **一个测度为零的巧合。**
-`L = 1`(即不做长度归一化)时 `(1−L) = 0`,自洽自动满足,这正是 Prop. B.1 的情形。
+Zero loss requires `log π = log π_ref + L·(β·r − Z_t)`, and normalization pins `Z_t` to `logZ_L / L`;
+while Eq. 4's self-consistency requires `Z_t = (1−L)·E[β·r] + L·Z_t`, which for `L ≠ 1` gives `Z_t = E[β·r]`.
+Both holding at once requires `(1/L)·logZ_L == E_{p_L}[β·r]` — **a measure-zero coincidence.**
+At `L = 1` (i.e. no length normalization) `(1−L) = 0`, self-consistency is automatically satisfied, which is exactly the Prop. B.1 case.
 
-数值扫描(候选族 `π_c ∝ π_ref·exp(c·β·r)`,`Z_t` 每次按 Eq. 4 自洽重算,**不 clip**):
+Numerical scan (candidate family `π_c ∝ π_ref·exp(c·β·r)`, `Z_t` recomputed self-consistently per Eq. 4 each time, **no clip**):
 
     L      argmin c    min loss
-    1.0     1.0000     7.9e-31      <- 精确零点
+    1.0     1.0000     7.9e-31      <- exact zero
     2.0     1.2000     3.9e-01
     3.0     1.1400     7.4e-01
     5.0     1.0700     1.1e+00
    10.0     1.0300     1.4e+00
 
-六个随机世界重复(L=3):min loss 0.71–1.66,argmin c 1.00–1.15,**无一为零。**
+Six random worlds repeated (L=3): min loss 0.71–1.66, argmin c 1.00–1.15, **none is zero.**
 
-> **Remark B.4 只解了残差方程,没有重做 Prop. B.1 的第三步(估计量自洽)。**
-> 所以那句「mild length-dependent bias」在自洽意义下不是「不动点挪了位置」,
-> 而是「**不动点不存在**」,loss 有正的地板且随 `L` 增大。
+> **Remark B.4 only solves the residual equation; it does not redo the third step of Prop. B.1 (estimator self-consistency).**
+> So "mild length-dependent bias", in the self-consistent sense, is not "the fixed point moved",
+> but "**the fixed point does not exist**": the loss has a positive floor that grows with `L`.
 
-### 2.3 ⚠ 一条收回:「有效逆温度 = `L·β`」不成立
+### 2.3 ⚠ One withdrawal: "effective inverse temperature = `L·β`" does not hold
 
-`P7_DECISION.md` §5.1 据 Remark B.4 写过:有效逆温度是 `|y|·β`,`|y|` 上千则
-`exp(L·β·r)` 把质量压到 argmax,**分布匹配退化成 reward 最大化**。
+`P7_DECISION.md` §5.1, based on Remark B.4, once wrote: the effective inverse temperature is `|y|·β`, and with `|y|` in the thousands
+`exp(L·β·r)` pushes the mass onto the argmax, **so distribution matching degenerates into reward maximization**.
 
-**数值检验推翻了它。** 极小点始终落在 **`c ≈ 0.93–1.15`,不是 `c = L`**。
-`c = L` 那个形式只在**把 `Z_t` 当自由常数**时才是零点;一旦要求 `Z_t` 按 Eq. 4 自洽,
-它就不是极小点了。**tilt 不随 `L` 膨胀。**
+**The numerical test overturns it.** The minimum always falls at **`c ≈ 0.93–1.15`, not `c = L`**.
+The `c = L` form is a zero only **when `Z_t` is treated as a free constant**; once `Z_t` is required to be self-consistent per Eq. 4,
+it is no longer the minimum. **The tilt does not inflate with `L`.**
 
-**因此 §5.1 的第 1 条后果(「β 不可直接迁,要迁 `L·β`」)作废。**
-`β` 确实不该直接取 8,但理由是 §1.4 的 clip 饱和,不是长度。
+**So consequence 1 of §5.1 ("β cannot be transferred directly, transfer `L·β`") is void.**
+`β` indeed should not be taken directly as 8, but the reason is the clip saturation in §1.4, not length.
 
-> 按 §3.3 的处方自查:这条当初是**从论文一句话推出来、没有跑过任何数**就写进文档的。
-> 推翻它只花了三十行代码。**代价是它在文档里存在了半天;
-> 如果它先进了实现,代价会是一次改错的 β 扫描。**
+> Self-check per the §3.3 prescription: this was written into the document **inferred from one sentence of the paper, without running any numbers**.
+> Overturning it took only thirty lines of code. **The cost was that it existed in the document for half a day;
+> had it gone into the implementation first, the cost would have been a β scan built on the error.**
 
-### 2.4 T4 · `Var(Z_t) = O(1/G)`,以及 16 → 5
+### 2.4 T4 · `Var(Z_t) = O(1/G)`, and 16 → 5
 
-在 `π_old = π_ref` 处测(训练起点的诚实类比;不动点处每条轨迹的 TB 目标恒等,
-`Var(Z_t) = 0` 且与 `G` 无关,在那里测不出东西):
+Measured at `π_old = π_ref` (an honest analogue of the training starting point; at the fixed point every trajectory's TB target is identical,
+`Var(Z_t) = 0` independent of `G`, so nothing can be measured there):
 
     G     Var(Z_t)   G*Var    sd
      2     2.3336    4.667   1.528
      4     1.1652    4.661   1.079
      5     0.9289    4.644   0.964   <- SpaceTools run_rl.sh
      8     0.5871    4.697   0.766
-    16     0.2913    4.661   0.540   <- 论文 Table 9
+    16     0.2913    4.661   0.540   <- paper Table 9
     32     0.1449    4.638   0.381
     64     0.0734    4.700   0.271
 
-`G*Var` 在 4.64–4.70 之间,**`O(1/G)` 数值成立**。
-**16 → 5:方差 3.17×,sd 1.78×。**
+`G*Var` stays between 4.64–4.70; **`O(1/G)` holds numerically**.
+**16 → 5: variance 3.17×, sd 1.78×.**
 
-### 2.5 T5 / T6 · 简并组的信号,与一处量纲失配
+### 2.5 T5 / T6 · The signal on degenerate groups, and a unit mismatch
 
-用真实量级的 logprob(`|y| ≈ 1258–1610`,每 token logprob ≈ −0.42):
+Using logprobs at real magnitudes (`|y| ≈ 1258–1610`, per-token logprob ≈ −0.42):
 
-| | `π_old = π_ref`(起点) | `π_old` 已漂移 |
+| | `π_old = π_ref` (starting point) | `π_old` has drifted |
 |---|---|---|
-| 简并组的 `g_i` | 全为 `0`,**组内极差 0** | `[11.66, 11.63, 11.68, 11.61, 11.70]`,极差 0.09 |
-| `Z_t`(Eq. 4,未归一化) | 4.800 | **16.460** |
+| `g_i` on a degenerate group | All `0`, **within-group range 0** | `[11.66, 11.63, 11.68, 11.61, 11.70]`, range 0.09 |
+| `Z_t` (Eq. 4, unnormalized) | 4.800 | **16.460** |
 | `(1/|y|)·log(π_old/π_ref)` | `[0, 0]` | `[−0.050, +0.040]` |
 | `β·r` | `[0, 8]` | `[0, 8]` |
 
-**两条:**
+**Two points:**
 
-1. **`P7_DECISION.md` §3.2 的说法要再收一次。** 简并组上 Eq. 8 的残差在**起点恒为 0**
-   (不是「非零」),漂移之后才非零 —— 而那点区分性**不来自奖励**,
-   来自 Eq. 4 与 Eq. 5 的归一化不一致。**它是不是有用的信号,正是判据 (iii) 要答的。**
-2. **量纲失配是真的,而且只在训练中途显形。** `Z_t`(Eq. 4)按 **`|y` 的和** 增长,
-   它要中心化的那一项却是 **每 token 均值**。起点上 `π_old = π_ref` 使这一项为 0,
-   `Z_t` 退化成 `mean(β·r)`,三项同量级,**问题完全看不见**;
-   一旦漂移,`|y|` 上千意味着两者相差约三个数量级。
+1. **The statement in `P7_DECISION.md` §3.2 has to be pulled back once more.** On degenerate groups the Eq. 8 residual is **always 0 at the starting point**
+   (not "nonzero"), and only becomes nonzero after drift — and that bit of discrimination **does not come from the reward**,
+   it comes from the inconsistent normalization between Eq. 4 and Eq. 5. **Whether it is a useful signal is exactly what criterion (iii) has to answer.**
+2. **The unit mismatch is real, and only shows up mid-training.** `Z_t` (Eq. 4) grows with **the sum over `|y`**,
+   while the term it is meant to center is a **per-token mean**. At the starting point `π_old = π_ref` makes that term 0,
+   `Z_t` reduces to `mean(β·r)`, the three terms are on the same order, and **the problem is completely invisible**;
+   once there is drift, `|y|` in the thousands means the two differ by about three orders of magnitude.
 
 ---
 
-## 3. 对 `P7_DECISION.md` 的净影响
+## 3. Net effect on `P7_DECISION.md`
 
-| 条目 | 处置 |
+| Item | Disposition |
 |---|---|
-| §5.1 后果 1「β 不可迁,要迁 `L·β`」 | **收回**(§2.3)。结论「β 不该取 8」保留,理由换成 clip 饱和 |
-| §5.1 后果 2「`|y|` 必须用 `response_mask` 的和」 | **保留并量化**:1.14× / 1.41× / **2.40×**,且按 benchmark 系统性不同 |
-| §3.2「简并组上 GFlowRL 出梯度而 GRPO 不出」 | **再收一次**:起点恒为 0;漂移后的区分性来自归一化不一致 |
-| 判据 (i) `Var(Z_t)` | **时序被改写**:起点无关紧要(被 clip 削掉),从 `π_old` 漂移开始才重要 |
-| 判据 (ii) 长度归一化 | **升级**:不是「不动点挪位」,是「不动点不存在」;地板随 `L` 增大 |
-| 判据 (iii) 简并组残差 | **变具体**:要比的对照已明确 —— 起点 0 / 漂移后来自量纲失配 |
-| 新增 | **clip 饱和率**应进正式报告:它决定 `β` 的取法,而且纯离线可测 |
+| §5.1 consequence 1 "β cannot be transferred, transfer `L·β`" | **Withdrawn** (§2.3). The conclusion "β should not be taken as 8" is kept, with the reason changed to clip saturation |
+| §5.1 consequence 2 "`|y|` must use the sum of `response_mask`" | **Kept and quantified**: 1.14× / 1.41× / **2.40×**, and differs systematically by benchmark |
+| §3.2 "on degenerate groups GFlowRL produces gradient while GRPO does not" | **Pulled back once more**: always 0 at the starting point; the discrimination after drift comes from inconsistent normalization |
+| Criterion (i) `Var(Z_t)` | **Timing rewritten**: does not matter at the starting point (clipped away), only matters once `π_old` starts drifting |
+| Criterion (ii) length normalization | **Upgraded**: not "the fixed point moved" but "the fixed point does not exist"; the floor grows with `L` |
+| Criterion (iii) degenerate-group residual | **Made concrete**: the control to compare against is now clear — 0 at the starting point / after drift it comes from the unit mismatch |
+| New | **Clip saturation rate** should go into the formal report: it determines how `β` is chosen, and it is measurable purely offline |
 
 ---
 
-## 4. 局限
+## 4. Limitations
 
-- **所有真实数据的数字来自单次采样运行(n=1),没有重复过。** 同 `P7_DECISION.md` §3 的标注。
-  第二组独立的 5 次采样现在有第三个用途:给 clip 饱和率也测一个散布。
-- **长度单位是字符,不是 token。** 比值可信、绝对值不可信;精确值在前向 pass 时免费得到。
-- **`p6/passk` 是 eval benchmark,不是训练分布 `spacetools-rlfulltools`。**
-  简并率、饱和率、长度分布在训练数据上都可能不同,无法从现有数据外推。
-- **§2.2 与 §2.3 是本文的数值 + 代数结论,不是论文原话。**
-  论文只说 length normalization 是 engineering trade-off、有 mild bias;
-  「不存在自洽零点」是我们加的,**应当被独立复核后再对外引用**。
-- 合成世界是 `|Y| = 64` 的离散空间,`log π = O(1)`;真实 LLM 上 `log π(y) = O(|y|)`。
-  T1–T3 只用得着可归一化的小世界,T5/T6 才换成真实量级 —— 两者不要混读。
+- **All real-data numbers come from a single sampling run (n=1), never repeated.** Same label as `P7_DECISION.md` §3.
+  The second independent set of 5 samples now has a third use: also measuring a spread for the clip saturation rate.
+- **The length unit is characters, not tokens.** Ratios are credible, absolute values are not; exact values come for free at the forward pass.
+- **`p6/passk` is an eval benchmark, not the training distribution `spacetools-rlfulltools`.**
+  Degeneracy rate, saturation rate and length distribution may all differ on the training data, and cannot be extrapolated from the existing data.
+- **§2.2 and §2.3 are this document's numerical + algebraic conclusions, not the paper's words.**
+  The paper only says length normalization is an engineering trade-off with mild bias;
+  "no self-consistent zero exists" is our addition, and **should be independently re-checked before being cited externally**.
+- The synthetic world is a discrete space with `|Y| = 64`, `log π = O(1)`; on a real LLM `log π(y) = O(|y|)`.
+  T1–T3 only need a small normalizable world; T5/T6 switch to real magnitudes — do not read the two together.

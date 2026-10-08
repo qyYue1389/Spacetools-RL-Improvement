@@ -55,18 +55,18 @@ print(f"hull_iou vs dumped score: max abs diff {max(diffs):.3e}  (n={len(diffs)}
 
 def m(key): return statistics.mean(r[key] for r in good) * 100
 print()
-print("=== 候选指标 (mean x 100) ===")
-print(f"  hull IoU        (现行)          {m('hull_iou'):8.2f}     <- P4 报的 53.36")
+print("=== candidate metrics (mean x 100) ===")
+print(f"  hull IoU        (current)       {m('hull_iou'):8.2f}     <- the 53.36 P4 reported")
 print(f"  chamfer score   (repo, t=0.15)  {m('chamfer'):8.2f}")
 print()
-print("=== 原始距离量 (归一化图像坐标) ===")
+print("=== raw distances (normalized image coordinates) ===")
 print(f"  symmetric chamfer distance  mean {statistics.mean(r['cham_raw'] for r in good):.4f}"
       f"  median {statistics.median(r['cham_raw'] for r in good):.4f}")
 print(f"  ordered per-corner distance mean {statistics.mean(r['ord_dist'] for r in good):.4f}"
       f"  median {statistics.median(r['ord_dist'] for r in good):.4f}")
 print()
-print("=== 阈值扫描:max(0, 1 - d/t) x 100 ===")
-print(f"{'t':>7} | {'chamfer(顺序无关)':>20} | {'ordered(尊重对应)':>20}")
+print("=== threshold sweep: max(0, 1 - d/t) x 100 ===")
+print(f"{'t':>7} | {'chamfer (order-free)':>20} | {'ordered (keeps correspondence)':>20}")
 for t in [0.05,0.08,0.10,0.12,0.15,0.18,0.20,0.25,0.30,0.40,0.50]:
     c = statistics.mean(max(0.0, 1 - r["cham_raw"]/t) for r in good)*100
     o = statistics.mean(max(0.0, 1 - r["ord_dist"]/t) for r in good)*100

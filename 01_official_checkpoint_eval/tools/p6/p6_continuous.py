@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""P6:两个连续指标 benchmark 的归因 —— `boppose` 与 `bopgrasp`。
+"""P6: attribution for the two continuous-metric benchmarks — `boppose` and `bopgrasp`.
 
-它们没有「对/错」,所以判据 A(深度规则)和判据 C(关系规则)都不适用。
-但**判据 B(原样透传)适用**,而且比在 pointing 上更干净:两个工具都把
-最终答案**直接以 2D 形式**放在返回文本里——
+They have no "right/wrong", so criterion A (depth rule) and criterion C (relation rule) do not apply.
+But **criterion B (verbatim pass-through) applies**, and more cleanly than on pointing: both tools put
+the final answer **directly in 2D form** in the returned text —
 
     bounding_box.compute_bbox -> "Corners in normalized image coordinates: [[...]]"
     grasp_generator.compute_grasp -> "Projected 2D gripper points: [(...)]"
 
-所以「模型的答案是不是工具输出的原样透传」可以逐位比对。答案是:是。
+So "is the model's answer a verbatim pass-through of the tool output" can be compared bit-for-bit. The answer is: yes.
 
-另外两件只能在这里做的事:
+Two other things that can only be done here:
 
-  * `boppose` 的零分与 **OBB 退化**(拟合出的框又扁又薄)相关;
-  * `bopgrasp` 的工具在 40/60 上失败,而模型有一个**完全确定的回退**:
-    把 grasp center 放在 roborefer 的检测点上。把两组按**位置**和**朝向**
-    分开量,可以解释 NCE 与 SR 为什么给出相反的排序。
+  * `boppose` zero scores correlate with **OBB degeneration** (the fitted box is flat and thin);
+  * the `bopgrasp` tool fails on 40/60, and the model has a **fully deterministic fallback**:
+    put the grasp center on roborefer's detection point. Measuring the two groups separately by **position** and **orientation**
+    explains why NCE and SR give opposite rankings.
 
-用法:
+Usage:
 
     python3 tools/p6/p6_continuous.py --parsed p4/parsed
 """
@@ -31,7 +31,7 @@ BBOX_2D = re.compile(r"Corners in normalized image coordinates:\s*(\[\[.*?\]\])"
 GRASP_2D = re.compile(r"Projected 2D gripper points:\s*(\[.*?\])", re.S)
 EXTENT = re.compile(r"Extent:\s*\[([^\]]*)\]")
 GRASP_FAIL = re.compile(r"No collision-free grasps|Top-down filtering removed all")
-TOL = 0.0015          # 工具打印三位小数,这是「逐位相同」的容差
+TOL = 0.0015          # the tool prints three decimals; this is the tolerance for "bit-for-bit identical"
 
 
 def calls(rec):
@@ -50,7 +50,7 @@ def same(a, b):
 
 
 def fisher(a, b, c, d):
-    """双尾 Fisher 精确检验。"""
+    """Two-sided Fisher exact test."""
     n = a + b + c + d
     tot = comb(n, a + c)
     obs = comb(a + b, a) * comb(c + d, c) / tot
@@ -94,12 +94,12 @@ def do_boppose(path):
         rows.append(dict(sid=r["sample_id"], score=r["score"], ext=ext))
 
     print(f"\n=== boppose  n={len(R)}")
-    print(f"  答案与 compute_bbox 的 2D 角点:**逐位同序 {exact}/{withtool}** · "
-          f"**同一集合(允许重排) {setsame}/{withtool}**")
-    print(f"  仅重排的样本:{reorder}")
-    print("  → 模型从不修改角点的**取值**。指标是凸包 IoU、对顺序不敏感,")
-    print("     所以那几次重排既不改分数,也说明它在试着满足题面的顺序要求而做不到。")
-    print(f"  **结论:boppose 的全部误差都是 bounding_box 的误差,推理侧零参与。**")
+    print(f"  answer vs compute_bbox 2D corners: **bit-for-bit, same order {exact}/{withtool}** · "
+          f"**same set (reordering allowed) {setsame}/{withtool}**")
+    print(f"  samples that were only reordered: {reorder}")
+    print("  → the model never changes the corner **values**. The metric is convex-hull IoU, insensitive to order,")
+    print("     so those few reorderings do not change the score, and they show it is trying to satisfy the ordering the question asks for and cannot.")
+    print(f"  **Conclusion: all of the boppose error is bounding_box error; the reasoning side contributes nothing.**")
 
     z = [x for x in rows if x["score"] == 0 and x["ext"]]
     nz = [x for x in rows if x["score"] > 0 and x["ext"]]
@@ -108,16 +108,16 @@ def do_boppose(path):
     if rz and rn:
         a = sum(1 for v in rz if v < 0.20); b = len(rz) - a
         c = sum(1 for v in rn if v < 0.20); d = len(rn) - c
-        print(f"\n  零分 {len(z)} 条 vs 非零 {len(nz)} 条,OBB 的最短边/最长边:")
-        print(f"    中位 {med(rz):.3f} vs {med(rn):.3f}")
-        print(f"    比值 < 0.20(框被拟合得又扁又薄):{a}/{a+b} vs {c}/{c+d}"
-              f"   Fisher 精确 p={fisher(a,b,c,d):.4f}")
-        print("  → 零分不是随机的:它跟着**点云拟合退化**走。")
+        print(f"\n  zero-score {len(z)} vs non-zero {len(nz)}, OBB shortest edge/longest edge:")
+        print(f"    median {med(rz):.3f} vs {med(rn):.3f}")
+        print(f"    ratio < 0.20 (box fitted flat and thin): {a}/{a+b} vs {c}/{c+d}"
+              f"   Fisher exact p={fisher(a,b,c,d):.4f}")
+        print("  → zero scores are not random: they follow **point-cloud fit degeneration**.")
 
 
 # --------------------------------------------------------------- bopgrasp
 def angle(v):
-    """夹爪轴的朝向:左指根 -> 右指根。返回 [0,180) 度。"""
+    """Orientation of the gripper axis: left finger base -> right finger base. Returns [0,180) degrees."""
     return math.degrees(math.atan2(v[2][1] - v[1][1], v[2][0] - v[1][0])) % 180
 
 
@@ -152,29 +152,29 @@ def do_bopgrasp(path):
                              dc=math.dist(ans[0], gt[0]), da=min(da, 180 - da)))
 
     print(f"\n=== bopgrasp  n={len(R)}")
-    print(f"  compute_grasp 给出 5 个点的 {withtool} 条,其中**逐位透传 {passthrough}**")
-    print(f"  工具走失败出口的 {len(R)-withtool} 条,模型把 grasp center 放在 "
-          f"roborefer 检测点上(±0.02)的:**{fellback}/{nfail}**")
-    print("  → 工具失败时模型不弃答,而是执行一个**完全确定的回退**:抓物体中心。")
+    print(f"  compute_grasp gave 5 points on {withtool}, of which **bit-for-bit pass-through {passthrough}**")
+    print(f"  tool took the failure exit on {len(R)-withtool}; model put the grasp center on the "
+          f"roborefer detection point (±0.02) in: **{fellback}/{nfail}**")
+    print("  → when the tool fails the model does not abstain; it runs a **fully deterministic fallback**: grasp the object center.")
 
     S = [x for x in rows if x["tool"]]
     F = [x for x in rows if not x["tool"]]
     if S and F:
-        print(f"\n  把两组按**位置**和**朝向**分开量(n={len(S)} vs {len(F)}):")
-        print(f"    {'':26}{'工具成功':>10}{'回退':>10}")
-        print(f"    {'grasp center 到 GT 距离':26}{med([x['dc'] for x in S]):10.3f}"
+        print(f"\n  measuring the two groups separately by **position** and **orientation** (n={len(S)} vs {len(F)}):")
+        print(f"    {'':26}{'tool success':>10}{'fallback':>10}")
+        print(f"    {'grasp center to GT dist':26}{med([x['dc'] for x in S]):10.3f}"
               f"{med([x['dc'] for x in F]):10.3f}")
-        print(f"    {'夹爪轴与 GT 夹角(度)':26}{med([x['da'] for x in S]):10.1f}"
+        print(f"    {'gripper axis vs GT angle (deg)':26}{med([x['da'] for x in S]):10.1f}"
               f"{med([x['da'] for x in F]):10.1f}")
-        print(f"    {'NCE 分数(越低越好)':26}{med([x['score'] for x in S]):10.2f}"
+        print(f"    {'NCE score (lower is better)':26}{med([x['score'] for x in S]):10.2f}"
               f"{med([x['score'] for x in F]):10.2f}")
         for t in (15, 30, 45):
-            print(f"      夹角 < {t}°:{sum(1 for x in S if x['da']<t)}/{len(S)}"
+            print(f"      angle < {t}°: {sum(1 for x in S if x['da']<t)}/{len(S)}"
                   f"  vs  {sum(1 for x in F if x['da']<t)}/{len(F)}")
-        print("\n  → **回退赢在位置、输在朝向**,这解释了 NCE 与 SR 为什么给出相反的排序:")
-        print("     NCE 主要由位置决定,SR 由朝向决定。")
-        print("  ⚠ 两组是不同的场景(工具在哪些场景失败并不随机),所以这是**有混淆的对比**,")
-        print("     不能读成「回退比工具好」。能读的是:**这个 RL 奖励对朝向不敏感。**")
+        print("\n  → **the fallback wins on position and loses on orientation**, which explains why NCE and SR give opposite rankings:")
+        print("     NCE is driven mainly by position, SR by orientation.")
+        print("  ⚠ the two groups are different scenes (which scenes the tool fails on is not random), so this is a **confounded comparison**,")
+        print("     and cannot be read as \"the fallback is better than the tool\". What can be read: **this RL reward is insensitive to orientation.**")
 
 
 def main():
@@ -183,8 +183,8 @@ def main():
     a = ap.parse_args()
     do_boppose(os.path.join(a.parsed, "boppose.jsonl"))
     do_bopgrasp(os.path.join(a.parsed, "bopgrasp.jsonl"))
-    print("\n注意:`p4/parsed/bopgrasp.jsonl` 里的 `correct` 字段**没有意义**——"
-          "它是 score>=0.5 的通用判据,而 bopgrasp 的 score 是 NCE,越低越好。")
+    print("\nNote: the `correct` field in `p4/parsed/bopgrasp.jsonl` is **meaningless** — "
+          "it is the generic score>=0.5 criterion, while the bopgrasp score is NCE, lower is better.")
 
 
 if __name__ == "__main__":

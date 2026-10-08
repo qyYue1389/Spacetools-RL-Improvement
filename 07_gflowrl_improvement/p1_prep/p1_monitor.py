@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""P1 监控:从 verl 的 rollout / eval dump(JSONL)算 pointing 题的改点率与 0.05 网格比例。
+"""P1 monitor: from verl rollout / eval dumps (JSONL), compute the point-override rate and the 0.05-grid fraction for pointing questions.
 
-训练时开 trainer.rollout_data_dir=<dir>,每步产出 <dir>/<step>.jsonl;eval dump 格式相同。
-判别口径与 P0(p2.sh)一致:答案坐标全部出现在工具返回坐标集合里(3 位小数精确匹配)= 透传,否则 = 改点。
+During training set trainer.rollout_data_dir=<dir>; each step writes <dir>/<step>.jsonl; eval dumps have the same format.
+Classification definition matches P0 (p2.sh): all answer coordinates appear in the set of coordinates returned by the tool (exact match to 3 decimals) = pass-through, otherwise = point override.
 
-用法:
-  p1_monitor.py [--window 10] [--upper] [--boot 2000] <dir 或 jsonl ...>
-    --window  每几步一个窗口(eval dump 没有步数,每个文件自成一窗)
-    --upper   强制透传:把改点样本换成最后一次工具返回的第一个点,用训练同款凸包判分重算正确率
+Usage:
+  p1_monitor.py [--window 10] [--upper] [--boot 2000] <dir or jsonl ...>
+    --window  steps per window (eval dumps have no step number; each file is its own window)
+    --upper   forced pass-through: replace point-override samples with the first point of the last tool return, and recompute accuracy with the same convex-hull scoring as training
 
-  列「工具点中」= 最后一次工具返回的第一个点落在 GT 凸包内的比例(只对 GT 为一串点的题)。
-  列「只问物体」= 调了工具的样本里,查询只写锚物体名(如 "cup")的比例 —— P1 的主监控量。
-  P0:SFT 34.4% · C′ 28.1% · GRPO 10.9%;Vacant 的差距全部由它决定,改点、工具点命中都是它的后果。
+  Column "tool pt hit" = fraction where the first point of the last tool return falls inside the GT convex hull (only for questions whose GT is a list of points).
+  Column "object-only query" = among samples that called a tool, fraction whose query names only the anchor object (e.g. "cup") — the primary monitoring metric of P1.
+  P0: SFT 34.4% · C′ 28.1% · GRPO 10.9%; the Vacant gap is entirely determined by it; point override and tool-point hits are both its consequences.
 """
 import argparse, glob, json, os, random, re, sys
 from collections import defaultdict
@@ -22,7 +22,7 @@ ANS = re.compile(r'<answer>(.*?)</answer>', re.S)
 EXCLUDE = re.compile(r'Grasp center|eight normalized|cuboid corners|yes or no|\(A\)', re.I)
 RS_VAC = re.compile(r'Pinpoint several points within the vacant space', re.I)
 CALL = re.compile(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', re.S)
-# 查询里带位置 / 空位描述 = target;只写锚物体名(如 "cup")= object。P0:object 查询工具点命中 0–3%,target 56%
+# query contains a location / vacant-space description = target; names only the anchor object (e.g. "cup") = object. P0: object queries tool-point hit 0–3%, target 56%
 TGT = re.compile(r'\b(point|vacant|space|spot|area|place|placing|free|empty|left of|right of|in front of|behind|above|below|next to)\b', re.I)
 
 
@@ -65,7 +65,7 @@ def classify(out):
         return 'no-answer', last, ans
     if not tool:
         return 'no-tool', last, ans
-    # 返回值里的工具点 = 最后一次有坐标的工具返回(强制透传时用它的第一个点)
+    # the tool point in the return value = the last tool return that has coordinates (forced pass-through uses its first point)
     return ('passthrough' if r3(ans) <= r3(tool) else 'modified'), last, ans
 
 
@@ -73,7 +73,7 @@ def grid05(ans):
     return bool(ans) and all(abs(v * 20 - round(v * 20)) < 1e-6 for p in ans for v in p)
 
 
-# ---- 与 verl/utils/reward_score/robos_all.py 相同的凸包判分(convex_hull,只看第一个点)
+# ---- same convex-hull scoring as verl/utils/reward_score/robos_all.py (convex_hull, first point only)
 def _cross(o, a, b):
     return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
 
@@ -167,15 +167,15 @@ def main():
         w = r['_file'] if step == 0 else f'step {step // a.window * a.window}-{step // a.window * a.window + a.window - 1}'
         ok = float(r.get('score', 0)) >= 0.5
         gt = pts(str(r['gts']))
-        # 凸包判分只对 RoboSpatial 式 GT(一串点)有意义;RefSpatial 的 GT 是单点,不算
+        # convex-hull scoring only makes sense for RoboSpatial-style GT (a list of points); RefSpatial GT is a single point, not counted
         hit = inside(tool[0], hull(gt)) if (tool and len(gt) >= 3) else None
         forced = hit if (k == 'modified' and hit is not None) else ok
         win[(w, cat)][r.get('input', '') + str(r.get('gts'))].append(
             (k, ok, grid05(ans) if k == 'modified' else False, forced, hit, query_type(r.get('output', ''))))
 
-    hdr = f'{"window":24s} {"cat":10s} {"prompts":>7s} {"rollouts":>8s} {"透传":>6s} {"改点":>6s} {"改点率":>7s} {"±SE":>6s} {"网格":>5s} {"透传对":>6s} {"改点对":>6s} {"工具点中":>7s} {"只问物体":>7s}'
+    hdr = f'{"window":24s} {"cat":10s} {"prompts":>7s} {"rollouts":>8s} {"pass-through":>6s} {"override":>6s} {"override rate":>7s} {"±SE":>6s} {"grid":>5s} {"pass-through correct":>6s} {"override correct":>6s} {"tool pt hit":>7s} {"object-only query":>7s}'
     if a.upper:
-        hdr += f' {"实际对":>6s} {"强制透传对":>9s}'
+        hdr += f' {"actual correct":>6s} {"forced pass-through correct":>9s}'
     print(hdr)
     for (w, cat), bp in sorted(win.items()):
         rows = [x for v in bp.values() for x in v]

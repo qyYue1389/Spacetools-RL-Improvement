@@ -45,10 +45,10 @@ def run(use_kl_loss, kl_loss_coef):
 
 
 cases = [
-    ("正确配置          use_kl_loss=True,  coef=0",    True,  0.0,   False),
-    ("忘了归零 coef     use_kl_loss=True,  coef=0.01", True,  0.01,  True),
-    ("忘开 use_kl_loss  use_kl_loss=False, coef=0",    False, 0.0,   True),
-    ("两个都错          use_kl_loss=False, coef=0.01", False, 0.01,  True),
+    ("correct config          use_kl_loss=True,  coef=0",    True,  0.0,   False),
+    ("forgot to zero coef     use_kl_loss=True,  coef=0.01", True,  0.01,  True),
+    ("forgot use_kl_loss      use_kl_loss=False, coef=0",    False, 0.0,   True),
+    ("both wrong              use_kl_loss=False, coef=0.01", False, 0.01,  True),
 ]
 
 ok = True

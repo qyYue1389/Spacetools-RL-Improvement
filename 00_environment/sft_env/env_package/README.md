@@ -1,114 +1,114 @@
-# SpaceTools SFT 环境包(2× A6000 / sm_80·sm_86)
+# SpaceTools SFT environment package (2× A6000 / sm_80·sm_86)
 
-**已通过完整的 30 步 SFT 训练验证**(2026-09-07):`run_sft.sh` 三个 Phase 全部走通,
-checkpoint 修复生效,退出码 0。
+**Validated by a complete 30-step SFT training run** (2026-09-07): all three Phases of `run_sft.sh` ran through,
+the checkpoint fix took effect, exit code 0.
 
-## 新机器上从这里开始
+## Start here on a new machine
 
-恢复完环境后,**先读 `/workspace/runpod-handoff/NEXT_MACHINE.md`** ——
-那是给新机器准备的任务书(4 卡跑全量),含已验证的数值、必踩的坑、
-以及 `TASK.md` 里已被实测推翻的几条判断。
+After restoring the environment, **read `/workspace/runpod-handoff/NEXT_MACHINE.md` first** —
+it is the task brief prepared for the new machine (full run on 4 GPUs), with the validated numbers, the pitfalls you will hit,
+and several judgments in `TASK.md` that measurements have overturned.
 
-背景细节在 `REPORT_A.md`(阶段 A–C 的完整记录)。
+Background details are in `REPORT_A.md` (the full record of stages A–C).
 
-## 用法
+## Usage
 
 ```bash
-sudo bash RESTORE.sh          # 前置检查 → 校验和 → 解包 → 验收,一条龙
+sudo bash RESTORE.sh          # pre-checks → checksums → unpack → acceptance check, all in one go
 ```
 
-`RESTORE.sh` 任何一项前置检查不过都会停,不会半途解一半。解完自动跑 `VERIFY.sh`。
-单独复验:`bash VERIFY.sh`。
+`RESTORE.sh` stops if any pre-check fails; it never unpacks halfway. After unpacking it runs `VERIFY.sh` automatically.
+To re-verify on its own: `bash VERIFY.sh`.
 
-## 目标机要求
+## Target machine requirements
 
 | | |
 |---|---|
-| 架构 | x86_64 Linux |
-| GPU | compute_cap **8.0 或 8.6**(A100 / A6000 / A4000 / A5000 / 3090) |
-| 驱动 | ≥ 525(本包在 580.159.03 上构建) |
+| Architecture | x86_64 Linux |
+| GPU | compute_cap **8.0 or 8.6** (A100 / A6000 / A4000 / A5000 / 3090) |
+| Driver | ≥ 525 (this package was built on 580.159.03) |
 | glibc | ≥ 2.32 |
-| CUDA toolkit | **不需要** —— 运行时库在包内 `site-packages/nvidia/` |
-| 磁盘 | `/opt` 所在盘 ≥ 12 GB |
+| CUDA toolkit | **not needed** — the runtime libraries are in the package under `site-packages/nvidia/` |
+| Disk | disk holding `/opt` ≥ 12 GB |
 
-**H100(9.0)和 Blackwell 跑不了**:包内 flash-attn 只有 `sm_80` 的 cubin,
-没有 PTX 回退(`FLASH_ATTN_CUDA_ARCHS=80`,gencode 只给 `code=sm_80`)。
-换那些卡要重编 flash-attn。`RESTORE.sh` 会在解包前拦下。
+**H100 (9.0) and Blackwell cannot run it**: the flash-attn in the package only has `sm_80` cubins,
+with no PTX fallback (`FLASH_ATTN_CUDA_ARCHS=80`, gencode only gives `code=sm_80`).
+Those GPUs require rebuilding flash-attn. `RESTORE.sh` blocks them before unpacking.
 
-跑 SFT 还有显存要求:实测 2 卡 `per_device=2` 峰值 **48.5 GiB**,所以需要 48 GB 级别的卡。
-A4000(16 GB)能加载这个环境,但跑不了这个训练。
+Running SFT also has a GPU memory requirement: measured peak with 2 GPUs `per_device=2` is **48.5 GiB**, so 48 GB-class GPUs are needed.
+An A4000 (16 GB) can load this environment, but cannot run this training.
 
-## 卡数
+## GPU count
 
-`run_sft.sh` 按**可见 GPU 数自动推导** `per_device` / `ga`,保证
-`per_device x ga x 卡数 = 8`(论文口径)。启动时打印一行确认:
+`run_sft.sh` **derives** `per_device` / `ga` **automatically from the number of visible GPUs**, guaranteeing
+`per_device x ga x num GPUs = 8` (the paper's definition). At startup it prints one line to confirm:
 
 ```
-GPU 数 4 · per_device=2 · ga=1 · 全局 batch 8 ✓
+GPUs 4 · per_device=2 · ga=1 · global batch 8 ✓
 ```
 
-| 卡数 | `per_device` | `ga` | 余量(48 GB 卡) | 预估全量 |
+| GPUs | `per_device` | `ga` | Headroom (48 GB GPU) | Estimated full run |
 |---|---|---|---|---|
-| 2 | 2 | 2 | 0.6 GiB(实测,偏紧) | 9.3 h |
+| 2 | 2 | 2 | 0.6 GiB (measured, tight) | 9.3 h |
 | **4** | 2 | 1 | **~10 GiB** | **~5–6 h** |
 | 8 | 1 | 1 | ~15 GiB | ~3–4 h |
 
-**3 / 5 / 6 / 7 卡会被拒绝启动** —— 8 不能被它们整除,凑不出论文的全局 batch,
-而这个 checkpoint 是后续 RL 两臂对比的共同起点,口径不能动。
+**3 / 5 / 6 / 7 GPUs are refused at startup** — 8 is not divisible by them, so the paper's global batch cannot be formed,
+and this checkpoint is the shared starting point for the subsequent RL two-arm comparison, so the definition must not change.
 
-卡数由 `CUDA_VISIBLE_DEVICES` 决定(上游的 `NUM_GPUS` 是空操作)。
-数据集只有 4 个分片,超过 4 卡会有 rank 分不到数据。
+The GPU count is determined by `CUDA_VISIBLE_DEVICES` (upstream's `NUM_GPUS` is a no-op).
+The dataset has only 4 shards; with more than 4 GPUs some ranks get no data.
 
-## ⚠️ 路径不能改
+## ⚠️ Paths cannot be changed
 
-`llamafactory` 是 editable 安装,`site-packages/_editable_impl_llamafactory.pth`
-里写死了 `/workspace/SpaceTools-SFT/src`。conda 环境里的 shebang 也都是
-`/opt/conda-st/...` 的绝对路径。所以两个位置都必须原样恢复:
+`llamafactory` is an editable install, and `site-packages/_editable_impl_llamafactory.pth`
+hard-codes `/workspace/SpaceTools-SFT/src`. The shebangs in the conda environment are also all absolute paths
+under `/opt/conda-st/...`. So both locations must be restored exactly as they were:
 
 ```
-/opt/conda-st/                    conda + spacetools-sft 环境(9.3 GB)
-/workspace/SpaceTools-SFT/        LLaMA-Factory fork,含 run_sft.sh(145 MB)
-/workspace/SpaceTools/            上游仓库(6 MB)
-/workspace/wheels/                自编的 flash-attn wheel(57 MB)
-/workspace/runpod-handoff/        TASK.md · setup.sh · 报告 · 各种验收脚本
+/opt/conda-st/                    conda + spacetools-sft environment (9.3 GB)
+/workspace/SpaceTools-SFT/        LLaMA-Factory fork, contains run_sft.sh (145 MB)
+/workspace/SpaceTools/            upstream repo (6 MB)
+/workspace/wheels/                self-built flash-attn wheel (57 MB)
+/workspace/runpod-handoff/        TASK.md · setup.sh · reports · various acceptance scripts
 ```
 
-`/workspace` 只是普通目录,目标机没有的话 `RESTORE.sh` 会建。
+`/workspace` is just an ordinary directory; if the target machine does not have it, `RESTORE.sh` creates it.
 
-## 包里没有的
+## Not in the package
 
-SFT 数据(`siyich/spacetools-sft`,7463 个文件 / 5.89 GiB)和 base model
-(`Qwen/Qwen2.5-VL-3B-Instruct`,~8 GB)不在包内 —— `run_sft.sh` 会自动下。
+The SFT data (`siyich/spacetools-sft`, 7463 files / 5.89 GiB) and the base model
+(`Qwen/Qwen2.5-VL-3B-Instruct`, ~8 GB) are not in the package — `run_sft.sh` downloads them automatically.
 
-⚠️ 上游的 `snapshot_download` 在这个数据集上只有 ~0.8 MB/s(并发没生效,进程里只有 2 个线程),
-要跑 1–2 小时。包内的 `runpod-handoff/prefetch.py` 是并行替代品,21 分钟下完并逐文件核对大小。
+⚠️ Upstream's `snapshot_download` only gets ~0.8 MB/s on this dataset (concurrency does not take effect; there are only 2 threads in the process),
+so it takes 1–2 hours. The package's `runpod-handoff/prefetch.py` is a parallel replacement that finishes in 21 minutes and checks the size of every file.
 
-## 环境内容
+## Environment contents
 
 ```
 python 3.11 · torch 2.9.1+cu128 · cuda 12.8
-torchvision 0.24.1+cu128 · torchaudio 2.9.1+cu128     ← 必须与 torch 同版本
-transformers 4.57.1 · flash-attn 2.8.3.post1(自编,仅 sm_80)
-deepspeed 0.19.6 · llamafactory 0.9.5.dev0(editable)
+torchvision 0.24.1+cu128 · torchaudio 2.9.1+cu128     ← must be the same release as torch
+transformers 4.57.1 · flash-attn 2.8.3.post1 (self-built, sm_80 only)
+deepspeed 0.19.6 · llamafactory 0.9.5.dev0 (editable)
 accelerate 1.11.0 · trl 0.24.0 · peft 0.18.1 · datasets 4.0.0
 ```
 
-## 相对上游 setup_envs.sh 的偏离
+## Deviations from upstream setup_envs.sh
 
-| 偏离 | 影响 |
+| Deviation | Impact |
 |---|---|
-| `FLASH_ATTN_CUDA_ARCHS=80`(上游默认 `80;90;100;120`) | 仅 sm_80 cubin、无 PTX;编译量和内存降到 1/4 |
-| 增补 `ninja setuptools wheel` | 构建期工具;缺 `ninja` 时 flash-attn 退回串行编译 |
-| **钉死 `torchvision` / `torchaudio`** | **修正**,见下 |
-| 依赖上界补全 + `transformers` 二次钉死 | **修正**,见下 |
+| `FLASH_ATTN_CUDA_ARCHS=80` (upstream default `80;90;100;120`) | sm_80 cubins only, no PTX; compile volume and memory reduced to 1/4 |
+| Added `ninja setuptools wheel` | build-time tools; without `ninja` flash-attn falls back to serial compilation |
+| **Pinned `torchvision` / `torchaudio`** | **fix**, see below |
+| Completed dependency upper bounds + second pin of `transformers` | **fix**, see below |
 
-两处"修正"都是在补上游的漏,不是我们引入的偏离 —— 上游 `setup_envs.sh` 对传递依赖不设约束:
+Both "fixes" plug upstream gaps; they are not deviations we introduced — upstream `setup_envs.sh` puts no constraints on transitive dependencies:
 
-- **`transformers`** 会被顶成 5.x。**静默生效**,产出与论文口径不同的 π_ref
-- **`torchaudio`** 会被解析到 2.11.0(给 torch 2.11 编的)。`llamafactory/data/mm_plugin.py`
-  会 `import torchaudio` → `undefined symbol: torch_library_impl`,训练直接起不来
+- **`transformers`** gets pushed up to 5.x. **It takes effect silently** and produces a π_ref different from the paper's definition
+- **`torchaudio`** resolves to 2.11.0 (built for torch 2.11). `llamafactory/data/mm_plugin.py`
+  does `import torchaudio` → `undefined symbol: torch_library_impl`, and training fails to start
 
-`VERIFY.sh` 现在两类都查:钉版本 + 走训练真实的导入链。
-后者是必要的 —— 光 `import llamafactory` 抓不到 torchaudio 的问题,它是惰性的。
+`VERIFY.sh` now checks both kinds: pinned versions + the real import chain used by training.
+The latter is necessary — a bare `import llamafactory` does not catch the torchaudio problem, because it is lazy.
 
-四项都不改变训练的数学结果。
+None of the four changes the mathematical result of training.

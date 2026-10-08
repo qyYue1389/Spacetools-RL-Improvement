@@ -1,591 +1,591 @@
-# P6 / P7 GPU 开机结果
+# P6 / P7 GPU session results
 
-> 机器:4×A100-SXM4-80GB(sm_80),driver 570.195.03,CUDA 12.8,gcc 13.3。
-> 数据从旧的 4×A100-SXM4-40GB 拷贝而来,路径保持在 `/workspace/` 下不变。
-> 开始于 2026-08-29,记录随实验推进续写。
-> 交接文档:`records/P6_GPU_HANDOFF.md`。
+> Machine: 4×A100-SXM4-80GB (sm_80), driver 570.195.03, CUDA 12.8, gcc 13.3.
+> Data was copied over from the old 4×A100-SXM4-40GB; paths stay unchanged under `/workspace/`.
+> Started 2026-08-29; the record is appended to as experiments progress.
+> Handoff doc: `records/P6_GPU_HANDOFF.md`.
 
-## 状态一览
+## Status overview
 
-| 实验 | 状态 | 结论 |
+| Experiment | Status | Conclusion |
 |---|---|---|
-| go/no-go 迁移验收 | **通过** | 见 §1。第 4 步经诊断后判通过,并牵出偏离 `[23]` |
-| A. pointing 工具对比 | **完成** | Molmo 整体差 14.61 pp;真正的发现是互补性 +10.83 pp(oracle) |
-| B. 深度工具对比 | **半完成** | 回归校验通过;**换工具那一半没做**——只有一个深度工具 |
-| F. fp32 对照 | **完成,结论已收回** | 单次 107 曾判「排除」,补跑两次得 105/105。见 §4 |
-| G. robospatial 抽样 | **完成,假设被推翻** | 上界不饱和,「论文报的是上界」不成立。见 §5b |
-| C. pass@k | **完成** | 排除了 Pose 的「解码方式」候选;VQA 有 43.9% 的题目在采样间摇摆。见 §6 |
-| D. P7 可行性测算 | **完成(解析测算)** | 卡数不够,约差 8 倍;按论文配置不现实。见 §7 |
+| go/no-go migration acceptance check | **Passed** | See §1. Step 4 was judged a pass after diagnosis, and it surfaced deviation `[23]` |
+| A. pointing tool comparison | **Done** | Molmo is 14.61 pp worse overall; the real finding is complementarity, +10.83 pp (oracle) |
+| B. depth tool comparison | **Half done** | Regression check passed; **the tool-swap half was not done** — there is only one depth tool |
+| F. fp32 control | **Done, conclusion retracted** | A single run of 107 was once judged "ruled out"; two extra runs gave 105/105. See §4 |
+| G. robospatial resampling | **Done, hypothesis overturned** | The upper bound is not saturated; "the paper reports the upper bound" does not hold. See §5b |
+| C. pass@k | **Done** | Ruled out the "decoding method" candidate for Pose; 43.9% of VQA questions swing between samples. See §6 |
+| D. P7 feasibility estimate | **Done (analytical estimate)** | Not enough GPUs, short by about 8×; the paper's configuration is not realistic. See §7 |
 
 ---
 
-## 1. 迁移验收
+## 1. Migration acceptance check
 
-前三步直接通过:架构 sm_80(不需重编任何东西)、五个 conda 环境全部可用、
-`pointnet2_ops` 的 sm_80 cubin 在本卡**实跑通过**(比 `cuobjdump` 更强的证据)、
-七工具端到端 `12 checks: 12 passed, 0 warned, 0 failed`。
+The first three steps passed outright: architecture sm_80 (nothing needs recompiling), all five conda environments usable,
+the sm_80 cubin of `pointnet2_ops` **actually ran successfully** on this GPU (stronger evidence than `cuobjdump`),
+seven-tool end-to-end `12 checks: 12 passed, 0 warned, 0 failed`.
 
-权重完整:Molmo-7B-D 30 GB(fp32)7 个分片齐全,无断裂符号链接、无 `.incomplete`
-——跨机拷 HF 缓存最常见的翻车点没有发生。卷占用 141 GB,与交接文档记录吻合。
+Weights complete: Molmo-7B-D 30 GB (fp32), all 7 shards present, no broken symlinks, no `.incomplete`
+— the most common failure point when copying an HF cache across machines did not happen. Volume usage 141 GB, matching the handoff doc.
 
-### 第 4 步:106/124,落在文档写的 107–109 带外
+### Step 4: 106/124, outside the 107–109 band in the doc
 
     run1 40G bf16 gmu=.5   107      run5 80G bf16 gmu=.25  108
     run2 40G bf16 gmu=.5   109      run6 80G bf16 gmu=.25  109
     run4 80G bf16 gmu=.5   106      run7 80G FP32 gmu=.25  107
 
-`--strict` 本身通过,六项健康指标全零,mean turns 3.13 与 P4 记录相同。
+`--strict` itself passed, all six health metrics zero, mean turns 3.13, same as recorded in P4.
 
-**判为通过,依据是稳定上界而不是单次落带。** 六次合并:始终对 99 · 始终错 12 ·
-翻转 13 · **上界 112/124 = 90.32%**,与论文、与 A6000 / A100-40G 完全相同。
-12 个「始终错」的硬核在每一次运行里都复现。
+**Judged a pass, based on the stable upper bound rather than a single run landing in the band.** Six runs merged: always correct 99 · always wrong 12 ·
+flip 13 · **upper bound 112/124 = 90.32%**, exactly the same as the paper and as A6000 / A100-40G.
+The 12 "always wrong" hard core samples reproduce in every single run.
 
-> **上界要按抽样次数读,不要按平台读。** 112 是六次跨平台合并才有的;
-> 80 GB 单独四次是 111/124,本地现存的 40 GB 两次也是 111/124。
-> 文档写的 107–109 窄带来自 n=3,是个脆弱判据——五次 bf16 的实际范围是 106–109。
+> **Read the upper bound by number of samples drawn, not by platform.** 112 only appears when six runs across platforms are merged;
+> the four 80 GB runs alone give 111/124, and the two 40 GB runs still available locally also give 111/124.
+> The narrow 107–109 band in the doc comes from n=3 and is a fragile criterion — the actual range over five bf16 runs is 106–109.
 
-### 由此牵出的偏离 [23]
+### Deviation [23], surfaced by this
 
-三张工具卡的显存峰值与旧机**逐字节相同**(Molmo 34.6、DepthPro 卡 25.7),
-只有策略卡变了:**25.6 → 46.8 GB**。`gpu_memory_utilization` 是占**整卡**的
-静态比例,0.5 在 40 GB 上是 20 GB 池、在 80 GB 上是 40 GB 池。
+The GPU memory peaks of the three tool GPUs are **byte-for-byte identical** to the old machine (Molmo 34.6, DepthPro GPU 25.7);
+only the policy GPU changed: **25.6 → 46.8 GB**. `gpu_memory_utilization` is a static fraction of the **whole GPU**;
+0.5 is a 20 GB pool on 40 GB and a 40 GB pool on 80 GB.
 
-池子大小改变 batch 组成 → 浮点归约顺序 → 接近平局的样本翻转,
-这正是本项目已认定的运行间变动的唯一机制。**所以 80 GB 对策略侧不是数值中性的替换**,
-交接文档 §1.5 说该旋钮「只是更宽松」——对「装得下」是对的,漏掉了数值后果。
+Pool size changes batch composition → floating-point reduction order → near-tie samples flip;
+this is exactly the one mechanism of run-to-run variation this project has already established. **So 80 GB is not a numerically neutral substitution on the policy side.**
+Handoff doc §1.5 says the knob is "just more relaxed" — correct for "does it fit", but it misses the numerical consequences.
 
-判定实验(gmu 0.5→0.25,策略卡峰值回到 30.4 GB):两次得 108、109,均在带内;
-run4 破掉的三个样本(32、72、100)全部回来。**但因果未建立**:0.5 侧 n=1。
-更硬的一条配置相关信号是 **样本 69 在两次 0.25 里都顶到 8 轮上限、在 0.5 下不顶**
-——分数差一两个可以是抽样,同一样本在同一配置下重复顶轮数是系统性的。
+Decisive experiment (gmu 0.5→0.25, policy GPU peak back to 30.4 GB): two runs gave 108 and 109, both in the band;
+the three samples run4 broke (32, 72, 100) all came back. **But causality is not established**: n=1 on the 0.5 side.
+A harder configuration-dependent signal is that **sample 69 hits the 8-turn cap in both 0.25 runs and does not under 0.5**
+— a score difference of one or two can be sampling, but the same sample repeatedly hitting the turn cap under the same configuration is systematic.
 
-同时说明 **0.25 并不能把 80 GB 还原成 40 GB**:P4 全量 2121 样本 `hit_max_turns=0`,
-而 0.25 下 blinkdepth 一个 benchmark 就有 1–2 个。逐位复现本就不存在,能复现的是上界。
+This also shows that **0.25 cannot restore 80 GB to 40 GB**: the full P4 run of 2121 samples had `hit_max_turns=0`,
+while under 0.25 the blinkdepth benchmark alone has 1–2. Bit-for-bit reproduction never existed in the first place; what reproduces is the upper bound.
 
-**决定:80 GB 上的 policy 运行用 `gpu_memory_utilization=0.25`**,理由是复现 P4 的
-池子大小,而非「0.5 已被证明更差」。`EVAL_GPUS` 不动(文档 §1.5 的告诫成立)。
+**Decision: policy runs on 80 GB use `gpu_memory_utilization=0.25`**, the reason being to reproduce P4's
+pool size, not "0.5 has been shown to be worse". `EVAL_GPUS` stays unchanged (the warning in doc §1.5 holds).
 
 ---
 
-## 2. 实验 A:pointing 工具对比
+## 2. Experiment A: pointing tool comparison
 
-### 回归校验(必须先过,否则不解读任何差值)
+### Regression check (must pass first, otherwise no difference is interpreted)
 
-    benchmark        n   本次 roborefer   P4 基线        差
+    benchmark        n   roborefer now    P4 baseline    diff
     reflocation     98   55 (56.12%)     53 (54.08%)    +2
     refplacement   100   59 (59.00%)     58 (58.00%)    +1
     refunseen       77   37 (48.05%)     37 (48.05%)     0
     robospatial    122   60 (49.18%)     62 (50.82%)    -2
-    合计           397  211 (53.15%)    210 (52.90%)    +1
+    total          397  211 (53.15%)    210 (52.90%)    +1
 
-逐 benchmark 最大差 2 个样本、方向有正有负,在文档「差一两个正常」的容差内。**通过。**
-(**但通过的理由不是文档说的那个**——见下「推翻了回归校验的通过理由」。)
+Max per-benchmark difference is 2 samples, in both directions, within the doc's tolerance of "a difference of one or two is normal". **Passed.**
+(**But the reason it passed is not the one the doc gives** — see "But this overturns the reason the regression check passed" below.)
 
-> 基线是**我们自己 P4 那次运行**的逐条对错(probes 的 `baseline_correct`),
-> 不是论文。回归校验要回答的是「离线通路有没有复现完整流水线」,
-> 不是「有没有复现论文」;用论文当基线会把通路 bug 和复现差距混在一起。
+> The baseline is the per-item correctness of **our own P4 run** (the probes' `baseline_correct`),
+> not the paper. The regression check has to answer "does the offline path reproduce the full pipeline",
+> not "does it reproduce the paper"; using the paper as baseline would mix path bugs with the reproduction gap.
 >
-> 文档 §3 的基线表把 `reflocation` 写成 55.10%,与它自己的合计 52.90% (210/397)
-> 不自洽:53+58+37+62 = 210,所以该行应为 53/98 = 54.08%。**探测文件是对的,
-> 文档那一行是笔误。**
+> The baseline table in doc §3 writes `reflocation` as 55.10%, which is inconsistent with its own total of 52.90% (210/397):
+> 53+58+37+62 = 210, so that row should be 53/98 = 54.08%. **The probe file is correct;
+> that row of the doc is a typo.**
 
-唯一的 `工具失败 1`(reflocation#6)不是失败:RoboRefer 合法返回
-`Detected 0 instance(s)`,而该样本基线本就是 `None`/incorrect,与 P4 一致。
+The only `tool failure 1` (reflocation#6) is not a failure: RoboRefer legitimately returned
+`Detected 0 instance(s)`, and that sample's baseline is `None`/incorrect anyway, consistent with P4.
 
-### Molmo 对比
+### Molmo comparison
 
-    benchmark        n   Molmo         RoboRefer      差值
+    benchmark        n   Molmo         RoboRefer      diff
     reflocation     98   57 (58.16%)   53 (54.08%)    +4.08
     refplacement   100   37 (37.00%)   58 (58.00%)   -21.00
     refunseen       77   28 (36.36%)   37 (48.05%)   -11.69
     robospatial    122   30 (24.59%)   62 (50.82%)   -26.23
-    合计           397  152 (38.29%)  211 (53.15%)   -14.61
+    total          397  152 (38.29%)  211 (53.15%)   -14.61
 
-工具失败 0——Molmo 每条都给出了点,没有拒答。
+Tool failures 0 — Molmo gave a point for every item, no refusals.
 
-**`reflocation` 上的 +4.08 是噪声,不是发现**:McNemar 判别对 18 vs 16,p=0.86。
-其余三项显著更差(refplacement p=0.0002、robospatial p<0.0001、合计 p=1.05e-06)。
+**The +4.08 on `reflocation` is noise, not a finding**: McNemar discordant pairs 18 vs 16, p=0.86.
+The other three are significantly worse (refplacement p=0.0002, robospatial p<0.0001, total p=1.05e-06).
 
-> 与论文不可比:论文 Table 2 里 Molmo-7B 单跑 RefSpatial 是 0.00,这里是 36–58%。
-> 论文测端到端做完整任务,这里只替换 pointing 一步、其余流程照旧。
-> 这正是这条离线通路的价值——把「工具好不好」从「策略会不会用工具」里剥出来。
+> Not comparable with the paper: in the paper's Table 2, Molmo-7B alone scores 0.00 on RefSpatial; here it is 36–58%.
+> The paper measures end-to-end on the full task; here only the pointing step is replaced and the rest of the flow is unchanged.
+> That is exactly the value of this offline path — it separates "is the tool good" from "can the policy use the tool".
 
-### 真正的发现:两个工具高度互补
+### The real finding: the two tools are highly complementary
 
-    正确率  RoboRefer 53.15%  Molmo 38.29%  交集 27.46%
-    并集(逐样本 oracle 选工具) 63.98%   相对 RoboRefer +10.83 pp(43 个样本)
+    accuracy  RoboRefer 53.15%  Molmo 38.29%  intersection 27.46%
+    union (per-sample oracle tool choice) 63.98%   vs RoboRefer +10.83 pp (43 samples)
 
-    仅 Molmo 对 / 仅 RoboRefer 对
-      reflocation   18 / 16      <- 两个工具在超过三分之一的样本上不一致,只是恰好抵消
+    only Molmo correct / only RoboRefer correct
+      reflocation   18 / 16      <- the two tools disagree on over a third of samples; it just happens to cancel out
       refplacement   6 / 28
       refunseen      9 / 18
       robospatial   10 / 40
 
-**即使 Molmo 整体差 14.61 pp,它仍答对了 43 个 RoboRefer 答错的样本。**
-这改变了 P6 离线归因的建议方向:原结论是「RoboRefer 独占 53.4% 错题,先换 pointing 工具」,
-实测是**整体换掉更差**,但**逐样本选择有 +10.83 pp**。动作应是「补上」而非「换掉」
-——router/ensemble,或引入更强的第三个工具。
+**Even though Molmo is 14.61 pp worse overall, it still got 43 samples right that RoboRefer got wrong.**
+This changes the direction of P6's offline attribution recommendation: the original conclusion was "RoboRefer alone accounts for 53.4% of wrong answers, swap the pointing tool first";
+measured, **swapping it out wholesale is worse**, but **per-sample selection gives +10.83 pp**. The action should be "add" rather than "replace"
+— router/ensemble, or bring in a stronger third tool.
 
-**这是 oracle 上界**,假设已知哪个工具对(而那需要答案),与文档对 grasp 那个 33 pp
-的告诫同类,是有偏上界、不是可实现收益。但 43 个样本的量级说明「工具间选择」值得单列实验。
+**This is an oracle upper bound**: it assumes we know which tool is right (which requires the answer). Same kind of caveat as the doc's warning about the 33 pp
+for grasp: a biased upper bound, not an achievable gain. But a magnitude of 43 samples says "choosing between tools" deserves its own experiment.
 
-### 补测:+10.83 pp 是真互补,不是「两次抽取胜过一次」
+### Follow-up: +10.83 pp is real complementarity, not "two draws beat one"
 
-**并集与上界是同一个结构**(实验 G 的教训)。上面的并集是两个工具**各跑一次**算的,
-所以那 43 个「仅 Molmo 对」里可能混着「两次抽取本就胜过一次」的噪声。
-补跑一次 RoboRefer 求自并集作基准:
+**Union and upper bound are the same structure** (the lesson from experiment G). The union above was computed from **one run each** of the two tools,
+so the 43 "only Molmo correct" could include noise from "two draws beat one anyway".
+One extra RoboRefer run, with its self-union as the reference:
 
-    RoboRefer run1        211/397        RoboRefer 自并集   211  <- 等于单次
+    RoboRefer run1        211/397        RoboRefer self-union   211  <- equals a single run
     RoboRefer run2        211/397        RoboRefer ∪ Molmo  254
-    两次分数不同的样本      0
-    两次返回点不同的样本    0
+    samples with different scores across runs      0
+    samples with different returned points         0
 
-    自并集的增益(纯噪声)  0 个样本  +0.00 pp
-    Molmo 的真实边际      43 个样本  +10.83 pp   <- 与旧口径相同
+    self-union gain (pure noise)  0 samples  +0.00 pp
+    Molmo's true margin          43 samples  +10.83 pp   <- same as the old definition
 
-**该通路上 RoboRefer 逐位确定**,自并集加不出任何东西,所以 +10.83 pp 原样成立,
-且现在是实测的而非假设的。
+**RoboRefer is bit-for-bit deterministic on this path**; the self-union adds nothing, so +10.83 pp stands as is,
+and it is now measured rather than assumed.
 
-### 但这推翻了回归校验的通过理由
+### But this overturns the reason the regression check passed
 
-先前把回归校验的 +2/+1/0/−2 归因为「RoboRefer 自身的轻微非确定性」
-(交接文档 §3 也这么写:「RoboRefer 本身有轻微非确定性,差一两个样本正常」)。
-**两次逐位相同证明该解释是错的。**
+Earlier, the regression check's +2/+1/0/−2 was attributed to "RoboRefer's own slight non-determinism"
+(handoff doc §3 says the same: "RoboRefer itself has slight non-determinism, a difference of one or two samples is normal").
+**Two bit-for-bit identical runs prove that explanation wrong.**
 
-真正的成因是**跨硬件漂移**:
+The real cause is **cross-hardware drift**:
 
-    397 条中,返回点与 P4 基线不同的  226 条(57.1%)
-    位移(归一化坐标)  中位数 0.0040 · 均值 0.0127 · 最大 0.3506
+    of 397 items, returned point differs from P4 baseline  226 (57.1%)
+    displacement (normalized coords)  median 0.0040 · mean 0.0127 · max 0.3506
                        < 0.005: 137/226 · < 0.02: 207/226
 
-    逐 benchmark  reflocation 49/98 · refplacement 73/100 · refunseen 52/77 · robospatial 52/122
+    per benchmark  reflocation 49/98 · refplacement 73/100 · refunseen 52/77 · robospatial 52/122
 
-三条证据锁死成因:五个差异样本的 `obj_name` 与 P4 dump 里策略实际发出的查询串
-**逐字相同**;本次两跑 397/397 逐位一致;而与 P4 相比 **57% 的点有微小位移**。
-即 **RoboRefer 在给定硬件+软件下确定,换硬件后输出整体微移**——
-与策略侧 KV 池(偏离 `[23]`)同类的机制,只是发生在工具里。
+Three pieces of evidence pin down the cause: the `obj_name` of the five differing samples is **verbatim identical** to the query string the policy actually issued in the P4 dump;
+this session's two runs agree bit-for-bit on 397/397; and compared with P4, **57% of the points moved slightly**.
+That is, **RoboRefer is deterministic on a given hardware + software stack; on different hardware its output shifts slightly across the board** —
+the same kind of mechanism as the policy-side KV pool (deviation `[23]`), only happening inside the tool.
 
-一半以上样本的点都变了,只是绝大多数位移落在同一物体上、不改变对错;
-**只有 11 条恰好跨过判定边界**。它们不是特例,是 226 条漂移里露出水面的部分。
+More than half the samples' points changed; the vast majority of displacements stay on the same object and do not change correctness;
+**only 11 happen to cross the decision boundary**. They are not special cases; they are the visible tip of the 226 drifted items.
 
-> **回归校验仍然通过,但理由要改**:不是「噪声在容差内」,而是
-> 「226 条系统性微移中 11 条跨过判定边界,方向相抵后净差 1 个样本」。
-> 文档「差十个就说明通路不对」的阈值依然有效(净差 1 个远在阈值内),
-> 但它掩盖了底下 57% 的漂移。**系统性差异不会因为多跑几次而消失。**
+> **The regression check still passes, but the reason has to change**: not "noise within tolerance", but
+> "of 226 systematic small shifts, 11 crossed the decision boundary, and after the directions cancel the net difference is 1 sample".
+> The doc's threshold "a difference of ten means the path is wrong" is still valid (a net difference of 1 is far within it),
+> but it hides the 57% drift underneath. **Systematic differences do not go away by running more times.**
 
-### 另有三条:点相同、判定相反
+### Three more: same point, opposite verdict
 
-`robospatial` #9、#22、#70 的返回点与基线**逐位相同**,对错却相反。与漂移无关,
-成因是基线口径——已逐条验证这三条**都不是纯透传**:
+The returned points for `robospatial` #9, #22, #70 are **bit-for-bit identical** to the baseline, yet the correctness is reversed. Unrelated to drift;
+the cause is the baseline definition — verified item by item that none of the three is **pure pass-through**:
 
-    #9   工具 (0.767, 0.743) → 策略答案 (0.87, 0.77)    基线对 · 离线错
-    #22  工具 (0.149, 0.583) → 策略答案 (0.05, 0.58)    基线对 · 离线错
-    #70  工具 (0.5,   0.908) → 策略答案 (0.483, 0.644)  基线错 · 离线对
+    #9   tool (0.767, 0.743) → policy answer (0.87, 0.77)    baseline correct · offline wrong
+    #22  tool (0.149, 0.583) → policy answer (0.05, 0.58)    baseline correct · offline wrong
+    #70  tool (0.5,   0.908) → policy answer (0.483, 0.644)  baseline wrong · offline correct
 
-探测文件的 `baseline_correct` 记的是**策略最终答案**的对错,而离线通路用的是
-**工具原始点**。P6 离线归因记过 robospatial Vacant 只有 82.8% 纯透传
-(122 条里 21 条模型自己改过点),这三条就落在那 21 条里。
+The probe file's `baseline_correct` records the correctness of the **policy's final answer**, while the offline path uses the
+**raw tool point**. P6 offline attribution recorded that robospatial Vacant is only 82.8% pure pass-through
+(21 of 122 items where the model changed the point itself); these three fall within those 21.
 
-> 对 RefSpatial 无此问题(276/276 纯透传),所以那边的 +3 全部来自漂移。
-> 但这意味着 **robospatial 一列的「基线」与离线通路测的不是同一个量**:
-> 前者含策略的改点行为,后者不含。做工具对比时这一列要单独标注。
+> RefSpatial does not have this problem (276/276 pure pass-through), so the +3 there comes entirely from drift.
+> But it means **the "baseline" in the robospatial column and the offline path do not measure the same quantity**:
+> the former includes the policy's point-override behavior, the latter does not. This column must be flagged separately in tool comparisons.
 
 ---
 
-## 3. 实验 B:深度工具
+## 3. Experiment B: depth tool
 
-### 回归校验:通过,重放列精确命中
+### Regression check: passed, replay column matches exactly
 
-    benchmark      n   DepthPro 重跑     基线重放        差
+    benchmark      n   DepthPro rerun    baseline replay   diff
     blinkdepth   115   96  (83.48%)     97  (84.35%)   -1
     cvb3ddepth   599  576  (96.16%)    577  (96.33%)   -1
-    合计         714  672  (94.12%)    674  (94.40%)   -2
+    total        714  672  (94.12%)    674  (94.40%)   -2
 
-重放列(纯算术、不调工具)= 97/115、577/599、674/714,与交接文档逐字相同,
-说明 probes 未被动过。按文档要求以重放值 674 为基准,不用实际基线的 677。
+The replay column (pure arithmetic, no tool calls) = 97/115, 577/599, 674/714, verbatim identical to the handoff doc,
+which shows the probes were not touched. As the doc requires, the replay value 674 is the reference, not the actual baseline of 677.
 
-### 「换工具」那一半没做
+### The "swap tool" half was not done
 
-Toolshed v1 只有 `depth_estimator`(DepthPro)一个深度工具,没有第二个可对调的。
-文档 §7 也已排除通用 oracle 消融(blinkdepth 的 GT 是 A/B,不是深度图),
-所以既没有第二个工具,也没有深度 GT 可当 oracle。**要完成 B 必须先装新的深度模型。**
+Toolshed v1 has only one depth tool, `depth_estimator` (DepthPro); there is no second one to swap in.
+Doc §7 also already ruled out a generic oracle ablation (blinkdepth's GT is A/B, not a depth map),
+so there is neither a second tool nor depth GT to use as an oracle. **Completing B requires installing a new depth model first.**
 
-### 替代分析:错题是「差一点」还是「错得离谱」
+### Substitute analysis: are the wrong answers "close" or "way off"
 
-相对间距 `|dA-dB| / min(dA,dB)`(判据是「选更小的那个」,间距即裕度):
+Relative gap `|dA-dB| / min(dA,dB)` (the criterion is "pick the smaller one", so the gap is the margin):
 
-    blinkdepth  答对中位数 0.618  答错 0.103      cvb3ddepth  答对 0.875  答错 0.146
+    blinkdepth  correct median 0.618  wrong 0.103      cvb3ddepth  correct 0.875  wrong 0.146
 
-    错题中间距 < 10%(近平局,略强的工具就能翻)  blinkdepth 9/19 · cvb3ddepth 8/23
-    错题中间距 >= 10%(自信地给了反的序)         blinkdepth 10/19 · cvb3ddepth 15/23
+    wrong answers with gap < 10% (near-tie, a slightly stronger tool could flip it)  blinkdepth 9/19 · cvb3ddepth 8/23
+    wrong answers with gap >= 10% (confidently gave the reversed order)              blinkdepth 10/19 · cvb3ddepth 15/23
 
-**多数深度错题不是近平局。** 换「略好一点」的深度工具最多拿回约 17 个样本;
-吃掉全部 42 个错题需要显著更强的模型。对比实验 A 的 pointing 有 43 个样本的上界
-**且不需要装任何新东西**,优先级仍是 pointing 在前。
-
----
-
-## 4. 实验 F:fp32 端到端对照
-
-**结果 107/124 = 86.29%,落在期望带 107–109 内。`--strict` 通过,健康指标全零。**
-
-配置:删掉 `model_dtype=bf16`(落到 `engine/fsdp.yaml:33` 的默认 `fp32`),
-`gpu_memory_utilization=0.25`。**第二处是必需的**——判据是两臂只差 dtype,
-而 bf16 参照臂(run5/run6 = {108, 109})在 0.25 下。
-
-确认这一跑真的是 fp32:解析后配置 `'model_dtype': 'fp32'`;run7 日志含 `bf16` **0** 次
-(run5 有 1 次);FlashAttention 警告 `current dype ... is torch.float32`;
-GPU3 峰值 33.8 GB vs bf16 同配置 30.4 GB。
-
-逐样本:同配置 bf16 两次的「始终错」14 个在 fp32 下 **14/14 全部复现**;
-全部五次 bf16 的硬核 12 个 fp32 也全错;破掉 2 个「始终对」(样本 18、49),
-与 run4 的 3 个、跨硬件的 2–3 个同量级。
-
-**判定:偏离 `[20]` 可以端到端划掉**(`PROVENANCE.txt` 与 `P5_RESULTS.md` §4 已同步)。
-理论侧本就预期无差异:ckpt 以 BF16 存储,`bf16→fp32→bf16` 是恒等变换
-(825/825 张量逐位验证),两种配置下 sglang 收到的是同一批权重。
-
-> **⚠ 上面这段结论已于同日收回。** 见下。
-
-### ⚠ 补跑两次后:排除结论不成立
-
-    fp32 @ gmu=.25   107 (run7) · 105 (run9) · 105 (run10)    范围 105–107
-    bf16 @ gmu=.25   108 (run5) · 109 (run6)                  范围 108–109
-
-**两个范围不重叠。** run7 那个 107 是 fp32 自己范围的**上沿**,
-我把它读成「落在 107–109 带内」,据此写下了「偏离 [20] 已端到端排除」。
-两次追加运行推翻了这个判定。
-
-**但反方向的结论同样不成立**,证据强度如实是:
-
-- 五个值 {105,105,107,108,109},若同分布,两个 bf16 恰好占最高两名的概率
-  `1/C(5,2)` = **0.1**。提示性强,**不显著**。
-- 结构上很弱:**只有 1 个样本**(#49)是「bf16 始终对、fp32 始终错」,反向 0 个。
-- fp32 自己也非确定:三次之间相差 4–6 个样本
-  (三次:始终对 102 · 始终错 14 · 翻转 8;bf16 两次:107 · 14 · 3)。
-- 两者的「始终错」硬核交集 13 个,基本一致。
-
-**正确表述是「排除证据不足、已收回」,不是任何方向的结论。**
-
-### 权重论证仍成立,但它的隐含假设被质疑了
-
-ckpt 是 BF16,`bf16→fp32→bf16` 恒等,825/825 张量逐位验证——
-**sglang 收到的权重确实相同**,这一条没有动摇。
-
-动摇的是它的隐含前提:**`model_dtype` 影响数字的唯一路径是权重**。
-实测提示存在第二条路径,**未验证**:fp32 master 多占约 8 GB
-(GPU3 峰值 33.8 vs 30.4),显存分配与碎片不同 → sglang batch 组成不同 →
-近平局样本翻转。**与偏离 `[23]` 同类机制,不是权重级效应。**
-
-> **方法学:这是本次开机同一个错误的第二次出现。**
-> 实验 G 是「上界未饱和就下结论」,这次是「单点落在自身范围边缘就下结论」。
-> 两次都由「多跑一次」推翻,两次的判据都出自本项目自己的文档。
-> 差别在于 G 那次我在宣布前主动补了检验,这次没有——是用户问「有需要重跑的吗」才补上的。
+**Most depth wrong answers are not near-ties.** A "slightly better" depth tool would recover about 17 samples at most;
+eating all 42 wrong answers needs a significantly stronger model. Compared with experiment A, where pointing has an upper bound of 43 samples
+**and needs nothing new installed**, pointing still comes first in priority.
 
 ---
 
-## 5. 修掉的 harness 缺陷(实验 A/B 期间)
+## 4. Experiment F: fp32 end-to-end control
 
-这些脚本是为本次开机新写的,取图与打分两条路以前从未被真实调用过,
-所以 bug 集中在第一次真实调用时暴露——**回归校验正是为抓这个而设的,它抓到了。**
+**Result 107/124 = 86.29%, inside the expected band 107–109. `--strict` passed, health metrics all zero.**
 
-| 位置 | 后果 | 处理 |
+Configuration: removed `model_dtype=bf16` (falls back to the default `fp32` at `engine/fsdp.yaml:33`),
+`gpu_memory_utilization=0.25`. **The second one is required** — the criterion is that both arms differ only in dtype,
+and the bf16 reference arm (run5/run6 = {108, 109}) is at 0.25.
+
+Confirmed this run really is fp32: resolved config `'model_dtype': 'fp32'`; run7 log contains `bf16` **0** times
+(run5 has 1); FlashAttention warning `current dype ... is torch.float32`;
+GPU3 peak 33.8 GB vs 30.4 GB for bf16 with the same config.
+
+Per-sample: the 14 "always wrong" from the two bf16 runs with the same config **all 14/14 reproduce** under fp32;
+the 12 hard core samples from all five bf16 runs are also all wrong under fp32; 2 "always correct" broke (samples 18, 49),
+same order of magnitude as run4's 3 and cross-hardware's 2–3.
+
+**Verdict: deviation `[20]` can be struck off end to end** (`PROVENANCE.txt` and `P5_RESULTS.md` §4 updated accordingly).
+Theory already predicted no difference: the ckpt is stored in BF16, `bf16→fp32→bf16` is an identity transform
+(825/825 tensors verified bit-for-bit), so sglang receives the same weights under both configurations.
+
+> **⚠ The conclusion above was retracted the same day.** See below.
+
+### ⚠ After two extra runs: the ruling-out conclusion does not hold
+
+    fp32 @ gmu=.25   107 (run7) · 105 (run9) · 105 (run10)    range 105–107
+    bf16 @ gmu=.25   108 (run5) · 109 (run6)                  range 108–109
+
+**The two ranges do not overlap.** run7's 107 is the **top edge** of fp32's own range;
+I read it as "inside the 107–109 band" and on that basis wrote "deviation [20] ruled out end to end".
+Two additional runs overturned that verdict.
+
+**But the conclusion in the opposite direction does not hold either**; the strength of evidence, honestly stated:
+
+- Five values {105,105,107,108,109}; if identically distributed, the probability that the two bf16 runs take exactly the top two places is
+  `1/C(5,2)` = **0.1**. Strongly suggestive, **not significant**.
+- Structurally weak: **only 1 sample** (#49) is "bf16 always correct, fp32 always wrong"; 0 in the reverse direction.
+- fp32 itself is non-deterministic too: the three runs differ by 4–6 samples
+  (three runs: always correct 102 · always wrong 14 · flip 8; bf16 two runs: 107 · 14 · 3).
+- The "always wrong" hard core sets of the two intersect in 13 samples, essentially consistent.
+
+**The correct statement is "evidence for ruling out is insufficient, retracted", not a conclusion in either direction.**
+
+### The weight argument still holds, but its implicit assumption is now in question
+
+The ckpt is BF16, `bf16→fp32→bf16` is the identity, 825/825 tensors verified bit-for-bit —
+**sglang really does receive the same weights**; that part is not shaken.
+
+What is shaken is its implicit premise: **the only path through which `model_dtype` affects the numbers is the weights**.
+The measurements hint at a second path, **unverified**: fp32 master takes about 8 GB more
+(GPU3 peak 33.8 vs 30.4), so GPU memory allocation and fragmentation differ → sglang batch composition differs →
+near-tie samples flip. **Same kind of mechanism as deviation `[23]`, not a weight-level effect.**
+
+> **Methodology: this is the second occurrence of the same mistake in this GPU session.**
+> Experiment G was "concluding before the upper bound saturated"; this time it was "concluding from a single point at the edge of its own range".
+> Both were overturned by "one more run", and both criteria came from this project's own docs.
+> The difference is that for G I ran the extra check myself before announcing; this time I did not — it was only added after the user asked "is there anything that needs rerunning".
+
+---
+
+## 5. Harness defects fixed (during experiments A/B)
+
+These scripts were newly written for this GPU session; the image-loading and scoring paths had never been called for real before,
+so the bugs clustered at the first real call — **the regression check exists precisely to catch this, and it did.**
+
+| Location | Consequence | Fix |
 |---|---|---|
-| `tools/p6/gpu_pointing_swap.py` `load_image` | pandas 把 parquet 的 `list<struct>` 读成 `dtype=object` 的 ndarray,函数只认 `list`/`tuple`,第一跳就掉到末尾 TypeError。**397/397 取图失败,工具一次都没被调用** | 加 ndarray 分支 |
-| `tools/p6/gpu_depth_swap.py` `load_image` | 同一个 bug | 一并修掉 |
-| `verl/utils/reward_score/__init__.py` | `RoboSpatial/*` 与 `BLINK/Spatial_Relation` 的打分分支里 `format_score_val` 只在 `if training_args` 块内赋值(同块另外六个默认值都在 `if` **之前**初始化),离线调用即 UnboundLocalError。**robospatial 122 条全部打分失败** | **未改上游**,改由脚本传复刻 eval 配置的 `training_args` |
+| `tools/p6/gpu_pointing_swap.py` `load_image` | pandas reads the parquet `list<struct>` as an ndarray with `dtype=object`; the function only accepted `list`/`tuple`, so it fell straight through to the TypeError at the end on the first hop. **397/397 image loads failed; the tool was never called once** | Added an ndarray branch |
+| `tools/p6/gpu_depth_swap.py` `load_image` | Same bug | Fixed together |
+| `verl/utils/reward_score/__init__.py` | In the scoring branches for `RoboSpatial/*` and `BLINK/Spatial_Relation`, `format_score_val` is only assigned inside the `if training_args` block (the other six defaults in the same block are all initialized **before** the `if`), so an offline call raises UnboundLocalError. **All 122 robospatial items failed to score** | **Upstream not changed**; instead the script passes a `training_args` that replicates the eval config |
 
-第三条的两个值由证据钉死:`format_score = 0.0`(`ppo_trainer.yaml:230`)、
-`allow_last_response_fallback = True`(`run_eval.sh:297` 覆盖了配置默认的 `false`)。
+The two values for the third one are pinned down by evidence: `format_score = 0.0` (`ppo_trainer.yaml:230`),
+`allow_last_response_fallback = True` (`run_eval.sh:297` overrides the config default `false`).
 
-> **并已实测二者在本通路上惰性**:harness 构造的答案串永远带 `<answer>` 标签,
-> 所以 fallback 永不触发;两个值取任何组合都得 60/122。
-> 因此 robospatial 那个 −2 不是 stub 造成的,与 reflocation 的 +2 同源。
+> **Also measured that both are inert on this path**: the answer string the harness builds always has the `<answer>` tag,
+> so the fallback never triggers; every combination of the two values gives 60/122.
+> So the −2 on robospatial is not caused by the stub; it has the same origin as reflocation's +2.
 
-其它两处文档层面的问题:标签 `run_fp32` 会被 `p4_run.sh` 的 `^run[0-9]+$` 守卫拒绝;
-`tools/p4_check.sh` 的 GPU 百分比硬编码除以 40960,80 GB 上失真(GPU3 报 117%,实为 57%)。
+Two other doc-level issues: the label `run_fp32` would be rejected by the `^run[0-9]+$` guard in `p4_run.sh`;
+the GPU percentage in `tools/p4_check.sh` is hard-coded to divide by 40960, which is distorted on 80 GB (GPU3 reports 117%, actually 57%).
 
 ---
 
-## 5b. 实验 G:robospatial 追加抽样 —— 假设被推翻
+## 5b. Experiment G: robospatial additional sampling — hypothesis overturned
 
-**结论:「论文报的是稳定上界」不成立。RoboSpatial VQA 的 −6.13 pp 仍未解释。**
+**Conclusion: "the paper reports the stable upper bound" does not hold. The −6.13 pp on RoboSpatial VQA remains unexplained.**
 
-### 经过
+### What happened
 
-文档 §5.5 的判据事先写死:第三次抽样后若 VQA 上界爬到 ≈181/228 = 79.38%,
-就说明论文报的是上界而非典型抽样值,与 blinkdepth 同构。
+The criterion in doc §5.5 was fixed in advance: if after the third sample the VQA upper bound climbs to ≈181/228 = 79.38%,
+that means the paper reports the upper bound rather than a typical sample value, the same structure as blinkdepth.
 
-跑完 run3 之后,判据**字面命中,而且精确**:
+After run3 finished, the criterion was **hit literally, and exactly**:
 
-    三次上界   VQA 181/228 · Vacant 64/122 · Overall 245/350
-    论文       VQA 181     · Vacant 64     · Overall 245        差 0 个样本
+    3-run upper bound   VQA 181/228 · Vacant 64/122 · Overall 245/350
+    paper               VQA 181     · Vacant 64     · Overall 245        diff 0 samples
 
-三处精确相等,看起来是一个漂亮的结论。**但上界是抽样次数的单调增函数**,
-所以在宣布之前补做了饱和检验——再跑一次(run8)。
+Three exact matches; it looks like a neat conclusion. **But the upper bound is a monotonically increasing function of the number of samples drawn**,
+so before announcing, a saturation check was added — one more run (run8).
 
-### 第四次推翻了它
+### The fourth run overturned it
 
-    VQA 上界(论文 181)
-      1 次: 161, 167, 168, 169
-      2 次: 174, 176, 178, 181, 183
-      3 次: 181, 183, 186          <- 三次的四种组合;我们恰好用了给出 181 的那一组
-      4 次: 188
+    VQA upper bound (paper 181)
+      1 run:  161, 167, 168, 169
+      2 runs: 174, 176, 178, 181, 183
+      3 runs: 181, 183, 186          <- the four 3-run combinations; we happened to use the one that gives 181
+      4 runs: 188
 
-    Vacant 上界(论文 64)
-      3 次: 63, 64, 65             <- 64 只是三种可能里的中间值
-      4 次: 65
+    Vacant upper bound (paper 64)
+      3 runs: 63, 64, 65             <- 64 is just the middle of three possible values
+      4 runs: 65
 
-    Overall 四次上界 253/350 = 72.29%   论文 70.00 = 245/350
+    Overall 4-run upper bound 253/350 = 72.29%   paper 70.00 = 245/350
 
-上界没有饱和,四次已越过论文 7 个样本(VQA)。三次那个「精确命中」不但是巧合,
-**还是组合选择的巧合**:同样三次、换一组就是 183 或 186;两次里也已有一组达到 181。
+The upper bound did not saturate; at four runs it already exceeds the paper by 7 samples (VQA). The 3-run "exact hit" was not only a coincidence,
+**it was a coincidence of which combination was picked**: the same three runs in a different combination give 183 or 186; and among 2-run combinations one already reaches 181.
 
-### 判据本身是坏的
+### The criterion itself is broken
 
-上界单调上升,**任何目标值早晚都会被达到**,所以「上界等于论文数字」不能作为
-「论文报的是上界」的证据——它只说明我们跑了恰好那么多次。文档写这条判据时
-没有要求饱和,而饱和是必需条件,不是加分项。
+The upper bound rises monotonically, **so any target value will be reached sooner or later**; "upper bound equals the paper's number" therefore cannot serve as
+evidence that "the paper reports the upper bound" — it only says we ran exactly that many times. When the doc wrote this criterion
+it did not require saturation, and saturation is a necessary condition, not a bonus.
 
-> **这条同样削弱 blinkdepth 的那个结论**(`P5_RESULTS.md` §1、§4)。
-> 区别只是增长速度:blinkdepth 翻转样本少,上界 2 次 111、4 次 111、6 次 112,爬得慢;
-> robospatial VQA 有 43 个翻转,2→3→4 次就是 178→181→188。
-> **blinkdepth 的 112/124 同样未被证明饱和**,只是更接近。已在 `P5_RESULTS.md` 加注。
+> **This equally weakens the blinkdepth conclusion** (`P5_RESULTS.md` §1, §4).
+> The only difference is growth speed: blinkdepth has few flip samples, upper bound 111 at 2 runs, 111 at 4, 112 at 6, so it climbs slowly;
+> robospatial VQA has 43 flips, going 178→181→188 across 2→3→4 runs.
+> **blinkdepth's 112/124 is likewise not proven saturated**, only closer. A note has been added in `P5_RESULTS.md`.
 
-### 缺口回到未解释状态,而且更实在
+### The gap is back to unexplained, and more concrete
 
-    VQA 单次   161 / 167 / 168 / 169     均值 166.2/228 = 72.92%
-    论文                                        181/228 = 79.38%
-    差                                     14.8 个样本
+    VQA single run   161 / 167 / 168 / 169     mean 166.2/228 = 72.92%
+    paper                                           181/228 = 79.38%
+    diff                                       14.8 samples
 
-    四次全错的硬核 40 · 四次全对 145 · 翻转 43
+    wrong in all four (hard core) 40 · correct in all four 145 · flip 43
 
-四次里最好的一次(run8, 169)离论文仍差 12 个样本。**−6.13 pp 是真实缺口**,
-交回 P6 的人工归类。`P5_RESULTS.md` §2① 记载的线索仍然有效:
-`no` 类塌陷至随机水平、105/228 是「Can X fit ⟨rel⟩ Y?」这类题目与工具输出的结构性错配。
+The best of the four runs (run8, 169) is still 12 samples short of the paper. **−6.13 pp is a real gap**,
+handed back to P6 manual classification. The lead recorded in `P5_RESULTS.md` §2① is still valid:
+the `no` class collapses to chance level, and 105/228 are "Can X fit ⟨rel⟩ Y?"-type questions with a structural mismatch with the tool output.
 
-### 四次单次成绩
+### Single-run scores of the four runs
 
     run1 (40G, gmu=.5)   Overall 229/350  VQA 167  Vacant 62
     run2 (40G, gmu=.5)   Overall 231/350  VQA 168  Vacant 63
     run3 (80G, gmu=.25)  Overall 222/350  VQA 161  Vacant 61
     run8 (80G, gmu=.25)  Overall 231/350  VQA 169  Vacant 62
 
-四次 `--strict` 全部通过,健康指标全零。run3 是最低的一次,
-三次上界却靠它顶上去——它答对的是别人答错的样本,不是它更强。
+All four `--strict` passed, health metrics all zero. run3 is the lowest run,
+yet the 3-run upper bound is pushed up by it — it got right samples others got wrong, not because it is stronger.
 
 ---
 
-## 6. 实验 C:pass@k
+## 6. Experiment C: pass@k
 
-三个 benchmark,`val_kwargs.do_sample=True / n=5 / temperature=1.0 / top_p=1.0`,
-其余照 P4 不动(含 `model_dtype=bf16`),`gpu_memory_utilization=0.25`(偏离 `[23]`)。
-变体脚本 `tools/p6/variants/run_eval_passk.sh`,与 `run_eval.sh` 差五行。
+Three benchmarks, `val_kwargs.do_sample=True / n=5 / temperature=1.0 / top_p=1.0`,
+everything else as in P4 (including `model_dtype=bf16`), `gpu_memory_utilization=0.25` (deviation `[23]`).
+Variant script `tools/p6/variants/run_eval_passk.sh`, five lines different from `run_eval.sh`.
 
-覆盖确实生效:解析后配置为 `do_sample: True / n: 5 / temperature: 1.0`,
-dump 行数 300 / 620 / 1750 = 样本数 × 5,且**逐样本的 5 次输出文本无一全同**
-(boppose 0/60、blinkdepth、robospatial 0/350)。
+The overrides really took effect: resolved config is `do_sample: True / n: 5 / temperature: 1.0`,
+dump row counts 300 / 620 / 1750 = number of samples × 5, and **for no sample are all 5 output texts identical**
+(boppose 0/60, blinkdepth, robospatial 0/350).
 
-### ⚠ pass@k 在二元任务上不可用
+### ⚠ pass@k is unusable on binary tasks
 
-`blinkdepth` 选 A/B、`RoboSpatial VQA` 答 yes/no,都是二选一。抽 5 次,
-**纯随机猜测的 pass@5 = 1 − 0.5⁵ = 96.88%**。实测 blinkdepth 94.35%、
-VQA 89.04%,**两个都低于瞎猜**——pass@k 在这里几乎全部由「抽了 5 次」这件事
-决定,不含模型能力的信息,**不能用来度量推理侧的可挖空间**。
+`blinkdepth` picks A/B and `RoboSpatial VQA` answers yes/no; both are two-way choices. With 5 draws,
+**pure random guessing gives pass@5 = 1 − 0.5⁵ = 96.88%**. Measured: blinkdepth 94.35%,
+VQA 89.04%, **both below blind guessing** — pass@k here is almost entirely determined by the fact of "drawing 5 times"
+and carries no information about model ability, **so it cannot be used to measure the headroom on the inference side**.
 
-有意义的替代是**多数表决@5**(≥3/5 答对),因为它是可实现的策略而非 oracle,
-且二元任务上它的随机基线是 50% 而不是 96.88%。
+The meaningful substitute is **majority vote@5** (≥3/5 correct), because it is an achievable strategy rather than an oracle,
+and on binary tasks its random baseline is 50% rather than 96.88%.
 
-`RoboSpatial Vacant` 是点预测、不是二元,随机基线≈0,**它的 pass@5 有实义**。
+`RoboSpatial Vacant` is point prediction, not binary; random baseline ≈0, so **its pass@5 is meaningful**.
 
-### 结果
+### Results
 
-    benchmark            avg@1      多数表决@5        greedy 参照           论文
+    benchmark            avg@1      majority vote@5   greedy reference          paper
     blinkdepth          85.00%      110/124 88.71%   107,108,109,109      112/124
     RoboSpatial VQA     71.40%      176/228 77.19%   161,167,168,169      181/228
     RoboSpatial Vacant  49.02%      —                61,62,62,63           64/122
-    boppose (IoU)       53.60       —                53.36(三次逐位相同)   34.37
+    boppose (IoU)       53.60       —                53.36 (3 runs bit-for-bit identical)   34.37
 
-- **blinkdepth 的多数表决增益是噪声级**:110 对 greedy 的 107–109,只高 1–3 个样本,
-  而 greedy 自身散布就是 3 个样本宽。**不构成结论。**
-- **VQA 的增益是实的**:176 对 161–169,高出 7–15 个样本,清楚在 greedy 区间之外。
-  自洽性把 VQA 从 greedy 均值 166.2 推到 176,**补掉 −6.46 pp 缺口的约六成,
-  剩约 2.2 pp 补不掉**。
-- **Vacant 的 pass@5 = 70.49%** 对 avg@1 49.02%,+21.48 pp,非二元故有效。
-- **boppose 用 avg@1,不用 best@5**:取 5 次最大值有选择偏倚,即使分数纯为噪声
-  max 也高于均值,`best@5 = 57.23` 不能当收益。
+- **blinkdepth's majority-vote gain is noise-level**: 110 vs greedy's 107–109, only 1–3 samples higher,
+  while greedy's own spread is 3 samples wide. **Not a conclusion.**
+- **The VQA gain is real**: 176 vs 161–169, 7–15 samples higher, clearly outside the greedy interval.
+  Self-consistency pushes VQA from the greedy mean of 166.2 to 176, **closing about 60% of the −6.46 pp gap,
+  with about 2.2 pp left that it cannot close**.
+- **Vacant pass@5 = 70.49%** vs avg@1 49.02%, +21.48 pp; valid because it is not binary.
+- **boppose uses avg@1, not best@5**: taking the max of 5 runs has selection bias; even if the score were pure noise,
+  the max would exceed the mean, so `best@5 = 57.23` cannot count as a gain.
 
-### ① BOP-ASK Pose 的「解码方式」候选:排除
+### ① BOP-ASK Pose "decoding method" candidate: ruled out
 
-`P5_RESULTS.md §2②` 的四个候选之一是「若论文用 temperature 1.0 采样报 avg@1,
-分数会更低且更容易格式出错」。**两条都不成立**:
+One of the four candidates in `P5_RESULTS.md §2②` is "if the paper sampled with temperature 1.0 and reported avg@1,
+the score would be lower and formatting errors more likely". **Neither part holds**:
 
-    avg@1 53.60   对 greedy 53.36(高 0.24)      论文 34.37
-    零分采样 42/300 = 14%   对 greedy 9/60 = 15%
+    avg@1 53.60   vs greedy 53.36 (0.24 higher)      paper 34.37
+    zero-score samples 42/300 = 14%   vs greedy 9/60 = 15%
 
-要走到论文的 34.37 大致需要额外 18 个样本得 0 分,而采样把零分率**降低**了
-1 个百分点。300 次采样的均值标准误约 2 个点,论文值在 19 个点之外。
-**候选剩三个,「论文侧有格式失败」仍最自洽。**
+Getting to the paper's 34.37 would require roughly 18 more samples scoring 0, while sampling **lowered** the zero-score rate
+by 1 percentage point. The standard error of the mean over 300 samples is about 2 points; the paper's value is 19 points away.
+**Three candidates remain; "format failures on the paper's side" is still the most self-consistent.**
 
-### ② VQA 的第四类错误:一致性
+### ② A fourth error category for VQA: consistency
 
-    5 次里答对几次        全对    全错    分裂(1–4)
+    how many of 5 correct   all correct   all wrong   split (1–4)
     blinkdepth            87      7       30  (24.2%)
     RoboSpatial VQA      103     25      100  (43.9%)
     RoboSpatial Vacant    35     36       51  (41.8%)
 
-**VQA 有 43.9% 的题目在 5 次采样之间摇摆。** 这既不是工具错也不是推理错,
-是校准/一致性问题——**P6 现有的三分类(工具错 / 推理错 / 标注问题)里没有这一档**。
-与 `P5_RESULTS.md §2①` 记的 `no` 类塌陷至随机水平是同一现象的两个侧面。
+**43.9% of VQA questions swing between the 5 samples.** This is neither a tool error nor a reasoning error;
+it is a calibration/consistency problem — **P6's existing three categories (tool error / reasoning error / annotation issue) have no slot for it**.
+It is two sides of the same phenomenon as the `no` class collapsing to chance level recorded in `P5_RESULTS.md §2①`.
 
-### ③ 实验 C 不改变要报的 accuracy
+### ③ Experiment C does not change the accuracy to report
 
-论文用什么解码未知,但发布仓库的 `val_kwargs` 默认是 greedy,P4 照它跑——
-这是唯一有依据的口径。**多数表决@5 是另一种推理策略,不是同一次测量**,
-把 77.19% 填进 Table 2 等于拿论文没用过的策略去比它的数字。
-C 的价值在解释,不在成绩。
+The paper's decoding is unknown, but the released repo's `val_kwargs` default is greedy, and P4 followed it —
+this is the only definition with grounding. **Majority vote@5 is a different inference strategy, not the same measurement**;
+putting 77.19% into Table 2 would compare the paper's number against a strategy the paper never used.
+C's value is in explanation, not in scores.
 
-### ④ `--strict` 的畸形判据不适用于采样运行
+### ④ `--strict`'s malformed criterion does not apply to sampling runs
 
-robospatial 1750 个采样里有 1 条畸形 `tool_call`(样本 167 的某一次:
-模型先吐了一个孤立乱码字符 `槛`,再给出格式完好的调用),使 `--strict` 退出 1。
+Among robospatial's 1750 samples, 1 has a malformed `tool_call` (one draw of sample 167:
+the model first emitted an isolated garbage character `槛`, then gave a well-formed call), which made `--strict` exit with 1.
 
-逐条查明**不是污染**:其余健康指标全零(OOM / 截断 / 轮数对账 / 工具失败 /
-顶轮数),而 T=1.0 采样按定义会偶尔采到低概率 token——P4 全量 2121 个 greedy
-样本畸形数为 0,正因为 greedy 不采低概率 token。影响为零:该样本另外四次都答对,
-含与不含它的 pass@5 都是 True。
+Checked item by item, **it is not contamination**: all other health metrics are zero (OOM / truncation / turn reconciliation / tool failure /
+turn cap), and T=1.0 sampling by definition occasionally draws low-probability tokens — the full P4 run of 2121 greedy
+samples had 0 malformed, precisely because greedy does not draw low-probability tokens. Impact is zero: the other four draws of that sample are all correct,
+and pass@5 is True with or without it.
 
-`tools/parse_dump.py` 已修:检测到 dump 中 index 重复(即 n>1 采样)时,
-把畸形调用降级为**警告**而非污染,其余污染判据不变。已验证 greedy 运行的判据未被削弱。
+`tools/parse_dump.py` is fixed: when it detects duplicate indices in a dump (i.e. n>1 sampling),
+it downgrades malformed calls to a **warning** instead of contamination; the other contamination criteria are unchanged. Verified that the criteria for greedy runs were not weakened.
 
 ---
 
-## 7. 实验 D:P7 训练可行性测算
+## 7. Experiment D: P7 training feasibility estimate
 
-**结论:这台机器上按论文配置复现 P7 训练不现实,瓶颈是卡数而非单卡容量。**
+**Conclusion: reproducing P7 training on this machine with the paper's configuration is not realistic; the bottleneck is GPU count, not per-GPU capacity.**
 
-按交接文档 §6「只测三件事,别开训练」。实测 s/step 未做,原因与依据见末尾。
+Per handoff doc §6, "measure only three things, don't start training". Measured s/step was not done; reason and basis at the end.
 
-### 参数与显存(参数量从 safetensors 头实读)
+### Parameters and GPU memory (parameter count read from safetensors headers)
 
-    参数量 4.066 B
+    parameter count 4.066 B
 
-    训练态(FSDP 在训练卡之间分片)
+    training state (FSDP sharded across training GPUs)
       fp32 master  15.1 GB
-      fp32 梯度    15.1 GB
+      fp32 grads   15.1 GB
       Adam m       15.1 GB
       Adam v       15.1 GB
-      小计         60.6 GB
-      reference 模型 7.6 GB(bf16;run_rl.sh 设 ref.param_offload=True,可下放 CPU)
+      subtotal     60.6 GB
+      reference model 7.6 GB (bf16; run_rl.sh sets ref.param_offload=True, can be offloaded to CPU)
 
-    工具常驻(本次开机实测,非估算)
-      Molmo 卡 34.6 + DepthPro 卡 25.7 + RoboRefer 卡 20.5 = 80.8 GB
+    resident tools (measured this GPU session, not estimated)
+      Molmo GPU 34.6 + DepthPro GPU 25.7 + RoboRefer GPU 20.5 = 80.8 GB
 
-`run_rl.sh` 与 eval 的关键差异:`gpu_memory_utilization` 0.5 → **0.7**,
-`actor.fsdp_config.param_offload=False`、`optimizer_offload=False`,
-`use_kl_loss=True`(需要 reference 模型),`max_response_length` 4096 → 8192,
-`rollout.n=5`,`GPUS_PER_NODE` 默认 **8**。
+Key differences between `run_rl.sh` and eval: `gpu_memory_utilization` 0.5 → **0.7**,
+`actor.fsdp_config.param_offload=False`, `optimizer_offload=False`,
+`use_kl_loss=True` (needs the reference model), `max_response_length` 4096 → 8192,
+`rollout.n=5`, `GPUS_PER_NODE` defaults to **8**.
 
-### 卡数是硬约束
+### GPU count is the hard constraint
 
-工具合计 80.8 GB,在 80 GB 卡上**至少占 2 张**(Molmo 34.6 + DepthPro 25.7 = 60.3
-一张,RoboRefer 20.5 一张)。4 张卡里**最多剩 2 张给训练**。
+Tools total 80.8 GB, taking **at least 2** 80 GB GPUs (Molmo 34.6 + DepthPro 25.7 = 60.3
+on one, RoboRefer 20.5 on another). Of the 4 GPUs, **at most 2 are left for training**.
 
-    FSDP 分到 2 张      60.6 / 2 = 30.3 GB/卡
-    sglang 池 @ gmu=0.7 56 GB/卡
-    合计                86.3 GB > 80        <- gmu=0.7 装不下
+    FSDP over 2 GPUs       60.6 / 2 = 30.3 GB/GPU
+    sglang pool @ gmu=0.7  56 GB/GPU
+    total                  86.3 GB > 80        <- gmu=0.7 does not fit
 
-`gmu` 需降到约 0.45–0.5。但 verl 的 hybrid engine 会在 rollout 与 update 之间
-互相释放显存(eval 侧就是靠 TorchMemorySaver 做到的),峰值不是简单相加——
-**这一项只有实测才能定,解析测算给不出**。
+`gmu` needs to drop to about 0.45–0.5. But verl's hybrid engine frees GPU memory back and forth between rollout and update
+(the eval side achieves this with TorchMemorySaver), so the peak is not a simple sum —
+**this item can only be settled by measurement; an analytical estimate cannot give it**.
 
-### 吞吐:约差 8 倍
+### Throughput: short by about 8×
 
-论文的 Step 4 是 **2 节点 × 8 卡 A100-80G,8–12 小时**。我们最多 **2 张训练卡**,
-差 8 倍,线性外推 **64–96 小时(3–4 天)**,尚未计入效率损失
-(更小的 world size 下梯度同步占比更高,且 batch 要切得更碎)。
+The paper's Step 4 is **2 nodes × 8 A100-80G GPUs, 8–12 hours**. We have at most **2 training GPUs**,
+8× fewer; linear extrapolation gives **64–96 hours (3–4 days)**, not yet counting efficiency loss
+(with a smaller world size, gradient sync takes a larger share, and batches have to be split finer).
 
-**这个量级的结论不依赖实测**:即使 s/step 比外推乐观一倍,仍是一天半以上。
+**A conclusion of this magnitude does not depend on measurement**: even if s/step were twice as good as the extrapolation, it would still be a day and a half or more.
 
-### 两个前提在本机不具备
+### Two prerequisites missing on this machine
 
-1. **RL 训练数据不在**:`siyich/spacetools-rlfulltools`,3.38 GB / **5425 个文件**
-   (绝大多数是小图)。要现下。
-2. **没有 SFT checkpoint**:官方只放 RL 之后的最终 ckpt(交接文档 §6 已记)。
-   测吞吐可拿现有 ckpt 顶替(架构与参数量相同,不影响机器测算),
-   但那不是真正的训练起点,**同起点对比仍需自己重跑 SFT**。
+1. **RL training data is not here**: `siyich/spacetools-rlfulltools`, 3.38 GB / **5425 files**
+   (mostly small images). Has to be downloaded now.
+2. **No SFT checkpoint**: upstream only releases the final ckpt after RL (already noted in handoff doc §6).
+   For throughput measurement the existing ckpt can stand in (same architecture and parameter count, no effect on the machine estimate),
+   but it is not the real training starting point; **a same-starting-point comparison still requires rerunning SFT ourselves**.
 
-因此实测 s/step 被判定为不划算:它只能把「64–96 小时」变精确,不改变方向,
-而代价是下载 + 启动 + 调 `gmu`,远超本项 30 分钟预算。
+So measuring s/step was judged not worth it: it can only make "64–96 hours" precise without changing the direction,
+and the cost is download + startup + tuning `gmu`, far beyond this item's 30-minute budget.
 
-### 给 P7 的三条
+### Three points for P7
 
-- **不要按论文配置在这台机器上排期训练。** 要么上更多卡(工具与训练分离到不同节点,
-  像论文那样),要么退到 LoRA —— 后者能同时砍掉 fp32 梯度与 Adam 状态那 45.4 GB。
-- **`model_dtype=bf16` 绝不能带进训练**(偏离 `[20]`)。fp32 master 正是优化器步骤
-  需要的东西;它对 eval 的惰性论证不延伸到训练。
-- **若要实测**,先备齐两个前提,并把 `gmu` 从 0.7 往下调;
-  第一个要看的数字是 rollout 与 update 之间的显存是否真的互相释放。
+- **Do not schedule training on this machine with the paper's configuration.** Either get more GPUs (separate tools and training onto different nodes,
+  as the paper does), or fall back to LoRA — the latter cuts both the fp32 gradients and the Adam states, those 45.4 GB.
+- **`model_dtype=bf16` must never be carried into training** (deviation `[20]`). fp32 master is exactly what the optimizer step
+  needs; the argument that it is inert for eval does not extend to training.
+- **If measuring**, first get both prerequisites in place and lower `gmu` from 0.7;
+  the first number to look at is whether GPU memory really is freed back and forth between rollout and update.
 
 ---
 
-## 8. 数据去处
+## 8. Where the data is
 
-| 内容 | 路径 |
+| Content | Path |
 |---|---|
-| 实验 A / B 产出 | `p6/swap/*.jsonl` |
-| 实验 F(run7)dump 与日志 | `p6/fp32/blinkdepth/` |
-| 偏离 `[23]` 证据(run5 / run6) | `p6/gmu025/run{5,6}/blinkdepth/` |
-| 实验 G 的第三、四次抽样 | `p6/gmu025/run{3,8}/robospatial/`。**注意**:它们的 KV 池是 20 GB,与 P4 的 run1/run2 相同,是同一配置下的抽样,不是另一种配置——见该目录 README |
-| 实验 C 的 dump | `p6/passk/{boppose,blinkdepth,robospatial}/` |
-| 实验 F 的另两次(run9 / run10) | `p6/fp32/run{9,10}/blinkdepth/`,附 README 警告只看 run7 会得到错误结论 |
-| 迁移验收(run4,P4 配置) | `p4/dumps/run4/blinkdepth/` + `p4/logs/p4-run4-*` |
-| **run2/robospatial 补交** | `p4/dumps/run2/robospatial/`(P4 跑过但从未进仓库;231/350 = 66.00%,与 `P4_RESULTS.md` 一致) |
-| 变体与常驻脚本 | `tools/p6/variants/`(含 README 说明每处差异) |
+| Experiment A / B outputs | `p6/swap/*.jsonl` |
+| Experiment F (run7) dump and logs | `p6/fp32/blinkdepth/` |
+| Deviation `[23]` evidence (run5 / run6) | `p6/gmu025/run{5,6}/blinkdepth/` |
+| Experiment G's third and fourth samples | `p6/gmu025/run{3,8}/robospatial/`. **Note**: their KV pool is 20 GB, the same as P4's run1/run2; they are samples under the same configuration, not a different configuration — see that directory's README |
+| Experiment C dumps | `p6/passk/{boppose,blinkdepth,robospatial}/` |
+| Experiment F's other two runs (run9 / run10) | `p6/fp32/run{9,10}/blinkdepth/`, with a README warning that looking only at run7 leads to the wrong conclusion |
+| Migration acceptance check (run4, P4 config) | `p4/dumps/run4/blinkdepth/` + `p4/logs/p4-run4-*` |
+| **run2/robospatial late submission** | `p4/dumps/run2/robospatial/` (run in P4 but never committed to the repo; 231/350 = 66.00%, consistent with `P4_RESULTS.md`) |
+| Variant and resident scripts | `tools/p6/variants/` (includes a README explaining each difference) |
 
-全部 dump 的 sha256 与卷上原件一致,关键数字可从仓库副本直接重算。
+The sha256 of every dump matches the original on the volume; key numbers can be recomputed directly from the repo copies.
 
 ---
 
-## 9. 未做与待定
+## 9. Not done and pending
 
-本次开机的 GPU 任务已全部结束。以下按「还需不需要 GPU」分。
+All GPU tasks for this GPU session are finished. The items below are split by "does it still need a GPU".
 
-### 需要 GPU,且被安装挡住
+### Needs GPU, blocked by installation
 
-- **实验 B 的换工具** —— 交接文档 §9 唯一未交付的产出(`p6/swap/depth_<tool>.jsonl`)。
-  Toolshed v1 只有一个深度工具,必须先装第二个深度模型。
-  收益已定界:近平局错题 17 个(略强的工具即可),自信错的 25 个(需显著更强)。
-- **更强的 pointing 工具** —— 同样要装新模型。Molmo 那一跑给的是下界与通路验证;
-  实测的互补性(oracle +10.83 pp / 43 个样本)说明方向应是「补上」而非「换掉」。
+- **Experiment B's tool swap** — the only undelivered output of handoff doc §9 (`p6/swap/depth_<tool>.jsonl`).
+  Toolshed v1 has only one depth tool; a second depth model must be installed first.
+  Gain is bounded: 17 near-tie wrong answers (a slightly stronger tool suffices), 25 confidently wrong (needs a significantly stronger one).
+- **A stronger pointing tool** — likewise requires installing a new model. The Molmo run gives a lower bound and path validation;
+  the measured complementarity (oracle +10.83 pp / 43 samples) says the direction should be "add" rather than "replace".
 
-两项的成本主要在下载与建环境,不在运行。
+The cost of both is mainly download and environment setup, not running.
 
-> **⚠ 2026-09-02 · 用户决定不装新工具,这两项状态改为「已决定不做」。**
-> 理由是范围:P7 检验的是换目标函数,换工具是正交路径,混做不可归因。
-> 已测得的 headroom(pointing oracle +10.83 pp / 43 个样本、深度近平局 17 个)
-> **保留为已量化的开放项**,不再安排实验。详见 `records/P7_DECISION.md` §0.2。
+> **⚠ 2026-09-02 · The user decided not to install new tools; these two items are now "decided not to do".**
+> Reason is scope: P7 tests swapping the objective function; swapping tools is an orthogonal path, and doing both at once cannot be attributed.
+> The measured headroom (pointing oracle +10.83 pp / 43 samples, depth near-ties 17)
+> **is kept as quantified open items**; no further experiments are scheduled. Details in `records/P7_DECISION.md` §0.2.
 
-### 需要 GPU,但不影响任何决定
+### Needs GPU, but does not affect any decision
 
-- **`[20]` fp32 定案** —— 现为 fp32 n=3 {107,105,105} 对 bf16 n=2 {108,109},
-  p≈0.1 不显著。两臂各补 3–4 次可定案。P4 全程用 bf16、内部一致,所以这只关系到
-  「bf16 相对论文是否引入偏差」,而论文用什么 dtype 未知。
-- **`[23]` 的因果** —— 80 GB / gmu=0.5 侧只有 n=1。决定依据是「复现 P4 的池子大小」,
-  不依赖「0.5 更差」,所以补点只回答科学问题。
-- **blinkdepth 多数表决@5** —— 110 对 greedy 的 107–109 是噪声级;要变成结论需多跑几次。
-  但 blinkdepth 不是缺口所在。
-- **实验 D 的实测 s/step** —— 需先备齐 RL 数据(3.38 GB / 5425 文件)与 SFT ckpt。
-  只能把「64–96 小时」变精确,不改变方向。
+- **Settling `[20]` fp32** — currently fp32 n=3 {107,105,105} vs bf16 n=2 {108,109},
+  p≈0.1, not significant. 3–4 more runs per arm would settle it. P4 used bf16 throughout and is internally consistent, so this only concerns
+  "does bf16 introduce a bias relative to the paper", and the paper's dtype is unknown.
+- **Causality of `[23]`** — the 80 GB / gmu=0.5 side has only n=1. The decision is based on "reproduce P4's pool size",
+  not on "0.5 is worse", so extra points only answer a scientific question.
+- **blinkdepth majority vote@5** — 110 vs greedy's 107–109 is noise-level; turning it into a conclusion needs more runs.
+  But blinkdepth is not where the gap is.
+- **Measured s/step for experiment D** — needs the RL data (3.38 GB / 5425 files) and SFT ckpt in place first.
+  It can only make "64–96 hours" precise, without changing the direction.
 
-### 不需要 GPU
+### Does not need GPU
 
-- **P6 的人工归类** —— 322 个错题里 223 个已自动定案,**还剩 99 个**。
-  分层抽样、双轮标注一致性(κ)、代表案例,全部离线。
-  **本次新增一条线索:VQA 有 43.9% 的题目在采样间摇摆**,这是现有三分类
-  (工具错 / 推理错 / 标注问题)之外的第四档,归类前应先决定怎么安置它。
-- **RoboSpatial VQA 的 −6.46 pp** —— 整份复现最后一个大缺口。
-  实验 G 排除了「论文报上界」,实验 C 显示自洽性能补掉约六成、剩约 2.2 pp。
-  `P5_RESULTS.md` §2① 的两条线索仍然有效。
-- **pose / grasp 叠图**(论文 Fig. 10–12 风格)—— `bopgrasp` 的 GT 是 5 个 2D 关键点。
-- **P5 / P6 正式报告成文。**
+- **P6 manual classification** — of 322 wrong answers, 223 are already settled automatically; **99 remain**.
+  Stratified sampling, two-round annotation agreement (κ), representative cases, all offline.
+  **New lead from this session: 43.9% of VQA questions swing between samples**; this is a fourth category outside the existing three
+  (tool error / reasoning error / annotation issue), and how to place it should be decided before classification.
+- **RoboSpatial VQA's −6.46 pp** — the last big gap in the whole reproduction.
+  Experiment G ruled out "the paper reports the upper bound"; experiment C shows self-consistency can close about 60%, leaving about 2.2 pp.
+  The two leads in `P5_RESULTS.md` §2① are still valid.
+- **pose / grasp overlays** (paper Fig. 10–12 style) — `bopgrasp`'s GT is 5 2D keypoints.
+- **Write up the formal P5 / P6 reports.**

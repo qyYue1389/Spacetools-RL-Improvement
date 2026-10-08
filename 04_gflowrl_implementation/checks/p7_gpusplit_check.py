@@ -34,13 +34,13 @@ def run(num_nodes, gpus_per_node, tool_gpus=None, train_gpus=None):
 
 cases = [
     # label,                     nodes gpn  TOOL TRAIN   expect
-    ("2 节点 8 卡(论文原配置,行为必须不变)", 2, 8, None, None, (8, 8)),
-    ("1 节点 8 卡(旧代码在这里死锁)",        1, 8, None, None, (2, 6)),
-    ("1 节点 6 卡(推荐配置)",                1, 6, None, None, (2, 4)),
-    ("1 节点 4 卡(最小配置)",                1, 4, None, None, (2, 2)),
-    ("1 节点 6 卡,显式 3/3",                 1, 6, 3, 3,       (3, 3)),
-    ("1 节点 4 卡,要 3+3 > 4 -> 必须报错",   1, 4, 3, 3,       None),
-    ("1 节点 2 卡,工具吃光 -> 必须报错",     1, 2, 2, 0,       None),
+    ("2 nodes 8 GPUs (paper's original config, behavior must not change)", 2, 8, None, None, (8, 8)),
+    ("1 node 8 GPUs (old code deadlocks here)",        1, 8, None, None, (2, 6)),
+    ("1 node 6 GPUs (recommended config)",                1, 6, None, None, (2, 4)),
+    ("1 node 4 GPUs (minimum config)",                1, 4, None, None, (2, 2)),
+    ("1 node 6 GPUs, explicit 3/3",                 1, 6, 3, 3,       (3, 3)),
+    ("1 node 4 GPUs, asks for 3+3 > 4 -> must error",   1, 4, 3, 3,       None),
+    ("1 node 2 GPUs, tools take everything -> must error",     1, 2, 2, 0,       None),
 ]
 
 ok = True

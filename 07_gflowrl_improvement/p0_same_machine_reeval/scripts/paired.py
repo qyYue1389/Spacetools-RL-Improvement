@@ -12,7 +12,7 @@ def mcn(b,c):
 for bench in ['robospatial','blinkdepth']:
     R={t:[load(f'/workspace/exp/p0/{t}/run{i}/{bench}/0.jsonl') for i in (1,2,3)] for t in TAGS}
     idx=sorted(R['sft'][0]); n=len(idx)
-    print(f'\n== {bench} n={n} · 三次配对逐样本(run i vs run i),分歧合并 ==')
+    print(f'\n== {bench} n={n} · three-run paired per-sample (run i vs run i), disagreements pooled ==')
     for a,b in [('sft','p4'),('sft','cp'),('p4','cp')]:
         B=C=0
         per=[]
@@ -20,11 +20,11 @@ for bench in ['robospatial','blinkdepth']:
             bb=sum(1 for i in idx if R[a][j][i] and not R[b][j][i])
             cc=sum(1 for i in idx if not R[a][j][i] and R[b][j][i])
             per.append((bb,cc)); B+=bb; C+=cc
-        print(f'  {NAME[a]}->{NAME[b]}: 每次(只前者对,只后者对)={per}  合并 {B} vs {C}  净 {C-B:+d}/3次  p={mcn(B,C):.4f}')
+        print(f'  {NAME[a]}->{NAME[b]}: per run (only former correct, only latter correct)={per}  pooled {B} vs {C}  net {C-B:+d}/3 runs  p={mcn(B,C):.4f}')
     # spread
     for t in TAGS:
         k={i:sum(r[i] for r in R[t]) for i in idx}
         flip=sum(1 for v in k.values() if 0<v<3)
         c=[sum(r.values()) for r in R[t]]
         sd=(flip/3)**0.5/2
-        print(f'  {NAME[t]}: 翻转带 {flip} -> 三次均值的 sd ≈ {sd:.2f} 题 (2σ ≈ {2*sd:.1f} 题)')
+        print(f'  {NAME[t]}: flip band {flip} -> sd of the three-run mean ≈ {sd:.2f} questions (2σ ≈ {2*sd:.1f} questions)')

@@ -1,311 +1,311 @@
-# SFT 训练学习笔记
+# SFT training study notes
 
-> 范围:batch 相关的配置、显存的来源、ZeRO 的取舍、配置的出处、框架分层。
-> 场景:SpaceTools Phase-1 SFT,Qwen2.5-VL-3B,4× A6000。
-> 依据:`SpaceTools-SFT` @ `b7ebbf3`(GitHub 源码)、论文 Table 4/6、2× A6000 实测报告。
-> 日期:2026-09-08
+> Scope: batch-related config, where GPU memory goes, the ZeRO trade-off, where the config comes from, framework layering.
+> Setting: SpaceTools Phase-1 SFT, Qwen2.5-VL-3B, 4× A6000.
+> Basis: `SpaceTools-SFT` @ `b7ebbf3` (GitHub source), paper Table 4/6, 2× A6000 measured run report.
+> Date: 2026-09-08
 
 ---
 
-## 1. `per_device_train_batch_size` 与 `gradient_accumulation_steps`
+## 1. `per_device_train_batch_size` and `gradient_accumulation_steps`
 
-两个都是在凑**"一次参数更新用多少条样本"**。
+Both are there to make up **"how many samples one parameter update uses"**.
 
-| | 含义 | 影响 |
+| | Meaning | Effect |
 |---|---|---|
-| `per_device_train_batch_size` | 每张卡一次前向/反向塞几条 | **决定显存峰值** |
-| `gradient_accumulation_steps`(简称 `ga`) | 累积几次梯度才更新一次权重 | 几乎不占显存,**用时间换显存** |
+| `per_device_train_batch_size` | How many samples each GPU pushes through one forward/backward | **Sets peak GPU memory** |
+| `gradient_accumulation_steps` (short: `ga`) | How many gradient accumulations before one weight update | Uses almost no GPU memory, **trades time for GPU memory** |
 
 ```
-全局 batch = per_device × ga × 卡数
+global batch = per_device × ga × number of GPUs
 ```
 
-**这个乘积决定训练的数学结果;三个因子怎么分配不影响结果,只影响显存和速度。**
+**This product determines the mathematical result of training; how it is split among the three factors does not change the result, only GPU memory and speed.**
 
-`ga=2` 的实际过程:
+What `ga=2` actually does:
 
 ```
-前向反向(2条) → 梯度存着,不更新
-前向反向(2条) → 梯度加上去 → 这时才 optimizer.step()
+forward/backward (2 samples) → keep gradients, no update
+forward/backward (2 samples) → add gradients → only now optimizer.step()
 ```
 
-等价于一次吃 4 条,但显存只按 2 条算。
+Equivalent to taking 4 samples at once, but GPU memory is only counted for 2.
 
 ---
 
-## 2. 为什么卡越多越快
+## 2. Why more GPUs is faster
 
-本项目全局 batch 锁死为 8,按卡数均分:
+In this project the global batch is locked at 8, split evenly across GPUs:
 
-| 卡数 | per_device | ga | per_device × ga<br>(每张卡要过几条) | 显存 | 实测/估计时长 |
+| GPUs | per_device | ga | per_device × ga<br>(samples each GPU must process) | GPU memory | Measured/estimated time |
 |--:|--:|--:|--:|---|--:|
-| 2 | 2 | 2 | **4 条** | 紧(实测余量 0.6 GiB) | 9.3 h(实测外推) |
-| **4** | **2** | **1** | **2 条** | 宽(~10 GiB) | **5–6 h** |
-| 8 | 1 | 1 | **1 条** | 最宽 | 3–4 h |
+| 2 | 2 | 2 | **4 samples** | Tight (measured headroom 0.6 GiB) | 9.3 h (extrapolated from measurement) |
+| **4** | **2** | **1** | **2 samples** | Roomy (~10 GiB) | **5–6 h** |
+| 8 | 1 | 1 | **1 sample** | Roomiest | 3–4 h |
 
-卡是**同时**干活的,所以一次更新的耗时取决于"单张卡要过几条",不是总共 8 条。
-4 → 2 → 1,每次减半。
+The GPUs work **in parallel**, so the time per update depends on "how many samples a single GPU must process", not on the total of 8.
+4 → 2 → 1, halving each time.
 
-**比喻**:8 箱货搬完算一轮。2 个人每人扛 2 箱要跑 2 趟(这就是 `ga=2`);
-4 个人每人扛 2 箱,1 趟搞定。`ga` 就是"人不够时让同一个人多跑几趟"——
-货照样搬完(数学结果一样),但时间是串起来的。
+**Analogy**: one round = moving 8 boxes. 2 people each carrying 2 boxes have to make 2 trips (that is `ga=2`);
+4 people each carrying 2 boxes finish in 1 trip. `ga` is "when there aren't enough people, have the same person make more trips" —
+the boxes still all get moved (same mathematical result), but the time is serialized.
 
-**两个不能线性外推的地方:**
+**Two places where you cannot extrapolate linearly:**
 
-1. **不是严格翻倍。** 每次更新结束所有卡要 all-reduce 梯度,卡越多同步开销越大。
-   实测 2 卡 9.3 h,4 卡估 5–6 h,接近 2 倍但不到。
-2. **8 卡那行是理论值。** 数据集只有 4 个分片,超过 4 卡会有 rank 分不到数据。
-   **对本项目 4 卡就是实际最优点。**
+1. **Not exactly 2×.** At the end of every update all GPUs must all-reduce gradients; more GPUs means more sync overhead.
+   Measured 2 GPUs 9.3 h, 4 GPUs estimated 5–6 h: close to 2× but not quite.
+2. **The 8-GPU row is theoretical.** The dataset has only 4 shards; beyond 4 GPUs some ranks get no data.
+   **For this project, 4 GPUs is the practical optimum.**
 
 ---
 
-## 3. per_device 怎么决定显存峰值
+## 3. How per_device sets peak GPU memory
 
 ```
-显存 = 固定部分(不随它变) + 每条样本的部分(随它线性增长)
+GPU memory = fixed part (does not change with it) + per-sample part (grows linearly with it)
 ```
 
-**固定部分** —— 参数 bf16 + 梯度 + 优化器态(ZeRO-2 已按卡分片)。给 4 条还是 1 条都一样大。
+**Fixed part** — parameters in bf16 + gradients + optimizer state (already sharded across GPUs by ZeRO-2). Same size whether you give it 4 samples or 1.
 
-**线性部分** —— 激活值,以及真正的元凶:**logits 张量**。
+**Linear part** — activations, and the real culprit: **the logits tensor**.
 
 ```
-logits 显存 ≈ per_device × 序列长度 × 词表大小 × 2 字节
+logits GPU memory ≈ per_device × sequence length × vocab size × 2 bytes
 ```
 
-Qwen2.5-VL 词表 **151,936**,每条样本每个 token 就要 0.3 MB。代入 ~6900 token:
+Qwen2.5-VL has a vocab of **151,936**, so each token of each sample costs 0.3 MB. Plugging in ~6900 tokens:
 
-| per_device | logits 尖峰 |
+| per_device | logits spike |
 |--:|--:|
 | 1 | ~2 GiB |
 | 2 | ~4 GiB |
-| **4** | **~8 GiB** ← 实测撑爆的就是它 |
+| **4** | **~8 GiB** ← this is what blew up in the measured run |
 
-A6000 上 `per_device=4` 的实测:**稳态 39.8 GiB + 尖峰 8.4 GiB ≈ 48 GiB**,正好等于卡容量,两张卡一起炸。
-所以脚本把 `per_device` 上限锁在 2。
+Measured with `per_device=4` on A6000: **steady state 39.8 GiB + spike 8.4 GiB ≈ 48 GiB**, exactly the GPU's capacity; both GPUs crashed together.
+So the script caps `per_device` at 2.
 
-**两个推论:**
+**Two corollaries:**
 
-1. **它是瞬时尖峰,不是稳态。** `nvidia-smi` 隔秒采样很可能看不到,但 OOM 是它触发的。
-2. **`cutoff_len` 和它相乘。** 现在 `cutoff_len: 8192` 比观测到的最长序列 6900 还高 19%,
-   遇到顶格长样本,`per_device=2` 的尖峰会从 4 GiB 涨到 4.9 GiB。
-   这就是"2 卡(余量 0.6 GiB)接近必然 OOM"的算法。
+1. **It is a transient spike, not steady state.** `nvidia-smi` sampling once a second will very likely miss it, but it is what triggers the OOM.
+2. **`cutoff_len` multiplies with it.** The current `cutoff_len: 8192` is 19% above the longest observed sequence of 6900;
+   on a sample at full length, the `per_device=2` spike grows from 4 GiB to 4.9 GiB.
+   That is the arithmetic behind "2 GPUs (headroom 0.6 GiB) are close to certain to OOM".
 
-### ⚠ 6900 这个数是反解的,不是量的
+### ⚠ The 6900 figure is back-solved, not measured
 
-`per_device=4` OOM 时 PyTorch 报出失败分配的大小(~8.4 GB),套上面的公式反解:
+When `per_device=4` OOMed, PyTorch reported the size of the failed allocation (~8.4 GB); back-solving with the formula above:
 
 ```
-8.4e9 字节 ÷ (4 × 151936 × 2 字节) ≈ 6900 token
+8.4e9 bytes ÷ (4 × 151936 × 2 bytes) ≈ 6900 tokens
 ```
 
-性质:
+Properties:
 
-- **是那 30 步里最长的那个 batch**,不是平均值。用来算 OOM 余量正合适(余量按最坏情况算),
-  **不能当"典型序列长度"**。
-- 依赖一个假设:那次失败分配确实是 logits 张量。数量级和形状对得上,但没有独立验证。
+- **It is the longest batch in those 30 steps**, not the average. Fine for computing OOM headroom (headroom is computed against the worst case),
+  **but it must not be used as the "typical sequence length"**.
+- It relies on one assumption: that the failed allocation really was the logits tensor. Order of magnitude and shape match, but it has not been independently verified.
 
-> 早先用 ~3300 token 估 MFU 得出"开销主导"的结论,就是被这个数推翻的。
-> 要坐实它,用 ckpt 的 tokenizer 对 `train.json` 跑一遍出长度分布(mean / p95 / max),几分钟的事。
+> The earlier conclusion that training is "overhead-dominated", from estimating MFU with ~3300 tokens, was overturned by this number.
+> To confirm it, run the ckpt's tokenizer over `train.json` and get the length distribution (mean / p95 / max); a few minutes of work.
 
 ---
 
-## 4. per_device 和 ga 的具体取值怎么来的
+## 4. Where the concrete per_device and ga values come from
 
 ```bash
 PER_DEVICE=$(( 8 / GPU_COUNT ));  [ "$PER_DEVICE" -gt 2 ] && PER_DEVICE=2
 GRAD_ACCUM=$(( 8 / (GPU_COUNT * PER_DEVICE) ))
 ```
 
-| 卡数 | 8 ÷ 卡数 | per_device | ga |
+| GPUs | 8 ÷ GPUs | per_device | ga |
 |--:|--:|--:|--:|
 | 8 | 1 | 1 | 1 |
 | 4 | 2 | 2 | 1 |
-| 2 | 4 → **封顶 2** | 2 | 2 |
+| 2 | 4 → **capped at 2** | 2 | 2 |
 
-8 卡和 4 卡就是除出来的,没有额外考虑。**上限 2 那一档才是人为加的** ——
-2 卡本该分到 4,但 `per_device=4` 实测 OOM,所以卡在 2,差额甩给 `ga=2` 去补。
+The 8-GPU and 4-GPU values are just the division, nothing else considered. **Only the cap at 2 was added by hand** —
+2 GPUs should get 4, but `per_device=4` OOMed in the measured run, so it is held at 2 and the difference is handed to `ga=2` to make up.
 
-**优先级:能不动 `ga` 就不动**(它慢),先把 `per_device` 顶到显存允许的最大;顶不动了再让 `ga` 兜底。
-
----
-
-## 5. 为什么 ga 越大越慢,慢的是什么
-
-**慢的不是 ga 本身,是"每次前向反向喂的样本变少了"。**
-
-同样是每卡过 2 条:
-
-- `per_device=2, ga=1` —— 一次算 2 条
-- `per_device=1, ga=2` —— 分两次,每次算 1 条
-
-总计算量一样,但后者把这些**固定开销付了两遍**:
-
-- kernel 启动、layernorm/softmax 这类不随 batch 变的开销
-- gradient checkpointing 的重算
-- 数据加载与拼 batch
-
-而且矩阵更"瘦",GPU 并行度用不满 —— 这是主要原因。
-
-> ⚠ **对本项目这个惩罚可能很小**:单条样本就有 ~6900 token,序列维度已经把 GPU 喂得挺饱,
-> 再叠一条 batch 的并行度增益有限。实测 `per_device=2` 是 MFU 32%,
-> `per_device=1 + ga=2` **没测过,不知道差多少**。
-
-**所以让 2 卡比 4 卡慢一倍的是卡少,不是 ga** —— ga 只是卡少之后为了凑够全局 batch 8 的被动结果。
+**Priority: leave `ga` alone if you can** (it is slow); first push `per_device` to the maximum GPU memory allows; only when it can't go higher let `ga` cover the rest.
 
 ---
 
-## 6. 全局 batch 为什么写死是 8
+## 5. Why larger ga is slower, and what exactly is slow
 
-不是随便定的,**为了对齐论文**,而且这次有两个独立来源一致:
+**What is slow is not ga itself, but "fewer samples fed per forward/backward".**
 
-1. **论文 Table 6** 写 Batch Size = 8
-2. **上游 `run_sft.sh`** 默认 `per_device=1, ga=1, NUM_GPUS=8` → 1×1×8 = 8
+Both cases process 2 samples per GPU:
 
-> Table 6 和代码在别处已经打过四次架(lr 1e-5 vs 2e-5、Epoch 2 vs 3.42、步数超出、样本数)。
-> **batch=8 是少数两边对得上的**,所以这个数比其他几个可信。
+- `per_device=2, ga=1` — compute 2 samples at once
+- `per_device=1, ga=2` — split into two passes, 1 sample each
 
-**不能随便改的原因**:全局 batch 和 `lr=2e-5`、`max_steps` 是一套调好的组合,动了 batch
-等于换了一组超参。而这个 ckpt 是两臂 RL 对比的**共同起点 π_ref**,起点换了后面所有结果都没法和论文对话。
+Total compute is the same, but the latter pays these **fixed overheads twice**:
 
-如果不打算声称复现 SpaceTools,batch 想设多少设多少(配套重调 lr)。
-**是"复现"这个目标把它钉死的,不是技术限制。**
+- kernel launches, layernorm/softmax and other overheads that don't scale with batch
+- gradient checkpointing recomputation
+- data loading and batch assembly
+
+And the matrices are "thinner", so GPU parallelism isn't fully used — this is the main reason.
+
+> ⚠ **For this project the penalty may be small**: a single sample already has ~6900 tokens, the sequence dimension already keeps the GPU fairly well fed,
+> and the parallelism gain from stacking one more sample in the batch is limited. Measured `per_device=2` gives MFU 32%;
+> `per_device=1 + ga=2` **has not been measured, the difference is unknown**.
+
+**So what makes 2 GPUs twice as slow as 4 is fewer GPUs, not ga** — ga is just the passive consequence of having fewer GPUs and still needing a global batch of 8.
+
+---
+
+## 6. Why the global batch is hard-coded to 8
+
+It was not picked at random; **it is there to match the paper**, and this time two independent sources agree:
+
+1. **Paper Table 6** says Batch Size = 8
+2. **Upstream `run_sft.sh`** defaults to `per_device=1, ga=1, NUM_GPUS=8` → 1×1×8 = 8
+
+> Table 6 and the code have already disagreed four times elsewhere (lr 1e-5 vs 2e-5, Epoch 2 vs 3.42, step count exceeded, sample count).
+> **batch=8 is one of the few things both sides agree on**, so this number is more trustworthy than the others.
+
+**Why it can't be changed casually**: the global batch, `lr=2e-5` and `max_steps` are a tuned set; changing the batch
+is equivalent to switching to a different set of hyperparameters. And this ckpt is the **shared starting point π_ref** for the two-arm RL comparison; change the starting point and none of the later results can be compared with the paper.
+
+If you don't intend to claim a reproduction of SpaceTools, set the batch to whatever you like (and retune lr to match).
+**It is the "reproduction" goal that pins it, not a technical limitation.**
 
 ---
 
 ## 7. ZeRO-2 vs ZeRO-3
 
-**常见误解:ZeRO-3 通信更快。实际相反 —— ZeRO-3 通信更多。**
+**Common misconception: ZeRO-3 communicates faster. It's the opposite — ZeRO-3 communicates more.**
 
-| | 分片什么 | 每步通信量 | 通信形态 |
+| | What is sharded | Communication volume per step | Communication pattern |
 |---|---|--:|---|
-| **ZeRO-2** | 梯度 + 优化器态(参数每卡一份完整的) | **2Ψ** | 一次 reduce-scatter + 一次 all-gather |
-| **ZeRO-3** | 再加上**参数本身** | **3Ψ**(1.5×) | 前向**每层** all-gather、反向**再来一遍**、加梯度 reduce-scatter |
+| **ZeRO-2** | Gradients + optimizer state (each GPU keeps a full copy of the parameters) | **2Ψ** | One reduce-scatter + one all-gather |
+| **ZeRO-3** | Additionally **the parameters themselves** | **3Ψ** (1.5×) | Forward all-gather **per layer**, backward **again**, plus gradient reduce-scatter |
 
-(Ψ = 参数量)
+(Ψ = parameter count)
 
-ZeRO-3 更慢有两层原因:
+ZeRO-3 is slower for two reasons:
 
-1. **量更大** —— 1.5 倍
-2. **形态更差** —— 拆成每层一次小通信,**延迟敏感**。A6000 之间走 PCIe(无 NVLink),
-   延迟高带宽低,这种碎通信最吃亏
+1. **More volume** — 1.5×
+2. **Worse pattern** — split into one small communication per layer, **latency-sensitive**. A6000s talk over PCIe (no NVLink),
+   high latency and low bandwidth; this kind of fragmented communication suffers the most
 
-**ZeRO-3 换来的是显存**:参数也分片,能训放不下的大模型。
-**它是"装不下时才用"的手段,不是优化手段。**
+**What ZeRO-3 buys is GPU memory**: parameters are sharded too, so you can train large models that otherwise don't fit.
+**It is a "use only when it doesn't fit" tool, not an optimization.**
 
-### 论文用的是哪个
+### Which one the paper used
 
-**论文没写。** Table 6 只列 batch / lr / epoch / warmup / KL / 长度 / GPU 数,
-**没有任何 DeepSpeed 或 ZeRO 字样**,正文也没提。z3 只出现在代码里:
+**The paper doesn't say.** Table 6 only lists batch / lr / epoch / warmup / KL / length / GPU count;
+**no mention of DeepSpeed or ZeRO anywhere**, and the main text doesn't mention it either. z3 appears only in the code:
 
 ```
 run_sft.sh:210   deepspeed: examples/deepspeed/ds_z3_config.json
 ```
 
-代码为什么选 z3,**只能推测,没有依据可引**:
+Why the code picked z3 **can only be guessed; there is no source to cite**:
 
-1. LLaMA-Factory 全量微调的默认示例就是 z3 —— 很可能只是照搬
-2. 他们在 8× A100-80 上跑,有 NVSwitch 600 GB/s,z3 的碎通信几乎不花钱
-3. z3 最省显存最不会 OOM,是"总能跑通"的稳妥默认
+1. LLaMA-Factory's default full-finetuning example is z3 — very likely just copied over
+2. They ran on 8× A100-80 with NVSwitch 600 GB/s, where z3's fragmented communication costs almost nothing
+3. z3 saves the most GPU memory and is least likely to OOM; a safe "always runs" default
 
-> 3B 模型在 80 GB 卡上用 z2 也绰绰有余,所以**在他们的硬件上 z2/z3 大概率没区别**。
-> 这更像是没做选择,而不是做了选择。
+> A 3B model on 80 GB GPUs has plenty of room with z2 too, so **on their hardware z2/z3 very likely make no difference**.
+> This looks more like no choice was made than like a choice was made.
 
-**我们的改动:z3 → z2**,因为 A6000 无 NVLink,3B 模型 48 GB 用 z2 装得下。
+**Our change: z3 → z2**, because A6000 has no NVLink and the 3B model fits in 48 GB with z2.
 
 ---
 
 ## 8. `use_reentrant_gc`
 
-**是 gradient checkpointing 用哪个实现。**
+**It selects which implementation gradient checkpointing uses.**
 
-Gradient checkpointing 本身 = 前向不存中间激活值,反向时重算 —— **用算力换显存**。
-PyTorch 有两套实现:
+Gradient checkpointing itself = don't store intermediate activations in the forward pass, recompute them in backward — **trade compute for GPU memory**.
+PyTorch has two implementations:
 
-| | 机制 | 状态 |
+| | Mechanism | Status |
 |---|---|---|
-| `use_reentrant=True` | 老的,靠 autograd 重入 | PyTorch 已在弃用,未来默认翻成 False |
-| `use_reentrant=False` | 新的,靠 saved-tensor hooks | 兼容性更好,官方推荐 |
+| `use_reentrant=True` | Old, relies on autograd re-entrance | Being deprecated in PyTorch; default will flip to False in the future |
+| `use_reentrant=False` | New, relies on saved-tensor hooks | Better compatibility, officially recommended |
 
-**我们改了**(上游没设,LLaMA-Factory 默认 `True`):
+**We changed it** (upstream doesn't set it; LLaMA-Factory defaults to `True`):
 
 ```yaml
 + use_reentrant_gc: false
 ```
 
-报告里给的理由是"更快"。**这条没有实测支撑**,是当时的判断,不是量出来的。
+The reason given in the report was "faster". **This has no measurement behind it**; it was a judgment at the time, not measured.
 
-更实在的理由是 reentrant 版本的一个经典静默坑:**如果一个 checkpoint 段的输入全都不需要梯度,
-反向会被直接跳过,不报错**。本配置正好 `freeze_vision_tower: true` +
-`freeze_multi_modal_projector: true`,是最容易撞上的形状。
-(实际 embedding 可训练,大概率不触发,但没必要留这个风险。)
+The more solid reason is a classic silent pitfall of the reentrant version: **if none of a checkpoint segment's inputs require gradients,
+the backward is skipped entirely, with no error**. This config has exactly `freeze_vision_tower: true` +
+`freeze_multi_modal_projector: true`, the shape most likely to hit it.
+(In practice the embedding is trainable, so it very likely won't trigger, but there's no need to keep the risk.)
 
-**不改变数学结果** —— 两种实现算出的梯度相同,只是重算路径不同。
+**It does not change the mathematical result** — both implementations compute the same gradients, only the recomputation path differs.
 
 ---
 
-## 9. 这些配置都是哪里来的
+## 9. Where all this config comes from
 
-三个来源,层层叠上去:
+Three sources, layered on top of each other:
 
-### ① 上游 `run_sft.sh`(绝大部分)
+### ① Upstream `run_sft.sh` (the vast majority)
 
-`sft_config.yaml` **不是仓库里的独立文件**,是脚本里一段 heredoc **每次运行现生成的**(第 238 行起)。
-`finetuning_type` / `freeze_*` / `cutoff_len` / `lr` / `streaming` / `save_steps` 都写死在那儿。
+`sft_config.yaml` **is not a standalone file in the repo**; it is a heredoc in the script **generated fresh on every run** (from line 238).
+`finetuning_type` / `freeze_*` / `cutoff_len` / `lr` / `streaming` / `save_steps` are all hard-coded there.
 
-### ② 论文 Table 6(只覆盖七八个数)
+### ② Paper Table 6 (covers only seven or eight numbers)
 
-Batch 8、lr、Epoch、Warmup 0.1、cosine、Max Prompt/Response 8192、#GPU 8。
-**其余全没写**(含 ZeRO stage、cutoff_len、image_max_pixels、eval 设置)。
+Batch 8, lr, Epoch, Warmup 0.1, cosine, Max Prompt/Response 8192, #GPU 8.
+**Nothing else is specified** (including ZeRO stage, cutoff_len, image_max_pixels, eval settings).
 
-### ③ 我们加的偏离(五条)
+### ③ Deviations we added (five)
 
-| 改动 | 从 → 到 | 性质 |
+| Change | From → to | Nature |
 |---|---|---|
-| `per_device` / `ga` | 写死 1/1 → 按卡数推导 | **修正** —— 原值在 4 卡上会静默变成全局 batch 4 |
-| `deepspeed` | z3 → z2 | 性能,A6000 无 NVLink |
-| `save_only_model` | false → true | 磁盘,代价是**不能续训** |
-| `eval_steps` | 5 → 500 | 3000 步不必评 600 次 |
-| `use_reentrant_gc` | 未设 → false | 兼容性 |
+| `per_device` / `ga` | hard-coded 1/1 → derived from GPU count | **Fix** — the original values would silently become global batch 4 on 4 GPUs |
+| `deepspeed` | z3 → z2 | Performance, A6000 has no NVLink |
+| `save_only_model` | false → true | Disk; the cost is **no resuming training** |
+| `eval_steps` | 5 → 500 | 3000 steps don't need 600 evals |
+| `use_reentrant_gc` | unset → false | Compatibility |
 
-**四条都不改变训练的数学结果**,第一条是把已经错了的改对。
+**None of the four changes the mathematical result of training**; the first one corrects something that was already wrong.
 
-> **层次总结:论文定了少数几个关键超参,代码填满其余,我们只动了工程层。**
+> **Layer summary: the paper fixed a few key hyperparameters, the code fills in the rest, and we only touched the engineering layer.**
 
 ---
 
-## 10. 框架分层
+## 10. Framework layering
 
-`run_sft.sh` **不是 LLaMA-Factory 提供的**。
+`run_sft.sh` **is not provided by LLaMA-Factory**.
 
-**LLaMA-Factory(框架)提供:**
+**LLaMA-Factory (the framework) provides:**
 
-- `llamafactory.cli train` 入口
-- `sft_config.yaml` 的**字段定义** —— `finetuning_type` / `freeze_vision_tower` /
-  `cutoff_len` / `use_reentrant_gc` / `deepspeed` 这些 key 是框架 schema
+- the `llamafactory.cli train` entry point
+- the **field definitions** of `sft_config.yaml` — keys such as `finetuning_type` / `freeze_vision_tower` /
+  `cutoff_len` / `use_reentrant_gc` / `deepspeed` are the framework's schema
 - `examples/deepspeed/ds_z2_config.json` / `ds_z3_config.json`
-- `data/dataset_info.json` 的注册机制
+- the registration mechanism of `data/dataset_info.json`
 
-**SpaceTools 作者自己写的:**
+**Written by the SpaceTools authors themselves:**
 
-- `scripts/spacetools/run_sft.sh` —— **这个目录在上游 LLaMA-Factory 里不存在**
-- 下载 `siyich/spacetools-sft`、按 `toolshed_config.yaml` 重写 system prompt、
-  v1 过滤 887 条 robot 样本
-- 生成 `sft_config.yaml` 的那段 heredoc(**填什么值是他们定的**)
-- Phase 3 的 ckpt 修补(删 `text_config`、置 `tie_word_embeddings`、拷 `preprocessor_config.json`)
+- `scripts/spacetools/run_sft.sh` — **this directory does not exist in upstream LLaMA-Factory**
+- downloading `siyich/spacetools-sft`, rewriting the system prompt per `toolshed_config.yaml`,
+  v1 filtering out 887 robot samples
+- the heredoc that generates `sft_config.yaml` (**the values that go in were chosen by them**)
+- the Phase 3 ckpt fix-up (delete `text_config`, set `tie_word_embeddings`, copy `preprocessor_config.json`)
 
-**准确的说法:字段是框架的,值和流程是论文作者的。**
+**The accurate way to put it: the fields belong to the framework; the values and the pipeline belong to the paper's authors.**
 
-### 整体分层
+### Overall layering
 
-| 层 | 是什么 | 干什么 |
+| Layer | What it is | What it does |
 |---|---|---|
-| **HF Transformers / Trainer** | 底层 | 模型、优化器、`per_device` 这些参数 |
-| **LLaMA-Factory** | SFT/微调框架 | 数据加载、多模态模板(`template: qwen2_vl`)、训练循环、接 DeepSpeed |
-| **DeepSpeed** | 分布式后端 | ZeRO 分片 |
-| **SpaceTools-SFT** | LLaMA-Factory 的 **fork** | 加 `run_sft.sh`:数据准备 + 配置 + ckpt 修补 |
+| **HF Transformers / Trainer** | Bottom layer | Model, optimizer, parameters such as `per_device` |
+| **LLaMA-Factory** | SFT/finetuning framework | Data loading, multimodal template (`template: qwen2_vl`), training loop, DeepSpeed integration |
+| **DeepSpeed** | Distributed backend | ZeRO sharding |
+| **SpaceTools-SFT** | A **fork** of LLaMA-Factory | Adds `run_sft.sh`: data prep + config + ckpt fix-up |
 
-RL 侧结构完全平行:
+The RL side has exactly the same structure:
 
 ```
 SFT:  LLaMA-Factory  ←fork←  SpaceTools-SFT
@@ -314,53 +314,53 @@ RL:   verl           ←fork←  SpaceTools-RL
 
 ---
 
-## 11. 4× A6000 相比论文 8× A100,用到了什么分布式优化
+## 11. Compared with the paper's 8× A100, what distributed optimizations did 4× A6000 use
 
-**基本没有。我们没加优化,只做了一处硬件适配。**
+**Essentially none. We added no optimizations, only one hardware adaptation.**
 
-| 技巧 | 论文 8×A100 | 我们 4×A6000 | 谁定的 |
+| Technique | Paper 8×A100 | Ours 4×A6000 | Who decided |
 |---|:-:|:-:|---|
-| 数据并行 | ✓ | ✓ | 框架 |
-| ZeRO 分片 | **z3** | **z2** | ← 唯一的改动 |
-| Gradient checkpointing | ✓ | ✓ | LLaMA-Factory 默认开 |
-| bf16 混合精度 | ✓ | ✓ | 配置 |
-| flash-attn 2 | ✓ | ✓ | `flash_attn: auto` 默认,装了就用 |
-| 冻结 vision tower + projector | ✓ | ✓ | 论文设计,可训参数 4.07B → 2.55B |
-| streaming 数据集 | ✓ | ✓ | 配置 |
-| 梯度累积 | ✗(ga=1) | ✗(4 卡也是 ga=1) | 推导出来的 |
+| Data parallelism | ✓ | ✓ | Framework |
+| ZeRO sharding | **z3** | **z2** | ← the only change |
+| Gradient checkpointing | ✓ | ✓ | On by default in LLaMA-Factory |
+| bf16 mixed precision | ✓ | ✓ | Config |
+| flash-attn 2 | ✓ | ✓ | `flash_attn: auto` default, used if installed |
+| Frozen vision tower + projector | ✓ | ✓ | Paper design, trainable params 4.07B → 2.55B |
+| Streaming dataset | ✓ | ✓ | Config |
+| Gradient accumulation | ✗ (ga=1) | ✗ (ga=1 on 4 GPUs too) | Derived |
 
-**z3 → z2 也不是"优化",是换了个更适合 PCIe 的权衡** —— 用多占显存换掉那 1.5 倍碎通信。
-在 NVSwitch 上这个换划不来,在我们这儿划得来。
+**z3 → z2 isn't an "optimization" either; it's a trade-off better suited to PCIe** — spend more GPU memory to get rid of that 1.5× fragmented communication.
+On NVSwitch the trade isn't worth it; here it is.
 
-### 真正能提速但没用的
+### Things that would actually speed it up but weren't used
 
-(以下默认值均核自 `SpaceTools-SFT@b7ebbf3` 的 `hparams/model_args.py` / `data_args.py`)
+(All defaults below were checked against `hparams/model_args.py` / `data_args.py` in `SpaceTools-SFT@b7ebbf3`)
 
-| 选项 | 默认 | 能干什么 | 为什么没开 |
+| Option | Default | What it does | Why it's off |
 |---|---|---|---|
-| `enable_liger_kernel` | `False` | **融合 cross-entropy,logits 张量根本不落地** —— 正好干掉那 8 GiB 尖峰 | 融合算子改变数值,π_ref 带偏离 |
-| `packing` / `neat_packing` | `None` / `False` | 短样本拼进一条,`cutoff_len=8192` 的浪费能收回一大块 | 改变 attention mask 语义,**确定改变数学结果** |
-| `disable_gradient_checkpointing` | `False` | 4 卡有 ~10 GiB 余量,关掉能快 20–30% | 余量吃不下 |
+| `enable_liger_kernel` | `False` | **Fused cross-entropy, the logits tensor is never materialized** — exactly kills that 8 GiB spike | Fused ops change numerics, π_ref would carry a deviation |
+| `packing` / `neat_packing` | `None` / `False` | Packs short samples into one, recovering much of the waste from `cutoff_len=8192` | Changes attention-mask semantics, **definitely changes the mathematical result** |
+| `disable_gradient_checkpointing` | `False` | 4 GPUs have ~10 GiB headroom; turning it off could be 20–30% faster | The headroom can't absorb it |
 
-Liger 是最可惜的一个 —— 它针对的正是本项目的瓶颈。但这个 ckpt 是两臂 RL 的共同起点,
-**为跑快 20% 引入数值偏离不划算**。
+Liger is the biggest pity — it targets exactly this project's bottleneck. But this ckpt is the shared starting point of the two-arm RL,
+**introducing numerical deviation to run 20% faster isn't worth it**.
 
-> **诚实的结论:我们是在用更少更弱的卡跑同一件事,靠 ga 和 z2 把它塞进去,不是靠优化跑得更快。**
-> 4 卡 5–6 h vs 论文 8 卡 3–4 h,这个比例基本就是硬件差距本身。
+> **Honest conclusion: we are running the same job on fewer, weaker GPUs, squeezing it in with ga and z2, not running it faster through optimization.**
+> 4 GPUs 5–6 h vs the paper's 8 GPUs 3–4 h; that ratio is essentially the hardware gap itself.
 
 ---
 
-## 附:本笔记里不确定的三处
+## Appendix: three uncertain points in these notes
 
-写下来是为了避免它们日后被当成实测事实引用。
+Written down so they don't later get cited as measured facts.
 
-| 项 | 状态 | 怎么坐实 |
+| Item | Status | How to confirm |
 |---|---|---|
-| **~6900 token** | 从 OOM 报错反解,依赖"失败分配即 logits"的假设;且是**最长**不是典型 | 用 ckpt 的 tokenizer 对 `train.json` 跑长度分布 |
-| **`use_reentrant=False` 更快** | 判断,非实测。兼容性理由更硬 | 同配置各跑 30 步比 `s/it` |
-| **`ga` 的速度惩罚在本负载上很小** | 推理(6900 token 已喂饱 GPU),`per_device=1+ga=2` 没跑过 | 4 卡上跑一次 `per_device=1, ga=2` 的 30 步 |
+| **~6900 tokens** | Back-solved from the OOM error, relies on the assumption "the failed allocation is the logits"; and it's the **longest**, not typical | Run the ckpt's tokenizer over `train.json` for the length distribution |
+| **`use_reentrant=False` is faster** | A judgment, not measured. The compatibility reason is stronger | Run 30 steps of each with the same config and compare `s/it` |
+| **The speed penalty of `ga` is small on this workload** | Reasoning (6900 tokens already saturate the GPU); `per_device=1+ga=2` has never been run | Run one 30-step `per_device=1, ga=2` on 4 GPUs |
 
-另外两个和本笔记相邻、已知但未决的:
+Two more, adjacent to these notes, known but open:
 
-- **`max_steps` 3000(代码)vs Epoch 2 → 1755(Table 6)** —— 本次跑的是 3000
-- **`lr` 2e-5(代码)vs 1e-5(Table 6)** —— 本次跑的是 2e-5
+- **`max_steps` 3000 (code) vs Epoch 2 → 1755 (Table 6)** — this run used 3000
+- **`lr` 2e-5 (code) vs 1e-5 (Table 6)** — this run used 2e-5

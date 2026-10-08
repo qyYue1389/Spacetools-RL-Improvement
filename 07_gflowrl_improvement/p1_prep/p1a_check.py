@@ -1,11 +1,11 @@
 """
-P1-a 自检:过滤退化组(g~ 置零)在 on-policy 下与 loss mask 逐位等价。
+P1-a self-check: filtering degenerate groups (zeroing g~) is bit-for-bit equivalent to a loss mask under on-policy.
 
-与 p7_fixedpoint_check.py 同样的纪律:从真实源文件里抽出函数源码 exec,不重抄。
-  PATCHED = 打了 P1-a 补丁的 ray_trainer.py
-  ORIG    = 未打补丁的 ray_trainer.py(用来确认 filter 关闭时逐位无回归)
-  CORE    = core_algos.py(compute_policy_loss_gflowrl,未改)
-用法: python p1a_check.py PATCHED ORIG CORE
+Same discipline as p7_fixedpoint_check.py: extract the function source from the real source file and exec it, not a re-copy.
+  PATCHED = ray_trainer.py with the P1-a patch applied
+  ORIG    = unpatched ray_trainer.py (used to confirm bit-for-bit no regression when the filter is off)
+  CORE    = core_algos.py (compute_policy_loss_gflowrl, unchanged)
+Usage: python p1a_check.py PATCHED ORIG CORE
 """
 import ast, sys, types
 import numpy as np
@@ -56,10 +56,10 @@ lengths = torch.randint(20, T + 1, (B,))
 mask = (torch.arange(T)[None, :] < lengths[:, None]).float()
 uid = np.repeat([f"p{j}" for j in range(NP)], G)
 r = torch.rand(B)
-r[0:G] = 1.0                 # 退化:全对
-r[G:2 * G] = 0.0             # 退化:全错
-r[2 * G:3 * G] = 0.37        # 退化:连续奖励但全同
-r[3 * G] = r[3 * G + 1]      # 部分相同但不退化
+r[0:G] = 1.0                 # degenerate: all right
+r[G:2 * G] = 0.0             # degenerate: all wrong
+r[2 * G:3 * G] = 0.37        # degenerate: continuous reward but all identical
+r[3 * G] = r[3 * G + 1]      # partly identical but not degenerate
 tls = torch.zeros(B, T); tls[torch.arange(B), lengths - 1] = r
 ref_lp = -torch.rand(B, T) * mask
 old_lp = -torch.rand(B, T) * mask
@@ -80,12 +80,12 @@ def check(name, ok, detail=""):
         fails.append(name)
 
 
-print("1) filter 关闭时与原函数逐位一致(无回归)")
+print("1) with the filter off, bit-for-bit identical to the original function (no regression)")
 a_old, _ = run(flow_old)
 a_off, m_off = run(flow_new, filter_degenerate=False)
 check("advantages bit-identical", torch.equal(a_old, a_off))
 
-print("2) filter 打开:退化组 g~ 恰为 0,其余组不变")
+print("2) filter on: g~ of degenerate groups is exactly 0, other groups unchanged")
 a_on, m_on = run(flow_new, filter_degenerate=True)
 seq = lambda a: (a * mask).sum(-1) / mask.sum(-1)
 degen = torch.zeros(B, dtype=torch.bool); degen[:3 * G] = True
@@ -95,8 +95,8 @@ check("kept_groups == 3", m_on["gflowrl/kept_groups"] == 3.0, f"(got {m_on['gflo
 check("kept_rollout_frac == 0.5", abs(m_on["gflowrl/kept_rollout_frac"] - 0.5) < 1e-9)
 check("before filtering, degenerate rows had nonzero g~ (pure drift)", bool((seq(a_off)[degen].abs() > 0).any()))
 
-print("3) on-policy 梯度:置零 g~ == 真正的 loss mask(分母保持全部序列),逐位相等")
-# dp_actor on-policy 分支: old_log_prob = log_prob.detach()
+print("3) on-policy gradient: zeroed g~ == a real loss mask (denominator keeps all sequences), bit-for-bit equal")
+# dp_actor on-policy branch: old_log_prob = log_prob.detach()
 theta1 = old_lp.clone().requires_grad_(True)
 l1, _ = loss_fn(old_log_prob=theta1.detach(), log_prob=theta1, advantages=a_on, response_mask=mask)
 l1.backward()
@@ -111,13 +111,13 @@ check("grad bit-identical", torch.equal(theta1.grad, theta2.grad),
 check("grad on degenerate rows == 0", bool((theta1.grad[degen] == 0).all()))
 check("grad on kept rows != 0", bool((theta1.grad[~degen].abs().sum(-1) > 0).all()))
 
-print("4) 反例:off-policy(log_prob != old_log_prob)时等价性不成立 —— 守卫存在的理由")
+print("4) counterexample: under off-policy (log_prob != old_log_prob) the equivalence does not hold — the reason the guard exists")
 theta3 = (old_lp + 0.01 * torch.randn(B, T) * mask).requires_grad_(True)
 l3, _ = loss_fn(old_log_prob=old_lp, log_prob=theta3, advantages=a_on, response_mask=mask)
 l3.backward()
 check("off-policy degenerate rows DO get gradient (proximal term)", bool((theta3.grad[degen].abs().sum() > 0)))
 
-print("5) 新日志字段")
+print("5) new log fields")
 for k in ("gflowrl/clip_saturation_kept", "gflowrl/g_abs_p50", "gflowrl/g_abs_p90", "gflowrl/g_abs_p99"):
     check(k, k in m_on and m_on[k] == m_on[k], f"= {m_on.get(k):.4f}")
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""P6 实验 A:pointing 工具对比 —— 不需要 policy,不需要 sglang。
+"""P6 experiment A: pointing-tool comparison — needs neither the policy nor sglang.
 
-为什么可以绕开 policy:P6 的离线分析证明,在三个 RefSpatial benchmark 上
-模型是 100% 透传(276/276,答案逐位等于 roborefer 的返回),
-robospatial Vacant 上是 82.8% 透传。所以「换一个 pointing 工具能涨多少分」
-可以直接测量:同样的 obj_name 查询 → 新工具 → 用 verl 自己的打分函数打分。
+Why the policy can be bypassed: the P6 offline analysis showed that on the three RefSpatial benchmarks
+the model is 100% pass-through (276/276, the answer is bit-for-bit equal to what roborefer returned),
+and 82.8% pass-through on robospatial Vacant. So "how much does swapping in another pointing tool gain"
+can be measured directly: the same obj_name query → new tool → scored with verl's own scoring function.
 
-用法(在 spacetools-rl 环境里,Toolshed 必须已经起来):
+Usage (in the spacetools-rl environment; Toolshed must already be up):
 
     conda run -n spacetools-rl python tools/p6/gpu_pointing_swap.py \
         --tool vlm \
@@ -14,9 +14,9 @@ robospatial Vacant 上是 82.8% 透传。所以「换一个 pointing 工具能�
         --data-dir /workspace/eval-benchmarks \
         --out p6/swap/pointing_vlm.jsonl
 
---tool 取 roborefer / vlm。先跑一次 --tool roborefer 做**回归校验**:
-它应当重现基线正确率(见 probes 里的 baseline_correct),对不上就说明
-这条离线通路本身有问题,后面的对比都不能信。
+--tool takes roborefer / vlm. First run once with --tool roborefer as a **regression check**:
+it should reproduce the baseline accuracy (see baseline_correct in the probes); if it doesn't match,
+this offline path itself is broken and none of the later comparisons can be trusted.
 """
 import argparse, json, os, re, sys, io, base64, time
 from collections import defaultdict
@@ -25,18 +25,18 @@ PT = re.compile(r"\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)")
 
 
 class _Trainer:
-    """复刻 eval 时 default_compute_score 看到的 training_args.trainer。
+    """Replicates the training_args.trainer that default_compute_score sees during eval.
 
-    RoboSpatial/* 与 BLINK/Spatial_Relation 走的打分分支里,
-    format_score_val 只在 `if training_args and hasattr(training_args,'trainer')`
-    块内赋值(同块的其它六个默认值都在 if 之前初始化)。离线调用不传
-    training_args 时,该分支的 `format_score=format_score_val` 直接
-    UnboundLocalError —— 122 个 robospatial 探测全部打分失败。
+    In the scoring branch taken by RoboSpatial/* and BLINK/Spatial_Relation,
+    format_score_val is only assigned inside the `if training_args and hasattr(training_args,'trainer')`
+    block (the other six defaults in the same block are all initialized before the if). When an offline call does not pass
+    training_args, that branch's `format_score=format_score_val` raises
+    UnboundLocalError outright — all 122 robospatial probes fail to score.
 
-    两个值都由证据钉死,不是这里的选择:
+    Both values are pinned by evidence, not chosen here:
       format_score                 verl/trainer/config/ppo_trainer.yaml:230 = 0.0
-      allow_last_response_fallback ppo_trainer.yaml:233 默认 false,
-                                   但 examples/toolshed/run_eval.sh:297 覆盖为 true
+      allow_last_response_fallback ppo_trainer.yaml:233 defaults to false,
+                                   but examples/toolshed/run_eval.sh:297 overrides it to true
     """
     format_score = 0.0
     allow_last_response_fallback = True
@@ -57,12 +57,12 @@ BENCH2PARQUET = {
 
 
 def load_image(cell):
-    """parquet 的 images 列形状在不同 benchmark 上不完全一致,这里逐种试。"""
+    """The shape of the parquet images column is not fully consistent across benchmarks; try each kind here."""
     from PIL import Image
     import numpy as np
-    # pandas 把 parquet 的 list<struct> 列读成 dtype=object 的 ndarray,
-    # 不是 list —— 原来的 isinstance(cell, (list, tuple)) 认不出来,于是
-    # 整条链在第一跳就掉到末尾的 TypeError,工具一次都没被调用。
+    # pandas reads a parquet list<struct> column as an ndarray with dtype=object,
+    # not a list — the original isinstance(cell, (list, tuple)) didn't recognize it, so
+    # the whole chain fell through to the TypeError at the end on the first hop, and the tool was never called once.
     if isinstance(cell, np.ndarray):
         cell = cell.reshape(-1)[0] if cell.size else None
     if isinstance(cell, (list, tuple)) and cell:
@@ -78,7 +78,7 @@ def load_image(cell):
         cell = base64.b64decode(cell)
     if isinstance(cell, (bytes, bytearray)):
         return Image.open(io.BytesIO(cell)).convert("RGB")
-    raise TypeError(f"无法识别的 image 单元格:{type(cell)}")
+    raise TypeError(f"unrecognized image cell: {type(cell)}")
 
 
 def main():
@@ -87,7 +87,7 @@ def main():
     ap.add_argument("--probes", required=True)
     ap.add_argument("--data-dir", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--limit", type=int, default=0, help="只跑前 N 条,用于冒烟")
+    ap.add_argument("--limit", type=int, default=0, help="run only the first N rows, for smoke tests")
     args = ap.parse_args()
 
     import pandas as pd
@@ -97,7 +97,7 @@ def main():
 
     if not ray.is_initialized():
         ray.init(address="auto", ignore_reinit_error=True)
-    toolkit = get_toolkit()          # 连到 run_eval.sh 已经起好的 router
+    toolkit = get_toolkit()          # connects to the router already started by run_eval.sh
     tool = getattr(toolkit, args.tool)
 
     probes = [json.loads(l) for l in open(args.probes, encoding="utf-8")]
@@ -119,7 +119,7 @@ def main():
         for p in ps:
             row = df.iloc[p["sample_id"]]
             if not printed_shape:
-                print(f"[shape] images 单元格类型 = {type(row['images'])}", flush=True)
+                print(f"[shape] images cell type = {type(row['images'])}", flush=True)
                 printed_shape = True
             try:
                 img = load_image(row["images"])
@@ -130,7 +130,7 @@ def main():
                     pt = None
                 else:
                     pt = [round(float(m[0][0]), 4), round(float(m[0][1]), 4)]
-            except Exception as e:                       # 工具失败也是一种结果
+            except Exception as e:                       # a tool failure is also a result
                 failed += 1
                 pt = None
                 res = type("R", (), {"text": f"EXC {e}"})()
@@ -146,7 +146,7 @@ def main():
                                               training_args=_EVAL_TRAINING_ARGS)
                     score = float(r["score"] if isinstance(r, dict) else r)
                 except Exception as e:
-                    print(f"  [score 失败] {bench}#{p['sample_id']}: {e}", flush=True)
+                    print(f"  [score failed] {bench}#{p['sample_id']}: {e}", flush=True)
             n += 1
             ok += score >= 0.5
             base_ok += p["baseline_correct"]
@@ -156,19 +156,19 @@ def main():
             if n % 25 == 0:
                 print(f"  {bench} {n}/{len(ps)}  {time.time()-t0:.0f}s", flush=True)
         summary[bench] = (n, ok, base_ok, failed)
-        print(f"[{bench}] n={n}  新工具 {ok} ({100*ok/n:.2f}%)  "
-              f"基线 {base_ok} ({100*base_ok/n:.2f}%)  工具失败 {failed}  "
+        print(f"[{bench}] n={n}  new tool {ok} ({100*ok/n:.2f}%)  "
+              f"baseline {base_ok} ({100*base_ok/n:.2f}%)  tool failed {failed}  "
               f"{time.time()-t0:.0f}s", flush=True)
     fout.close()
 
-    print("\n=== 汇总 ===")
-    print(f"{'benchmark':16}{'n':>5}{'新工具':>10}{'基线':>10}{'差值':>10}")
+    print("\n=== Summary ===")
+    print(f"{'benchmark':16}{'n':>5}{'new tool':>10}{'baseline':>10}{'diff':>10}")
     tn = tok = tb = 0
     for b, (n, ok, base_ok, failed) in summary.items():
         print(f"{b:16}{n:5}{100*ok/n:9.2f}%{100*base_ok/n:9.2f}%{100*(ok-base_ok)/n:+9.2f}")
         tn += n; tok += ok; tb += base_ok
-    print(f"{'合计':16}{tn:5}{100*tok/tn:9.2f}%{100*tb/tn:9.2f}%{100*(tok-tb)/tn:+9.2f}")
-    print(f"\n写入 {args.out}")
+    print(f"{'total':16}{tn:5}{100*tok/tn:9.2f}%{100*tb/tn:9.2f}%{100*(tok-tb)/tn:+9.2f}")
+    print(f"\nwrote {args.out}")
 
 
 if __name__ == "__main__":

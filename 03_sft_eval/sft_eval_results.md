@@ -1,34 +1,34 @@
-# SFT checkpoint eval 结果:可以进 RL(按区间报,不按点值)
+# SFT checkpoint eval results: can go to RL (report as an interval, not a point value)
 
-跑于 2026-09-11/12 · 依据 `SFT eval 交接文档(未收录)` · RoboSpatial 两次运行
+Run on 2026-09-11/12 · based on `SFT eval handoff doc (not included)` · RoboSpatial two runs
 
 ---
 
-## 0. 判据结论
+## 0. Criterion conclusion
 
-**通过,但必须按区间读。**
+**Pass, but it must be read as an interval.**
 
-| | 判据 | 实测 | 结论 |
+| | Criterion | Measured | Conclusion |
 |---|---|---|---|
-| RoboSpatial | ≥ 60 | 期望 **61.00%**,两次 60.29 / 61.71 | ✅ 期望过线,单次约 7% 概率读到线下 |
-| RefSpatial | ≥ 48 | **52.58%** 简单 / 53.07 加权 | ✅ 余量 13 个样本 |
+| RoboSpatial | ≥ 60 | expected **61.00%**, two runs 60.29 / 61.71 | ✅ passes in expectation, about 7% chance a single run reads below the line |
+| RefSpatial | ≥ 48 | **52.58%** simple / 53.07 weighted | ✅ margin of 13 samples |
 
-**不要报 RoboSpatial 的单次点值。** 第一次 61.71 看着有 6 个样本余量,第二次 60.29
-只剩 1 个。测量散布与判据余量同量级,点值会诱导错误读法。
+**Do not report a single-run point value for RoboSpatial.** The first run's 61.71 looks like 6 samples of margin, the second's 60.29
+leaves only 1. The measurement spread is of the same order as the criterion margin; point values invite the wrong reading.
 
-推荐报法:
+Recommended reporting:
 
 ```
-RoboSpatial  61.0%  [恒对下界 56.86 · 恒错上界 65.14]  两次观测 60.29 / 61.71
+RoboSpatial  61.0%  [always-correct lower bound 56.86 · always-wrong upper bound 65.14]  two observations 60.29 / 61.71
 ```
 
 ---
 
-## 1. 分数
+## 1. Scores
 
-### 两次运行(RoboSpatial)
+### Two runs (RoboSpatial)
 
-| | n | run 1 | run 2 | 恒对 | 恒错 | 翻转 | 期望 ± sd |
+| | n | run 1 | run 2 | always correct | always wrong | flip | expected ± sd |
 |---|--:|--:|--:|--:|--:|--:|--:|
 | RoboSpatial · Overall | 350 | 61.71% (216) | 60.29% (211) | 199 | 122 | 29 | **61.00% ± 0.77 pp** |
 | RoboSpatial · VQA | 228 | 70.61% (161) | 71.93% (164) | 152 | 55 | 21 | 71.27% ± 1.00 pp |
@@ -36,59 +36,59 @@ RoboSpatial  61.0%  [恒对下界 56.86 · 恒错上界 65.14]  两次观测 60.
 | RefSpatial · Location | 100 | 54.00% (54) | — | | | | |
 | RefSpatial · Placement | 100 | 57.00% (57) | — | | | | |
 | RefSpatial · Unseen | 77 | 46.75% (36) | — | | | | |
-| RefSpatial · 三项 | 277 | 52.58 简单 / 53.07 加权 | — | | | | |
+| RefSpatial · three keys | 277 | 52.58 simple / 53.07 weighted | — | | | | |
 
-判据 60% = 210/350 落在**翻转带内**(199 恒对 ~ 228 上界),清关需要 29 个翻转里中 11 个,
-观测翻转成功率 ≈ 0.50(run1 中 17/29、run2 中 12/29),单次读到线下概率 **6.8%**。
-5 次取中位数读到线下的概率 0.28%,所以**补跑到 5 次没有意义** —— 判据不会因此翻。
+The criterion 60% = 210/350 falls **inside the flip band** (199 always correct ~ 228 upper bound); clearing needs 11 of the 29 flips to hit,
+observed flip success rate ≈ 0.50 (17/29 in run1, 12/29 in run2), probability of a single run reading below the line **6.8%**.
+The probability that the median of 5 runs reads below the line is 0.28%, so **rerunning to 5 runs is pointless**: the criterion will not flip because of it.
 
-### 与论文 / 官方 ckpt 复现的对照
+### Comparison with the paper / official ckpt reproduction
 
-| Table 2 行 | n | 论文 | P4/P5 复现<br>(官方 ckpt) | **本 SFT ckpt** | 少答对几题 |
+| Table 2 row | n | Paper | P4/P5 reproduction<br>(official ckpt) | **This SFT ckpt** | Fewer correct by |
 |---|--:|--:|--:|--:|--:|
-| RoboSpatial · VQA | 228 | 79.38 | 73.25–73.68 | 71.27(期望) | 4–6 题 |
-| RoboSpatial · Vacant | 122 | 52.46 | 50.82–51.64 | 41.80(期望) | 11–12 题 |
-| RoboSpatial · Overall‡ | 350 | 70.00 | 65.43–66.00 | 61.00(期望) | 15–17 题 |
-| RefSpatial · 三项 | 277 | 53.07 | 53.35 简单 / 53.79 加权 | 52.58 / 53.07 | **2 题** |
+| RoboSpatial · VQA | 228 | 79.38 | 73.25–73.68 | 71.27 (expected) | 4–6 questions |
+| RoboSpatial · Vacant | 122 | 52.46 | 50.82–51.64 | 41.80 (expected) | 11–12 questions |
+| RoboSpatial · Overall‡ | 350 | 70.00 | 65.43–66.00 | 61.00 (expected) | 15–17 questions |
+| RefSpatial · three keys | 277 | 53.07 | 53.35 simple / 53.79 weighted | 52.58 / 53.07 | **2 questions** |
 
-‡ Overall 是 VQA/Vacant 的样本加权,非独立测量(P5 §1.2)。
-VQA / Vacant 按 GT 形态拆(`Yes`/`No` → VQA,点列表 → Vacant),得 **228 / 122**,与 P5 逐个吻合。
+‡ Overall is the sample-weighted VQA/Vacant, not an independent measurement (P5 §1.2).
+VQA / Vacant are split by GT form (`Yes`/`No` → VQA, point list → Vacant), giving **228 / 122**, matching P5 one for one.
 
-**官方 ckpt 是 RL 之后的模型,本 ckpt 是纯 SFT** —— 这是拿起点比成品。差距落点有解释:
+**The official ckpt is the post-RL model, this ckpt is pure SFT**: this compares a starting point against a finished product. Where the gap lands has an explanation:
 
-| | 推理链 | 差距 | 读法 |
+| | Reasoning chain | Gap | Reading |
 |---|---|--:|---|
-| RefSpatial | 277/277 单一链路 `roborefer×1@2t` | 2 题 | 策略是 RoboRefer 的薄包装,SFT 够用,RL 无从加力 |
-| RoboSpatial | 1.65 次/样本,主链路仅覆盖 64% | 15–17 题 | 链路多样、需要决策,正是 RL 的作用域 |
+| RefSpatial | 277/277 single chain `roborefer×1@2t` | 2 questions | The policy is a thin wrapper around RoboRefer; SFT is enough, RL has nothing to push on |
+| RoboSpatial | 1.65 calls/sample, main chain covers only 64% | 15–17 questions | Diverse chains, decisions needed: exactly RL's domain |
 
-**平手处恰是 RL 无用之处,落后处恰是 RL 有用之处。** 对「该不该进 RL」是正面信号。
+**Where it ties is exactly where RL is useless, and where it trails is exactly where RL is useful.** A positive signal for "should we go to RL".
 
-> RefSpatial 加权 53.07 与论文 53.07 相同是巧合,不构成证据(P5 §6)。
+> RefSpatial weighted 53.07 equaling the paper's 53.07 is a coincidence and does not constitute evidence (P5 §6).
 
 ---
 
-## 2. 非确定性:来源在策略侧,工具侧确定
+## 2. Non-determinism: the source is on the policy side, the tool side is deterministic
 
-两次运行 350 样本逐样本对比:
+Per-sample comparison of the 350 samples across the two runs:
 
 ```
-完全相同(tool_call + tool_response + answer)   289
-C  tool_call 就不同        (策略,调用之前)      11
-B  同 call,response 不同   (roborefer 侧)        0     ← 零
-A  同 call 同 response,答案不同 (策略)           50
-逐字节相同的完整生成                            151
+Fully identical (tool_call + tool_response + answer)   289
+C  tool_call already differs        (policy, before the call)      11
+B  same call, different response   (roborefer side)        0     ← zero
+A  same call same response, different answer (policy)           50
+Byte-for-byte identical full generations                            151
 ```
 
-**工具侧零非确定性。** `<think>` 文本会飘(289 − 151 = 138 个样本措辞不同但落点相同),
-工具交互与最终答案一致。P5 §4.3 的非确定性来源在这条链路上表现为 **sglang 的批式推理**:
-连续批处理使批组成逐次不同,归约顺序变化,近似平局处 argmax 翻转。
+**Zero non-determinism on the tool side.** The `<think>` text drifts (289 − 151 = 138 samples differ in wording but land in the same place),
+while tool interactions and final answers are consistent. The non-determinism source from P5 §4.3 shows up on this chain as **sglang's batched inference**:
+continuous batching makes batch composition differ between runs, the reduction order changes, and argmax flips at near-ties.
 
-**不建议把 sglang 弄成逐位确定**(batch=1 牺牲吞吐,或动 radix cache 等推理路径)。
-承认散布、报区间 —— P5 对小 benchmark 已是这个处方。
+**We do not recommend making sglang bit-for-bit deterministic** (batch=1 sacrifices throughput, or touching the inference path such as the radix cache).
+Accept the spread and report intervals: that is already P5's prescription for small benchmarks.
 
-### Vacant 为什么是噪声大头:二值区域判据 + 连续预测
+### Why Vacant is the biggest noise source: binary region criterion + continuous prediction
 
-打分函数 `verl/utils/reward_score/robos_all.py`:
+Scoring function `verl/utils/reward_score/robos_all.py`:
 
 ```
 "point lies within (or on the boundary of) the convex hull of the ground-truth"
@@ -96,114 +96,114 @@ compute_points_score(..., point_evaluation_method="convex_hull")
     1.0 if point is within convex hull, 0.0 otherwise
 ```
 
-**判的是预测点是否落在 10 个 GT 点的凸包内,二值。**
-用仓库自己的 `_convex_hull` / `_is_point_in_convex_polygon` 重算,
-**与落盘 acc 在 122/122 上完全一致、零分歧**(与 P5 复核 pose 指标同一手法)。
+**It judges whether the predicted point falls within the convex hull of the 10 GT points; binary.**
+Recomputed with the repo's own `_convex_hull` / `_is_point_in_convex_polygon`,
+**fully identical to the on-disk acc on 122/122, zero disagreements** (same method as P5's re-check of the pose metric).
 
-**这条容易读错,所以单独强调:GT 给的 10 个点是可接受区域的采样,不是容差圆心。**
-判据是凸包归属,不是「到最近 GT 点的距离」。反例就在数据里:idx 87 在 run1 距最近
-GT 点 0.0605 判**对**,run2 距 0.0191 判**错** —— 离某个 GT 点更近,却落在凸包外。
-**所以分析 Vacant 的错题必须算到凸包边界的距离,算到最近点的距离是错的度量。**
+**This is easy to misread, so it is stressed separately: the 10 GT points are samples of the acceptable region, not tolerance-circle centers.**
+The criterion is convex hull membership, not "distance to the nearest GT point". The counterexample is right in the data: idx 87 in run1, at distance 0.0605 from the nearest
+GT point, judged **correct**; in run2, at distance 0.0191, judged **wrong**: closer to some GT point, yet outside the convex hull.
+**So analysis of Vacant wrong answers must compute distance to the convex hull boundary; distance to the nearest point is the wrong measure.**
 
-8 个翻转的 Vacant 样本全是「run1 在凸包内 → run2 在凸包外」,出界距离很小:
+All 8 flipped Vacant samples go "run1 inside the convex hull → run2 outside the convex hull", with small out-of-bounds distances:
 
 ```
 idx  87  0.0011    idx 107  0.0188    idx 105  0.0460    idx   5  0.0684
 idx  22  0.0169    idx 100  0.0456    idx 106  0.0477    idx  45  0.1004
 ```
 
-八个里五个在 0.05 以内,idx 87 只差 0.0011。**贴着凸包边界的样本被策略侧极小扰动
-推过边线,二值分数就翻。** 坐标位移方向各不相同(均值仅 +0.009/−0.014),不是整体漂移。
+Five of the eight are within 0.05, and idx 87 misses by only 0.0011. **Samples hugging the convex hull boundary get pushed across the line by tiny policy-side
+perturbations, and the binary score flips.** The coordinate shift directions vary (mean only +0.009/−0.014); it is not an overall drift.
 
-> 八个全部同向在独立掷币模型下概率 1/128,但这 8 个是**按「两次之间有差异」筛出来的**,
-> 筛选以两次结果为条件,同向更可能是选择效应而非样本相关。第三次运行会给出一组
-> 不同的翻转样本来检验。
+> All eight going the same direction has probability 1/128 under an independent coin-flip model, but these 8 were **filtered by "differs between the two runs"**;
+> the filtering is conditioned on the two runs' results, so the same direction is more likely a selection effect than sample correlation. A third run would give a
+> different set of flip samples to test this.
 
-按正确判据(到凸包**边界**的距离),67 个错的 Vacant 样本:
+By the correct criterion (distance to the convex hull **boundary**), the 67 wrong Vacant samples:
 
 ```
-中位数 0.0761   p25 0.0283   p75 0.1790   最小 0.0018   最大 0.5157
-距凸包边 ≤0.02   11 题 (16%)      ≤0.05   24 题 (36%)      ≤0.10   41 题 (61%)
+median 0.0761   p25 0.0283   p75 0.1790   min 0.0018   max 0.5157
+distance to hull edge ≤0.02   11 questions (16%)      ≤0.05   24 questions (36%)      ≤0.10   41 questions (61%)
 ```
 
 ---
 
-## 3. 运行健康
+## 3. Run health
 
-两次运行都通过 P5 §5.1 的五项:
+Both runs pass the five items of P5 §5.1:
 
 ```
                      run 1      run 2
 OOM                    0          0
-工具错误响应(样本级)   0/627      0/350
-缺 <answer>             0          —
-轮数耗尽(8 轮上限)     0          —
-截断的工具响应          0          —
-畸形 tool call          0          —
-每样本都有工具调用    627/627      —
+Tool error responses (sample-level)   0/627      0/350
+Missing <answer>             0          —
+Turns exhausted (8-turn limit)     0          —
+Truncated tool responses          0          —
+Malformed tool calls          0          —
+Every sample has a tool call    627/627      —
 ```
 
-工具直方图与 P5 记录的官方 ckpt 行为几乎重合:
+The tool histogram nearly coincides with the official ckpt behavior recorded in P5:
 
 ```
-robospatial  本次 1.654 次/样本 · 64.3% 恰好 2 次    P5: 1.63 次/样本 · 62.3% 主链路
-refplacement 100/100 单次   refunseen 77/77 单次     P5: 100%
-reflocation  98 单次 + 2 双次                        P5: 100% 单次
+robospatial  this run 1.654 calls/sample · 64.3% exactly 2 calls    P5: 1.63 calls/sample · 62.3% main chain
+refplacement 100/100 single call   refunseen 77/77 single call     P5: 100%
+reflocation  98 single + 2 double                        P5: 100% single
 ```
 
-四个 benchmark 实际调用的工具只有三个:
+Across the four benchmarks only three tools were actually called:
 
 ```
-roborefer        627 / 627 样本
-depth_estimator    1 次(robospatial index=176)
-vision_ops         1 次(同一样本)
-sam2 / vlm / bounding_box / grasp_generator   0 次
+roborefer        627 / 627 samples
+depth_estimator    1 call (robospatial index=176)
+vision_ops         1 call (same sample)
+sam2 / vlm / bounding_box / grasp_generator   0 calls
 ```
 
-### 日志里的 `Error:` 计数逐条查明不影响样本
+### `Error:` counts in the logs checked one by one: no sample affected
 
-两次运行各有 **8 条** `RuntimeError: Version mismatch`,逐条同型、可复现,
-全部来自 §4 那个 Python 版本问题,**一条都没碰到任何样本**(依据:627/627 样本
-都有工具调用、0 条工具响应含错误文本,且唯一用到受影响环境的那个样本
-tool_response 逐条核过、`acc=1.0`)。
+Each run has **8** `RuntimeError: Version mismatch` lines, all of the same type and reproducible,
+all coming from the Python version problem in §4; **not one touched any sample** (basis: 627/627 samples
+have tool calls, 0 tool responses contain error text, and the tool_response of the only sample that used an affected environment
+was checked line by line, `acc=1.0`).
 
 ---
 
-## 4. Python 版本不一致:已修,而且修完暴露了一个更紧的约束
+## 4. Python version mismatch: fixed, and the fix exposed a tighter constraint
 
-### 问题
+### Problem
 
 ```
-cluster 启动于  Python 3.11.16   (spacetools-rl)
-这些进程启动于  Python 3.11.0    (spacetools-tool-vlm / spacetools-tool-bbox)
-Ray 2.47.1 两侧相同
+cluster started with  Python 3.11.16   (spacetools-rl)
+these processes started with  Python 3.11.0    (spacetools-tool-vlm / spacetools-tool-bbox)
+Ray 2.47.1 identical on both sides
 ```
 
-Ray 的 `check_version_info` 默认比完整 Python 版本串,`3.11.0 ≠ 3.11.16` 直接拒绝入集群。
-八条错误正好对应那两个环境的八个 actor(vlm 环境 sam2×2+depth×2+vlm×1=5,
-bbox 环境 bbox×2+vision_ops×1=3)。
+Ray's `check_version_info` compares the full Python version string by default; `3.11.0 ≠ 3.11.16` is rejected from joining the cluster outright.
+The eight errors correspond exactly to the eight actors in those two environments (vlm env sam2×2+depth×2+vlm×1=5,
+bbox env bbox×2+vision_ops×1=3).
 
-`RESTORE.sh` 的环境检查把这个版本差异**原样打印出来还判了 OK**(只验 `bin/python` 可执行),
-是一个假绿灯。
+`RESTORE.sh`'s environment check **prints this version difference verbatim and still judges it OK** (it only verifies that `bin/python` is executable);
+a false green light.
 
-### 修法(偏离 #6):Ray 自带的 minor 档
+### Fix (deviation #6): Ray's built-in minor level
 
-`ray/_private/utils.py:1502` 的 `check_version_info` 支持
-`python_version_match_level="minor"`,此时只 `logger.warning` 不抛;
-但 `node.py:454`(由 `worker.py:2437` 的 `connect` 调用)没传这个参数,默认 `"patch"`。
-在**两个 3.11.0 环境**里给这一个调用点补上该参数,备份在 `node.py.orig`。
+`check_version_info` in `ray/_private/utils.py:1502` supports
+`python_version_match_level="minor"`, in which case it only does `logger.warning` and does not raise;
+but `node.py:454` (called by `connect` in `worker.py:2437`) does not pass this argument and defaults to `"patch"`.
+In **the two 3.11.0 environments** we added this argument at that one call site, with a backup at `node.py.orig`.
 
-**为什么不升 Python:**
+**Why not upgrade Python:**
 
 ```
 CondaToSNonInteractiveError: Terms of Service have not been accepted for:
     https://repo.anaconda.com/pkgs/main   https://repo.anaconda.com/pkgs/r
 ```
 
-接受 Anaconda 商业条款是组织的法务决定;而且重新求解会动到
-numpy 1.26.4 / transformers 4.53.2 这些钉死的版本,那才是本项目最怕的静默改口径。
+Accepting Anaconda's commercial terms is an organizational legal decision; and re-solving would touch pinned versions like
+numpy 1.26.4 / transformers 4.53.2, which is the silent definition change this project fears most.
 
-**为什么 minor 档是安全的、不是绕过:**
+**Why the minor level is safe and not a workaround:**
 
 ```
 spacetools-rl    bytecode magic 3495 | pickle proto 4 | 3.11.16
@@ -211,24 +211,24 @@ tool-vlm         bytecode magic 3495 | pickle proto 4 | 3.11.0
 tool-bbox        bytecode magic 3495 | pickle proto 4 | 3.11.0
 ```
 
-magic 与 pickle 协议两侧相同,code object 和 pickle 互通 —— 这正是 Ray 提供 minor 档的场景。
-**该改动只放宽一个版本检查,不可能改变数值。**
+The magic and pickle protocol are identical on both sides, so code objects and pickles interoperate: exactly the scenario Ray provides the minor level for.
+**The change only relaxes one version check; it cannot change any numbers.**
 
-### 三重验证
+### Triple verification
 
 ```
-单元    minor 档接受 3.11.0 vs 3.11.16(仅 warning);默认 patch 档仍然拒绝
-VERIFY  三项真绿:环境闸门 RC=0 · 4619 个 .so 缺 sm_8x 0 · 七工具 7/7(首次与基线一致)
-        跨环境链 4 环 STEP_OK,sam2/depth 在 tool-vlm、bbox/vision_ops 在 tool-bbox,
-        两个补丁环境都成功入集群
-端到端  RuntimeError: Version mismatch  8 → 0
+Unit    minor level accepts 3.11.0 vs 3.11.16 (warning only); default patch level still rejects
+VERIFY  three items truly green: env gate RC=0 · 4619 .so missing sm_8x 0 · seven tools 7/7 (first time matching baseline)
+        cross-env chain 4 links STEP_OK, sam2/depth in tool-vlm, bbox/vision_ops in tool-bbox,
+        both patched environments joined the cluster successfully
+End-to-end  RuntimeError: Version mismatch  8 → 0
         Python patch version mismatch (warning)  0 → 8
-        10 个 tool actor 全部加入(之前只有一部分)
+        all 10 tool actors joined (previously only some)
 ```
 
-### ⚠️ 修完暴露的约束:全工具存活时 4 张卡排不开策略
+### ⚠️ Constraint exposed by the fix: with all tools alive, 4 GPUs cannot fit the policy
 
-blinkdepth(用来端到端验证的 benchmark)两次都死在 verl 侧:
+blinkdepth (the benchmark used for end-to-end verification) died on the verl side both times:
 
 ```
 ValueError: Duplicate device type cpu in backend string: nccl.
@@ -237,109 +237,109 @@ ValueError: Duplicate device type cpu in backend string: nccl.
 ActorDiedError: WorkerDict.__init__()
 ```
 
-`verl/utils/device.py:104` 的 `is_cuda_available = torch.cuda.is_available()` 是
-**模块导入时求值**,所以 WorkerDict 进程导入那一刻没有可见 GPU,`get_device_name()`
-就永久返回 `cpu`,拼出非法的 `cpu:gloo,cpu:nccl`。
+`is_cuda_available = torch.cuda.is_available()` at `verl/utils/device.py:104` is
+**evaluated at module import time**, so if no GPU is visible at the moment the WorkerDict process imports it, `get_device_name()`
+permanently returns `cpu`, assembling the invalid `cpu:gloo,cpu:nccl`.
 
-根因是 GPU 预算:
+The root cause is the GPU budget:
 
 ```
-工具逻辑预留 2.3  +  策略要一整张 1.0  =  3.3 ≤ 4.0
+tool logical reservation 2.3  +  policy needs a whole 1.0  =  3.3 ≤ 4.0
 ```
 
-逻辑总量够,但**策略要的是一张完整的卡**,需要 Ray 把 2.3 压进 3 张、留一张整的。
+The logical total is enough, but **the policy needs one whole GPU**, which requires Ray to pack the 2.3 into 3 GPUs and leave one whole GPU.
 
-**之前四次 eval 成功,是因为工具的真实占用小于 2.3。** nvidia-smi 的进程归属里当时只数到
-**7 个 ToolActor**,而配置有 10 个 actor(其中 `vision_ops` 不占卡),即有占卡的 actor
-当时不在集群里 —— 正是被版本检查挡住的那些。补丁修好后 10 个全部加入,预留升到完整 2.3,
-Ray 再压不出一张完整空卡。
+**The previous four evals succeeded because the tools' actual usage was below 2.3.** In nvidia-smi's process attribution at the time, only
+**7 ToolActors** were counted, while 10 actors are configured (of which `vision_ops` takes no GPU), i.e. some GPU-holding actors
+were not in the cluster at the time: exactly the ones blocked by the version check. After the patch fixed it, all 10 joined, the reservation rose to the full 2.3,
+and Ray could no longer free up a whole empty GPU.
 
-**所以这不是补丁引入的 bug,是补丁取消了一个一直在替我们腾卡的故障。**
+**So this is not a bug introduced by the patch; the patch removed a failure that had been freeing a GPU for us all along.**
 
-对已有分数**无影响**:那四个 benchmark 只调用了 roborefer / depth_estimator / vision_ops,
-三者全部成功返回真结果(见 §3 的直方图)。但这是一条必须记进出处的事实:
-**那四次 eval 是在部分工具 actor 缺席的情况下跑的。**
+**No effect** on the existing scores: those four benchmarks only called roborefer / depth_estimator / vision_ops,
+and all three returned real results successfully (see the histogram in §3). But this is a fact that must be recorded in the provenance:
+**those four evals ran with some tool actors absent.**
 
 ---
 
-## 5. 另一个假绿灯:残留的 Ray 地址文件
+## 5. Another false green light: a leftover Ray address file
 
-`VERIFY.sh` 第三项一度报出自相矛盾的结果 —— 同时出现 `✗ 链没通` 和
-「跨环境链 退出码 0」,汇总还打了 `✓ 三项全过`。
+Item 3 of `VERIFY.sh` once reported a self-contradictory result: both `✗ chain did not pass` and
+"cross-env chain exit code 0" appeared, and the summary still printed `✓ all three passed`.
 
-根因:`/root/tmp/ray/ray_current_cluster`(上一次 eval 留下的 19 字节地址文件)
-让 `28_chain.sh` 的 `ray.init(num_cpus=8, num_gpus=1, ...)` 以为集群还在:
+Root cause: `/root/tmp/ray/ray_current_cluster` (a 19-byte address file left by the previous eval)
+made `28_chain.sh`'s `ray.init(num_cpus=8, num_gpus=1, ...)` think the cluster was still there:
 
 ```
 Connecting to existing Ray cluster at address: 172.27.124.124:6379
 ValueError: When connecting to an existing cluster, num_cpus and num_gpus must not be provided.
 ```
 
-python 块在第 1 秒就死了,而 `28_chain.sh` 仍然 `exit 0`。
+The python block died in the 1st second, and `28_chain.sh` still did `exit 0`.
 
-**结论:有 Ray 头节点在跑、或刚杀掉但没清 temp dir 时,不能跑 VERIFY.sh。**
-清掉 `/root/tmp/ray` 后重跑,链正常通过(ROUTER_OK 33.2 秒,四环 STEP_OK)。
+**Conclusion: do not run VERIFY.sh while a Ray head node is running, or right after one was killed without clearing the temp dir.**
+After clearing `/root/tmp/ray` and rerunning, the chain passed normally (ROUTER_OK 33.2 s, four links STEP_OK).
 
-`ray stop --force` 报「57/58 停掉」不必担心:剩下那个是 zombie(已 defunct,不占资源)。
+`ray stop --force` reporting "57/58 stopped" is nothing to worry about: the remaining one is a zombie (already defunct, holds no resources).
 
 ---
 
-## 6. GPU 用法(实测,1 Hz × 75 采样)
+## 6. GPU usage (measured, 1 Hz × 75 samples)
 
 ```
-卡        4× RTX A6000 (49140 MiB each)
-驱动      580.173.02   (打包机 580.159.04,同分支)
-NUM_GPUS  4     ← 必须覆盖,默认 8
-EVAL_GPUS 1     ← 必须覆盖,默认 4
-耗时      run1 四项 32 分 41 秒 · run2 单项(robospatial)20 分 55 秒
+GPUs        4× RTX A6000 (49140 MiB each)
+Driver      580.173.02   (packaging machine 580.159.04, same branch)
+NUM_GPUS  4     ← must override, default 8
+EVAL_GPUS 1     ← must override, default 4
+Wall time      run1 four keys 32 min 41 s · run2 single key (robospatial) 20 min 55 s
 ```
 
-### Ray 实际怎么打包的(部分工具 actor 缺席时的布局)
+### How Ray actually packed things (layout with some tool actors absent)
 
 ```
-GPU0   20525 MiB (20.0 GiB)   util 峰100% 均80%
+GPU0   20525 MiB (20.0 GiB)   util peak 100% mean 80%
        roborefer          18628 MiB      ToolActor ×2  634 MiB ×2
        SGLangHttpServer     604 MiB
 
-GPU1   47441 MiB (46.3 GiB)   util 0%   ← 几乎满,全程空转
+GPU1   47441 MiB (46.3 GiB)   util 0%   ← nearly full, idle the whole time
        ToolActor          30926 MiB (30.2 GiB)  ← Molmo
        ToolActor          12574 MiB (12.3 GiB)
        ToolActor           3920 MiB ( 3.8 GiB)
 
 GPU2     725 MiB ( 0.7 GiB)   util 0%
-GPU3   42616 MiB (41.6 GiB)   util 峰100% 均44%
+GPU3   42616 MiB (41.6 GiB)   util peak 100% mean 44%
        WorkerDict         15310 MiB  ← verl FSDP
-       sglang::scheduler  27292 MiB  ← 策略 rollout
+       sglang::scheduler  27292 MiB  ← policy rollout
 ```
 
-**交接文档 §2 的推算得到实测确认。** 它预测最坏打包
-`vlm 0.6 + depth 0.2 + depth 0.2` = 32.11 + 7.94×2 = **47.99 GiB**,据此判 4× A100 40GB
-「不够」。GPU1 上就是这个打包,实测 **46.3 GiB**,差 1.7 GiB。
-**那个坏打包并没有被第 4 张卡避开 —— 它真的发生了,只是 A6000 的 48 GB 刚好装下。
-换 40 GB 的卡这张必 OOM。**
+**The estimate in §2 of the handoff doc is confirmed by measurement.** It predicted the worst-case packing
+`vlm 0.6 + depth 0.2 + depth 0.2` = 32.11 + 7.94×2 = **47.99 GiB**, and on that basis judged 4× A100 40GB
+"not enough". GPU1 has exactly this packing, measured at **46.3 GiB**, 1.7 GiB off.
+**That bad packing was not avoided by the 4th GPU: it really happened, A6000's 48 GB just barely fits it.
+On a 40 GB GPU this one will certainly OOM.**
 
-Molmo 实测 30.2 GiB,印证 fp32 那个洞(`vlm.py:116` 吃掉 `dtype: float16`)。
+Molmo measured at 30.2 GiB, corroborating the fp32 hole (`vlm.py:116` swallows `dtype: float16`).
 
-> 冒烟阶段报的 `vlm 峰值 7.66 GiB` 不矛盾:那是
-> `torch.cuda.max_memory_allocated()`,只计 torch allocator,不是卡上总占用。
+> The `vlm peak 7.66 GiB` reported during the smoke test does not contradict this: that is
+> `torch.cuda.max_memory_allocated()`, which only counts the torch allocator, not total usage on the GPU.
 
-**GPU1 那 46.3 GiB 全程 0% 利用率** —— robospatial 350 个样本里只有 1 个用到
-depth/vision_ops,将近一整张 A6000 为一次调用常驻。这是「省卡两个抓手」
-(修 fp32、按 benchmark 裁工具集)的实测依据。
+**GPU1's 46.3 GiB sits at 0% utilization the whole time**: only 1 of robospatial's 350 samples used
+depth/vision_ops, so nearly a whole A6000 stays resident for a single call. This is the measured basis for the "two levers for saving GPUs"
+(fix fp32, trim the tool set per benchmark).
 
-### `EVAL_GPUS` 默认值会让 Ray 永久挂起
+### The `EVAL_GPUS` default makes Ray hang forever
 
 ```
-七工具逻辑预留(run_eval.sh:132-142,与交接文档 §2 表一致)
+Seven-tool logical reservation (run_eval.sh:132-142, consistent with the table in §2 of the handoff doc)
 roborefer 1×0.6 + vlm 1×0.6 + sam2 2×0.2 + depth 2×0.2
         + bbox 2×0.1 + vision_ops 1×0 + graspgen 1×0.1  = 2.3
-默认 EVAL_GPUS=4  →  2.3 + 4 = 6.3 > 4.0   Ray 不报错,actor 无限排队
-设成 1            →  2.3 + 1 = 3.3 ≤ 4.0   逻辑上够,但见 §4 的整卡约束
+default EVAL_GPUS=4  →  2.3 + 4 = 6.3 > 4.0   Ray does not error, actors queue forever
+set to 1            →  2.3 + 1 = 3.3 ≤ 4.0   logically enough, but see the whole-GPU constraint in §4
 ```
 
 ---
 
-## 7. 出处
+## 7. Provenance
 
 ```
 SFT ckpt   qzpm55555/spacetools-sft-v1-4xa6000
@@ -347,72 +347,72 @@ SFT ckpt   qzpm55555/spacetools-sft-v1-4xa6000
            Qwen2_5_VLForConditionalGeneration · bfloat16 · 7.6 GB
            num_attention_heads=16 · num_hidden_layers=36
 
-环境包     qzpm55555/spacetools-eval-env
+Env package     qzpm55555/spacetools-eval-env
            spacetools-envs-20260910-0959.tar.zst
-           22102227452 字节(拼接后与 README 记录逐字节一致)· sha256 12/12 OK
+           22102227452 bytes (after concatenation, byte-for-byte match with the README record) · sha256 12/12 OK
 
-仓库       SpaceTools           17d585539b6cc32f2b3c068ea2591762b4583fd9
+Repos       SpaceTools           17d585539b6cc32f2b3c068ea2591762b4583fd9
            SpaceTools-RL        54270e82443d3d2a4c2a737c2d3b33314a991fcc
            SpaceTools-Toolshed  4f0512d092f53abc1e6c5c934245bf83a211466a
            GraspGen             9b3cfc1e5b664698e047ddd482832f6e7796380c
            RoboRefer            d97a995ad28376720a4c8beb64915c58ed16c844
 
-数据       siyich/spacetools-eval-benchmarks @ 1d539ac935872c7aa712c85a77bf4b0cb469c8e8
+Data       siyich/spacetools-eval-benchmarks @ 1d539ac935872c7aa712c85a77bf4b0cb469c8e8
            350 / 100 / 100 / 77 = 627 ✓ · blinkdepth 124 ✓
-           (该 revision 与 main 在这些文件上逐字节同大小)
+           (this revision and main have byte-for-byte identical sizes for these files)
 
-机器       4× RTX A6000 · Ubuntu 24.04.2 · glibc 2.39 · 驱动 580.173.02 · CUDA 13.0
-解码       greedy(verl val_kwargs 默认 temperature 0 / do_sample False,
-           run_eval.sh 未覆盖)—— 但策略侧仍非逐位确定,见 §2
-工具状态   ⚠️ 四个 benchmark 的两次运行都在部分工具 actor 缺席下完成(见 §4)
+Machine       4× RTX A6000 · Ubuntu 24.04.2 · glibc 2.39 · driver 580.173.02 · CUDA 13.0
+Decoding       greedy (verl val_kwargs default temperature 0 / do_sample False,
+           not overridden by run_eval.sh), but the policy side is still not bit-for-bit deterministic, see §2
+Tool state   ⚠️ both runs of the four benchmarks completed with some tool actors absent (see §4)
 ```
 
 ---
 
-## 8. 为了跑起来做的偏离(仓库代码未改,配置/库补丁六处)
+## 8. Deviations made to get it running (repo code unchanged, six config/library patches)
 
-| # | 偏离 | 为什么必须 |
+| # | Deviation | Why it was necessary |
 |---|---|---|
-| 1 | 装 `nvidia-driver-570-server`(实得 580.173.02) | 机器交付时**驱动完全没装**:卡在 PCI 可见,但无 `/dev/nvidia*`、无内核模块、`dpkg -l` 里 0 个 nvidia 包 |
-| 2 | `NUM_GPUS=4 EVAL_GPUS=1` | 默认 8 / 4,后者会让 Ray 永久挂起(§6) |
-| 3 | `BASH_ENV=/opt/conda-st/etc/profile.d/conda.sh` | `run_eval.sh:84` 的 `conda activate` 在子进程失效,conda 是 shell 函数不跨进程 |
-| 4 | benchmark 软链接到脚本期望的嵌套路径 | `BENCHMARKS` 映射期望 `refspatial_bench/location.parquet` 之类,数据集(main 与钉死版本**都**是)扁平 `data/<key>.parquet`,不处理直接 `Missing: / exit 1`。没改 `run_eval.sh`,因为其 commit 记在 MANIFEST |
-| 5 | roborefer 环境加 `activate.d/zz_cuda_home.sh` | `04_smoke.sh:42` 直连 env python 不激活 conda,torch 找不到 nvcc → deepspeed(llava 推理硬依赖,README 洞 #17)抛 `MissingCUDAException`。打包机有系统 `/usr/local/cuda-12.8` 命中 torch 第三条 fallback。真实 eval 走 Ray `runtime_env={"conda":...}` 会激活,本来就能解析 |
-| 6 | **两个 3.11.0 环境的 `ray/_private/node.py:454` 补 `python_version_match_level="minor"`** | 见 §4。不改数值,只放宽版本检查;备份 `node.py.orig` |
+| 1 | Install `nvidia-driver-570-server` (actually got 580.173.02) | The machine was delivered with **no driver installed at all**: GPUs visible on PCI, but no `/dev/nvidia*`, no kernel module, 0 nvidia packages in `dpkg -l` |
+| 2 | `NUM_GPUS=4 EVAL_GPUS=1` | Defaults 8 / 4; the latter makes Ray hang forever (§6) |
+| 3 | `BASH_ENV=/opt/conda-st/etc/profile.d/conda.sh` | `conda activate` at `run_eval.sh:84` does not work in a subprocess; conda is a shell function and does not cross processes |
+| 4 | Symlink benchmarks to the nested paths the script expects | The `BENCHMARKS` mapping expects things like `refspatial_bench/location.parquet`, while the dataset (**both** main and the pinned version) is flat `data/<key>.parquet`; without handling it you get `Missing: / exit 1` directly. `run_eval.sh` was not changed because its commit is recorded in MANIFEST |
+| 5 | Add `activate.d/zz_cuda_home.sh` to the roborefer environment | `04_smoke.sh:42` calls the env python directly without activating conda, torch cannot find nvcc → deepspeed (a hard dependency of llava inference, README hole #17) raises `MissingCUDAException`. The packaging machine has a system `/usr/local/cuda-12.8` that hits torch's third fallback. The real eval goes through Ray `runtime_env={"conda":...}`, which activates conda and resolves it anyway |
+| 6 | **Add `python_version_match_level="minor"` to `ray/_private/node.py:454` in the two 3.11.0 environments** | See §4. Does not change numbers, only relaxes a version check; backup at `node.py.orig` |
 
-**没做的事**:没改 `vlm.py:116` 的 fp32(交接文档要求保持口径),没改任何仓库代码,
-没装系统 CUDA toolkit,没接受 Anaconda ToS。
+**Things not done**: did not fix the fp32 in `vlm.py:116` (the handoff doc requires keeping the definition), did not change any repo code,
+did not install a system CUDA toolkit, did not accept the Anaconda ToS.
 
-偏离 #5 与 #6 已随 `POSTRESTORE.sh` 推到 HF repo,换机器时自动生效,
-并由 `VERIFY.sh` 的第 0 项前置检查把关 —— 详见 `00_environment/eval_rl_env/env_package_revision_20260912.md`。
+Deviations #5 and #6 have been pushed to the HF repo with `POSTRESTORE.sh`, take effect automatically on a new machine,
+and are guarded by the pre-check item 0 in `VERIFY.sh`; details in `00_environment/eval_rl_env/env_package_revision_20260912.md`.
 
 ---
 
-## 9. 下一步
+## 9. Next steps
 
-**可以进 RL。** 按优先级:
+**Can go to RL.** In priority order:
 
-1. **RL 的 GPU 预算必须按「全工具存活」重算,而且要保证策略有一张专属整卡。**
-   §4 的教训:4 张卡在 eval 规模下就已经排不开(工具 2.3 + 策略整卡 1.0,
-   需要 Ray 恰好压成 1.0/1.0/0.3/空);RL 的 actor 数量远大于此
-   (sam2/depth/bbox/graspgen 各 5、vision_ops 8),必然更紧。
-   可考虑的抓手:修 `vlm.py:116` 的 fp32(Molmo 实测 30.2 GiB,减半能腾出 15 GiB)、
-   按 benchmark 裁工具集、或显式把策略绑到独立卡上。
+1. **The RL GPU budget must be recomputed for "all tools alive", and must guarantee the policy a dedicated whole GPU.**
+   Lesson from §4: at eval scale 4 GPUs already cannot fit (tools 2.3 + a whole policy GPU 1.0,
+   requiring Ray to happen to pack it as 1.0/1.0/0.3/empty); RL's actor counts are far larger
+   (sam2/depth/bbox/graspgen 5 each, vision_ops 8), so it will certainly be tighter.
+   Possible levers: fix the fp32 in `vlm.py:116` (Molmo measured at 30.2 GiB, halving frees 15 GiB),
+   trim the tool set per benchmark, or explicitly pin the policy to its own GPU.
 
-2. **RoboSpatial 一律按区间报**(61.0% [56.9 / 65.1],两次 60.29 / 61.71)。
-   **不要补跑到 5 次** —— 5 次中位数读到线下的概率只有 0.28%,判据不会翻。
-   若想量化「真实散布是否比 ±0.8 宽」(两次运行只能看到翻转集的**下界**),
-   一次运行就能拿到大部分信息:看 199 个「恒对」里有多少在第三次翻掉。
-   这个数字有超出本判据的意义 —— 若真实散布明显更宽,本项目所有单次数字
-   (含 P4/P5)都该配更宽的误差棒。
+2. **Always report RoboSpatial as an interval** (61.0% [56.9 / 65.1], two runs 60.29 / 61.71).
+   **Do not rerun to 5 runs**: the probability that the median of 5 runs reads below the line is only 0.28%, the criterion will not flip.
+   To quantify "whether the true spread is wider than ±0.8" (two runs can only see a **lower bound** on the flip set),
+   a single run gets most of the information: see how many of the 199 "always correct" flip in a third run.
+   This number matters beyond this criterion: if the true spread is clearly wider, every single-run number in this project
+   (including P4/P5) should come with wider error bars.
 
-3. **RL 阶段起 1 Hz GPU 轨迹采样**(P4 在 `p4/logs/` 就是这么做的)。
+3. **Start 1 Hz GPU trace sampling in the RL stage** (P4 did exactly this in `p4/logs/`).
 
-4. **环境包下次重建时把五个环境的 Python 统一到 3.11.16**,这样偏离 #6 可以撤掉。
+4. **Next time the environment package is rebuilt, unify Python in all five environments to 3.11.16**, so deviation #6 can be removed.
 
-### 对 RL 奖励设计的一条输入
+### An input to RL reward design
 
-Vacant 的奖励是**连续预测上的二值凸包归属判据**(§2)。贴边样本(67 个错题里
-16% 在 0.02 以内、36% 在 0.05 以内)会因极小扰动在 0 和 1 之间跳。这既是 eval 噪声
-的来源,也意味着 RL 在这类任务上拿到的是**不连续、信息量低的奖励信号**。
-若 RL 要在 RoboSpatial 上取得进展,这一格的奖励塑形值得单独考虑。
+The Vacant reward is a **binary convex hull membership criterion on a continuous prediction** (§2). Edge samples (of the 67 wrong answers,
+16% within 0.02, 36% within 0.05) jump between 0 and 1 under tiny perturbations. This is both the source of eval noise
+and means that RL on this kind of task gets a **discontinuous, low-information reward signal**.
+If RL is to make progress on RoboSpatial, reward shaping for this cell deserves separate consideration.

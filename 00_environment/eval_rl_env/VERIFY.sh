@@ -1,34 +1,34 @@
 #!/bin/bash
-# 还原之后的真实验收。四项全过才算这套环境可用。
-# 判据一律看实际状态,不看退出码 —— 这个项目栽过太多次假绿灯。
+# The real acceptance check after restore. Only when all four items pass is this environment usable.
+# Every criterion looks at actual state, not exit codes — this project has been burned by false green lights too many times.
 #
-# 2026-09-12 修订(依据 03_sft_eval/sft_eval_results.md):
-#   + 第 0 项前置检查。原来的三项**抓不到**两个真实故障:
-#       - 五个环境 Python 版本不一致(3.11.0 vs 3.11.16)时 Ray 拒绝那些环境的
-#         actor 入集群,三项全绿但 eval/RL 会静默缺席 8 个(RL 23 个)actor
-#       - /workspace/logs 不存在时第 3 项的 grep 全读空却仍 exit 0
-#   + 第 3 项不再相信 28_chain.sh 的退出码,改为在输出里找成功标记。
-#     实测过它打印「✗ 链没通」的同时 exit 0。
-#   + 第 2 项自动补 CUDA_HOME。04_smoke.sh 直连 env python、不激活 conda,
-#     roborefer 的 deepspeed 会因此抛 MissingCUDAException。
+# 2026-09-12 revision (based on 03_sft_eval/sft_eval_results.md):
+#   + Item 0, a precondition check. The original three items **cannot catch** two real failures:
+#       - when the five environments' Python versions differ (3.11.0 vs 3.11.16), Ray refuses to let those environments'
+#         actors join the cluster; all three items are green but eval/RL silently misses 8 (23 for RL) actors
+#       - when /workspace/logs does not exist, item 3's grep reads nothing yet still exits 0
+#   + Item 3 no longer trusts the exit code of 28_chain.sh; it looks for a success marker in the output instead.
+#     It has been observed printing "✗ chain not connected" while exiting 0.
+#   + Item 2 sets CUDA_HOME automatically. 04_smoke.sh calls the env python directly without activating conda,
+#     so roborefer's deepspeed throws MissingCUDAException.
 set -uo pipefail
 S=/root/pkgstage/scripts
 [ -d "$S" ] || S=/root
-[ -f "$S/03_verify.sh" ] || { echo "✗ 找不到验收脚本,先解开 scripts 包"; exit 1; }
+[ -f "$S/03_verify.sh" ] || { echo "✗ acceptance check script not found; unpack the scripts package first"; exit 1; }
 CD="${CONDA_DIR:-/opt/conda-st}"
 cd /
 
-echo "==== 0. 前置检查(这些不过,后面三项的绿灯不可信)===="
+echo "==== 0. Precondition checks (if these fail, the green lights of the next three items cannot be trusted) ===="
 RC0=0
 p0(){ echo "  OK  $*"; }
 b0(){ echo "  BAD $*"; RC0=1; }
 
-# 0a 五环境 Python 一致性,以及不一致时 Ray 补丁是否到位
+# 0a Python consistency across the five environments, and, if inconsistent, whether the Ray patch is in place
 HEAD=""; MIS=""
 for e in spacetools-rl spacetools-tool-vlm spacetools-tool-roborefer \
          spacetools-tool-bbox spacetools-tool-graspgen; do
     px="$CD/envs/$e/bin/python"
-    [ -x "$px" ] || { b0 "$e 环境不存在"; continue; }
+    [ -x "$px" ] || { b0 "$e environment does not exist"; continue; }
     v="$("$px" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])')"
     [ "$e" = spacetools-rl ] && HEAD="$v"
     printf "      %-28s %s\n" "$e" "$v"
@@ -42,72 +42,72 @@ for e in spacetools-tool-vlm spacetools-tool-roborefer spacetools-tool-bbox spac
     if "$px" -c "
 import inspect, sys, ray._private.node as n
 sys.exit(0 if 'minor' in inspect.getsource(n.Node.check_version_info) else 1)" 2>/dev/null; then
-        p0 "$e Python($v) != 头节点($HEAD),但 Ray minor 档补丁在位"
+        p0 "$e Python($v) != head node ($HEAD), but the Ray minor-level patch is in place"
     else
-        b0 "$e Python($v) != 头节点($HEAD) 且没有 Ray 补丁 —— 这个环境的 actor 入不了集群,先跑 POSTRESTORE.sh"
+        b0 "$e Python($v) != head node ($HEAD) and no Ray patch — this environment's actors cannot join the cluster; run POSTRESTORE.sh first"
     fi
 done
-[ -n "$MIS" ] || p0 "五环境 Python 版本一致($HEAD)"
+[ -n "$MIS" ] || p0 "Python versions of the five environments match ($HEAD)"
 
-# 0b roborefer 的 CUDA_HOME(deepspeed 在 import 时就要读)
+# 0b CUDA_HOME for roborefer (deepspeed reads it at import time)
 RR="$CD/envs/spacetools-tool-roborefer"
 if [ -n "${CUDA_HOME:-}" ]; then
-    p0 "CUDA_HOME 已由调用方设置($CUDA_HOME)"
+    p0 "CUDA_HOME already set by the caller ($CUDA_HOME)"
 elif [ -x "$RR/bin/nvcc" ]; then
     export CUDA_HOME="$RR"
-    p0 "CUDA_HOME 未设,自动指向 $RR"
+    p0 "CUDA_HOME not set, pointing it to $RR automatically"
 else
-    b0 "roborefer 环境里没有 nvcc,且 CUDA_HOME 未设 —— 第 2 项会在 roborefer 上失败"
+    b0 "no nvcc in the roborefer environment and CUDA_HOME not set — item 2 will fail on roborefer"
 fi
 
-# 0c 运行期目录
+# 0c Runtime directories
 for d in /workspace/logs /workspace/smoke /workspace/checkpoints /workspace/hf; do
-    if [ -d "$d" ]; then p0 "$d 存在"; else b0 "$d 缺失(POSTRESTORE.sh 建前两个,权重目录见 MANIFEST)"; fi
+    if [ -d "$d" ]; then p0 "$d exists"; else b0 "$d missing (POSTRESTORE.sh creates the first two; for the weights directory see MANIFEST)"; fi
 done
 
-# 0d 不能有活着的 Ray 集群,也不能有残留的地址文件
+# 0d There must be no live Ray cluster, and no leftover address files
 if pgrep -x gcs_server >/dev/null 2>&1 || pgrep -x raylet >/dev/null 2>&1; then
-    b0 "有 Ray 进程在跑 —— 第 3 项的 ray.init(num_cpus=...) 会被拒。先 ray stop --force"
+    b0 "Ray processes are running — item 3's ray.init(num_cpus=...) will be rejected. Run ray stop --force first"
 else
     STALE=""
     for f in /root/tmp/ray/ray_current_cluster /tmp/ray/ray_current_cluster; do
         [ -f "$f" ] && STALE="$STALE $f"
     done
     if [ -n "$STALE" ]; then
-        b0 "残留的集群地址文件:$STALE —— 第 3 项会以为集群还在。删掉它们再跑"
+        b0 "leftover cluster address files: $STALE — item 3 will think the cluster is still up. Delete them and rerun"
     else
-        p0 "没有活着的 Ray 集群,也没有残留地址文件"
+        p0 "no live Ray cluster and no leftover address files"
     fi
 fi
-[ "$RC0" -eq 0 ] || { echo; echo "✗ 前置检查不过 —— 停在这里,不要看后面三项的结果"; exit 1; }
+[ "$RC0" -eq 0 ] || { echo; echo "✗ precondition checks failed — stop here, do not look at the results of the next three items"; exit 1; }
 
 echo
-echo "==== 1. 五环境 import 闸门 + .so 架构实扫 ===="
+echo "==== 1. Five-environment import gate + .so architecture scan ===="
 bash "$S/03_verify.sh"; RC1=$?
 echo
-echo "==== 2. 七工具冒烟(真加载权重、真出结果)===="
+echo "==== 2. Seven-tool smoke test (really loads weights, really produces results) ===="
 bash "$S/04_smoke.sh"; RC2=$?
 echo
-echo "==== 3. Ray 跨环境工具链(变量跨 conda 环境传递)===="
+echo "==== 3. Ray cross-environment tool chain (variables passed across conda environments) ===="
 CHAIN_OUT="$(bash "$S/28_chain.sh" 2>&1)"; RC3RAW=$?
 echo "$CHAIN_OUT"
-# 不相信退出码:必须在输出里看到成功标记,且没有失败标记
+# Do not trust the exit code: the success marker must appear in the output, and no failure marker (28_chain.sh prints these markers in Chinese, so they are kept verbatim)
 if echo "$CHAIN_OUT" | grep -q "跨环境工具链通了" && ! echo "$CHAIN_OUT" | grep -q "链没通"; then
     RC3=0
 else
     RC3=1
-    echo "  (28_chain.sh 退出码是 $RC3RAW,但输出里没有成功标记 —— 按失败计)"
+    echo "  (28_chain.sh exit code is $RC3RAW, but there is no success marker in the output — counted as a failure)"
 fi
 
 echo
-echo "==== 汇总 ===="
-echo "  前置检查   退出码 $RC0  (0=Python 一致或补丁在位、目录齐、无残留 Ray)"
-echo "  环境验收   退出码 $RC1  (0=五环境 import 全通 且 自编扩展都含 sm_8x)"
-echo "  七工具冒烟 退出码 $RC2  (0=七个都真出了结果,且结果里没有 Error:)"
-echo "  跨环境链   退出码 $RC3  (0=输出里确认 ndarray 跨 conda 环境双向传递正确)"
+echo "==== Summary ===="
+echo "  Precondition checks   exit code $RC0  (0=Python consistent or patch in place, directories present, no leftover Ray)"
+echo "  Environment check     exit code $RC1  (0=imports pass in all five environments and all self-built extensions contain sm_8x)"
+echo "  Seven-tool smoke test exit code $RC2  (0=all seven really produced results, and no Error: in the results)"
+echo "  Cross-environment chain exit code $RC3  (0=output confirms ndarrays passed correctly both ways across conda environments)"
 if [ "$RC0" -eq 0 ] && [ "$RC1" -eq 0 ] && [ "$RC2" -eq 0 ] && [ "$RC3" -eq 0 ]; then
-    echo "✓ 四项全过,环境可用"
+    echo "✓ all four items pass, environment usable"
 else
-    echo "✗ 有项目不过 —— 不要在这个状态下跑 eval,分数会是错的"
+    echo "✗ some items failed — do not run eval in this state, the scores will be wrong"
     exit 1
 fi

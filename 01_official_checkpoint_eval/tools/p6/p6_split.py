@@ -6,7 +6,7 @@ PIX = re.compile(r"Pixel value at \(([\d.]+), ([\d.]+)\) is ([\d.eE+-]+)")
 DET = re.compile(r"Detected (\d+) instance\(s\)[^:]*:\s*(\[.*?\])")
 PT  = re.compile(r"\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)")
 
-print("### 检验 1:深度题 —— 模型是否总是选「测得深度更小」的那个?\n")
+print("### Check 1: depth questions — does the model always pick the one with \"smaller measured depth\"?\n")
 for b in ["blinkdepth","cvb3ddepth"]:
     rs=load(b); follow=viol=skip=0; foll_wrong=viol_wrong=0
     for r in rs:
@@ -35,12 +35,12 @@ for b in ["blinkdepth","cvb3ddepth"]:
             viol+=1
             if not r["correct"]: viol_wrong+=1
     n=follow+viol
-    print(f"{b:14} 可判定 {n}/{len(rs)}(跳过 {skip})")
-    print(f"   遵守规则  {follow:4} ({100*follow/n:5.1f}%)  其中答错 {foll_wrong:3}  ← 工具错")
-    print(f"   违反规则  {viol:4} ({100*viol/n:5.1f}%)  其中答错 {viol_wrong:3}  ← 推理错")
+    print(f"{b:14} decidable {n}/{len(rs)} (skipped {skip})")
+    print(f"   follows rule  {follow:4} ({100*follow/n:5.1f}%)  of which wrong {foll_wrong:3}  ← tool error")
+    print(f"   breaks rule   {viol:4} ({100*viol/n:5.1f}%)  of which wrong {viol_wrong:3}  ← reasoning error")
     print()
 
-print("### 检验 2:pointing 题 —— 模型的答案是不是 roborefer 的原样透传?\n")
+print("### Check 2: pointing questions — is the model's answer a verbatim pass-through of roborefer?\n")
 for b in ["reflocation","refplacement","refunseen"]:
     rs=load(b); same=diff=skip=0; same_wrong=diff_wrong=0
     for r in rs:
@@ -61,15 +61,15 @@ for b in ["reflocation","refplacement","refunseen"]:
             diff+=1
             if not r["correct"]: diff_wrong+=1
     n=same+diff
-    print(f"{b:14} 可判定 {n}/{len(rs)}(跳过 {skip})")
-    print(f"   原样透传  {same:4} ({100*same/n:5.1f}%)  其中答错 {same_wrong:3}  ← 工具错")
-    print(f"   自行改动  {diff:4} ({100*diff/n:5.1f}%)  其中答错 {diff_wrong:3}")
+    print(f"{b:14} decidable {n}/{len(rs)} (skipped {skip})")
+    print(f"   verbatim pass-through  {same:4} ({100*same/n:5.1f}%)  of which wrong {same_wrong:3}  ← tool error")
+    print(f"   changed by model       {diff:4} ({100*diff/n:5.1f}%)  of which wrong {diff_wrong:3}")
     print()
 
-print("### 检验 3:robospatial 的 yes/no 题 —— roborefer 找到东西了吗?\n")
+print("### Check 3: robospatial yes/no questions — did roborefer find anything?\n")
 rs=load("robospatial")
 vqa=[r for r in rs if str(r["gt"]).strip().lower() in ("yes","no")]
-print(f"VQA 样本 {len(vqa)}")
+print(f"VQA samples {len(vqa)}")
 rows=[]
 for r in vqa:
     cnt=[]
@@ -81,10 +81,10 @@ for r in vqa:
     ans=(r["raw_answer"] or "").strip().lower()
     ans="yes" if "yes" in ans else ("no" if "no" in ans else "?")
     rows.append((gt, ans, tuple(cnt), r["correct"]))
-print(f"{'GT':>4} {'检测数模式':>12} {'n':>5} {'答yes':>7} {'答no':>6} {'正确率':>8}")
+print(f"{'GT':>4} {'detection-count pattern':>12} {'n':>5} {'ans yes':>7} {'ans no':>6} {'accuracy':>8}")
 agg={}
 for gt,ans,cnt,ok in rows:
-    key=(gt, "有0" if 0 in cnt else "全>0")
+    key=(gt, "has 0" if 0 in cnt else "all >0")
     d=agg.setdefault(key,[0,0,0,0]); d[0]+=1
     d[1]+= (ans=="yes"); d[2]+= (ans=="no"); d[3]+= bool(ok)
 for (gt,pat),(n,y,no,ok) in sorted(agg.items()):

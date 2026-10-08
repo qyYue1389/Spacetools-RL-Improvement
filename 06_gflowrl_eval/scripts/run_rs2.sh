@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# RoboSpatial 第二次独立运行,用来把「61.43% 没涨」从单次读数升级成区间结论。
-# 条件与第一次一致:gmu=0.545 · NUM_GPUS=4 EVAL_GPUS=1 · 同一个 ckpt。
-# 唯一差别是 vlm 的 num_gpus 声明 0.6 -> 1.0(只改 Ray 的逻辑预留)。robospatial
-# 全程只调 roborefer,vlm 一次都不会被调用,所以这个差别不进入分数,只影响摆放。
-# 这台机器 GPU0/1 是 49140 MiB(ECC off)、GPU2/3 是 46068 MiB(ECC on),而 gmu 是
-# 整卡比例 —— 策略落在哪张卡上 KV 池就差 1.7 GB。所以顺带 1 Hz/60s 记一份显存轨迹,
-# 万一两次读数差得多,先看是不是落卡不同造成的。
+# Second independent RoboSpatial run, to upgrade "61.43%, no gain" from a single reading to an interval conclusion.
+# Same conditions as the first run: gmu=0.545 · NUM_GPUS=4 EVAL_GPUS=1 · same ckpt.
+# The only difference is vlm's num_gpus declaration 0.6 -> 1.0 (only changes Ray's logical reservation). robospatial
+# only calls roborefer throughout and never calls vlm once, so this difference doesn't enter the score, it only affects placement.
+# On this machine GPU0/1 are 49140 MiB (ECC off) and GPU2/3 are 46068 MiB (ECC on), while gmu is a
+# fraction of the whole GPU — the KV pool differs by 1.7 GB depending on which GPU the policy lands on. So also record a GPU memory trace at 1 Hz/60s,
+# in case the two readings differ a lot, first check whether landing on different GPUs caused it.
 set -u
-mkdir /root/.eval_rs2.lock || { echo "已有实例在跑,退出"; exit 0; }
+mkdir /root/.eval_rs2.lock || { echo "an instance is already running, exiting"; exit 0; }
 mkdir -p /root/logs
 exec >>/root/logs/eval_rs2.log 2>&1
 echo "==== start $(date -u +'%F %T') UTC  pid $$"
 export HF_TOKEN="$(tr -d '\r\n' </root/.hf_token)"
-[ -n "$HF_TOKEN" ] || { echo "token 空,停"; exit 1; }
+[ -n "$HF_TOKEN" ] || { echo "token empty, stopping"; exit 1; }
 set -x
 export HF_HOME=/workspace/hf
 export CONDA_ROOT=/opt/conda-st
@@ -39,12 +39,12 @@ bash "$RUN_EVAL" "$MODEL" robospatial
 RC=$?
 set +x
 kill $SAMPLER
-echo "run_eval.sh 退出码 = $RC"
+echo "run_eval.sh exit code = $RC"
 MARK=$(grep -c 'EVALUATION COMPLETE' /root/logs/eval_rs2.log)
 NOROUTER=$(grep -c 'Could not find ToolRouterActor' /root/logs/eval_rs2.log)
 OOM=$(grep -c OutOfMemoryError "$OUTPUT_DIR/robospatial/eval.log")
 N=$(wc -l < "$OUTPUT_DIR/robospatial/0.jsonl")
-echo "COMPLETE=$MARK · router失联=$NOROUTER · OOM=$OOM · 样本=$N"
+echo "COMPLETE=$MARK · router_lost=$NOROUTER · OOM=$OOM · samples=$N"
 if [ "$MARK" -ge 1 ] && [ "$OOM" -eq 0 ] && [ "$NOROUTER" -eq 0 ] && [ "$N" -eq 350 ]; then
     echo "EVAL_RS2_PASS" >/root/logs/status_eval_rs2
 else

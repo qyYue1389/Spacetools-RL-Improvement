@@ -1,24 +1,24 @@
-# P6 错题归因(完整版)
+# P6 error attribution (full version)
 
-> **范围**:SpaceTools 官方 checkpoint 在 P4 全量评测上的 **2121 个样本**。
-> 准确率类七个 benchmark 共 **2001 个样本 / 322 个错题**,逐样本归到唯一一类;
-> 连续判分的 `boppose` / `bopgrasp` 另 120 个样本单独处理。
+> **Scope**: the **2121 samples** of the SpaceTools official checkpoint in the P4 full evaluation.
+> The seven accuracy-type benchmarks have **2001 samples / 322 wrong answers** in total, each sample assigned to exactly one class;
+> the continuously scored `boppose` / `bopgrasp` add another 120 samples, handled separately.
 >
-> **本文不涉及 P7 / GFlowRL。** 对象是论文发布的那个 checkpoint,不重新训练。
+> **This document does not cover P7 / GFlowRL.** The subject is the checkpoint released with the paper; nothing is retrained.
 >
-> **底稿**:`01_official_checkpoint_eval/reports/p6_error_attribution_report.md`。本文的区别是:**每一条错题都被显式落到一个类上**
-> (交叉表可复算),**每一类给两个真实样本**,数字全部从 `p4/parsed/` 当场重跑。
-> 复算脚本见附录。
+> **Base draft**: `01_official_checkpoint_eval/reports/p6_error_attribution_report.md`. The differences in this document: **every wrong answer is explicitly assigned to one class**
+> (the cross-tab can be recomputed), **each class gets two real samples**, and all numbers were rerun on the spot from `p4/parsed/`.
+> The recomputation scripts are in the Appendix.
 
 ---
 
-## 0. 先说三件影响怎么读这份表的事
+## 0. First, three things that affect how to read this table
 
-**① 322 个错题 100% 是 clean。** OOM、工具响应截断、轮数耗尽、缺 `<answer>`、
-畸形 tool call、幻影变量 —— 在错题上命中数**全部为 0**:
+**① 100% of the 322 wrong answers are clean.** OOM, truncated tool response, turns exhausted, missing `<answer>`,
+malformed tool call, phantom variable — the hit count on wrong answers is **0 for all of them**:
 
 ```
-benchmark          n      对     错    正确率  | 工具失败 OOM 截断 顶轮 无ans 幻影 || clean 错
+benchmark          n  correct  wrong  accuracy | toolfail OOM trunc maxturn no-ans phantom || clean wrong
 blinkdepth       124     107     17   86.29%  |     0    0   0    0    0    0  ||   17
 cvb2drelation    650     615     35   94.62%  |     0    0   0    0    0    0  ||   35
 cvb3ddepth       600     579     21   96.50%  |     0    0   0    0    0    0  ||   21
@@ -26,67 +26,67 @@ reflocation      100      54     46   54.00%  |     0    0   0    0    0    0  |
 refplacement     100      58     42   58.00%  |     0    0   0    0    0    0  ||   42
 refunseen         77      37     40   48.05%  |     0    0   0    0    0    0  ||   40
 robospatial      350     229    121   65.43%  |     0    0   0    0    0    0  ||  121
-合计            2001            322                                            ||  322
+total           2001            322                                            ||  322
 ```
 
-**没有一个错题有基础设施上的借口。** 这一条决定了下面整张表的性质:它归的是能力,不是事故。
+**Not a single wrong answer has an infrastructure excuse.** This determines the nature of the whole table below: it attributes capability, not accidents.
 
-**② 「工具错」这个标签比「模型无能」宽。** 它包含三种机制,不该一律读成「深度/检测模型估不准」:
-真的估错了、点落在物体上但那个像素属于别的东西、以及**两个物体本来就几乎没有裕度**。
-§2 会把它拆开量。
+**② The label "tool error" is broader than "the model is incompetent".** It covers three mechanisms and should not all be read as "the depth/detection model estimates badly":
+a genuinely wrong estimate, a point that lands on the object but on a pixel that belongs to something else, and **two objects that simply have almost no margin to begin with**.
+§2 splits it apart and measures it.
 
-**③ 每一类都给两个样本的完整轨迹。** 引用格式统一为:
+**③ Each class gets the full trajectory of two samples.** The quoting format is uniform:
 
 ```
-turn N  THINK  模型这一轮的 <think> 原文(过长时用 … 截断,不改写)
-        CALL   工具名({参数原文})
-        RESP   工具返回原文(过长时用 … 截断)
-        ANSWER <answer> 里的内容
+turn N  THINK  the original text of the model's <think> for this turn (truncated with … when too long, not rewritten)
+        CALL   tool_name({original arguments})
+        RESP   original tool response (truncated with … when too long)
+        ANSWER the content of <answer>
 ```
 
-全部取自 `p4/parsed/<benchmark>.jsonl` 的 `trajectory` 字段,**原文引用、不翻译、不润色**。
-只有两处加工:过长处截断(标 `…`)、以及在行尾加中文批注(标 `←`)。
-**轨迹里常有计数表看不见的东西** —— 模型是否察觉了工具坏了、它把「后方」翻译成了什么、
-它有没有写下自己需要深度却没去取。下面每一类的分析都会指出那一句。
+All taken from the `trajectory` field of `p4/parsed/<benchmark>.jsonl`, **quoted verbatim, not translated, not polished**.
+Only two kinds of processing: truncation where too long (marked `…`), and our own annotations added at the end of lines (marked `←`; written in Chinese in the original version of this document).
+**Trajectories often contain things the count table cannot see** — whether the model noticed the tool was broken, what it translated "behind" into,
+whether it wrote down that it needed depth and then did not fetch it. The analysis of each class below points out that sentence.
 
-**④ 3b 的归属有争议,两种读法都报。** 若把「坐标系/语义不匹配」算进推理错,
-工具错 : 推理错 = **241 : 33 ≈ 7.3 : 1**;若单列(本文的做法),是 **241 : 19 ≈ 12.7 : 1**。
-板子打在哪一侧,取决于你认为策略该不该自己去补深度。
+**④ The assignment of 3b is disputed, so both readings are reported.** If "coordinate frame / semantic mismatch" is counted as reasoning error,
+tool error : reasoning error = **241 : 33 ≈ 7.3 : 1**; if it is listed separately (what this document does), it is **241 : 19 ≈ 12.7 : 1**.
+Which side gets the blame depends on whether you think the policy should fill in depth on its own.
 
 ---
 
-## 1. 总表:错因 × 题数 × benchmark
+## 1. Summary table: error cause × number of questions × benchmark
 
-**322 / 322 全部归类,零未覆盖、零重复。**
+**322 / 322 all classified, zero uncovered, zero duplicates.**
 
-| # | 错因 | 代码 | n | 占 322 | 分布(按 benchmark) |
+| # | Error cause | Code | n | Share of 322 | Distribution (by benchmark) |
 |---|---|---|--:|--:|---|
-| 1 | **工具错 —— 检测定位不准** | `1` | **197** | 61.2% | robospatial 45 · reflocation 44 · refplacement 42 · refunseen 40 · cvb2drelation 26 |
-| 2 | **工具错 —— 深度估计不准** | `1` | **35** | 10.9% | cvb3ddepth 21 · blinkdepth 14 |
-| 3 | **工具集缺口**(`fit`:没有工具给自由空间) | `5` | **32** | 9.9% | robospatial 32 |
-| 4 | **推理错** | `3` | **19** | 5.9% | robospatial 15 · cvb2drelation 3 · blinkdepth 1 |
-| 5 | **坐标系 / 语义不匹配** | `3b` | **14** | 4.3% | robospatial 14 |
-| 6 | **工具错 —— 检测退化**(不同查询返回同一点) | `1a` | **9** | 2.8% | robospatial 4 · cvb2drelation 2 · reflocation 2 · blinkdepth 1 |
-| 7 | **该调没调** | `2a` | **11** | 3.4% | robospatial 11(其中 front/behind 未调深度 8 · 只检了主体 3) |
-| 8 | **二维投影不可分**(信息不足) | `2D` | **2** | 0.6% | cvb2drelation 2 |
-| 9 | **参数错**(查询串写错) | `2c` | **1** | 0.3% | cvb2drelation 1 |
-| 10 | **标注 / 指代歧义** | `6` | **1** | 0.3% | cvb2drelation 1 |
-| 11 | **格式错**(答案不在选项集) | `4` | **1** | 0.3% | blinkdepth 1 |
+| 1 | **Tool error — detection localization inaccurate** | `1` | **197** | 61.2% | robospatial 45 · reflocation 44 · refplacement 42 · refunseen 40 · cvb2drelation 26 |
+| 2 | **Tool error — depth estimate inaccurate** | `1` | **35** | 10.9% | cvb3ddepth 21 · blinkdepth 14 |
+| 3 | **Toolset gap** (`fit`: no tool gives free space) | `5` | **32** | 9.9% | robospatial 32 |
+| 4 | **Reasoning error** | `3` | **19** | 5.9% | robospatial 15 · cvb2drelation 3 · blinkdepth 1 |
+| 5 | **Coordinate frame / semantic mismatch** | `3b` | **14** | 4.3% | robospatial 14 |
+| 6 | **Tool error — degenerate detection** (different queries return the same point) | `1a` | **9** | 2.8% | robospatial 4 · cvb2drelation 2 · reflocation 2 · blinkdepth 1 |
+| 7 | **Should have called, did not** | `2a` | **11** | 3.4% | robospatial 11 (of which front/behind without calling depth 8 · only detected the subject 3) |
+| 8 | **Not separable in the 2D projection** (insufficient information) | `2D` | **2** | 0.6% | cvb2drelation 2 |
+| 9 | **Argument error** (query string written wrong) | `2c` | **1** | 0.3% | cvb2drelation 1 |
+| 10 | **Annotation / reference ambiguity** | `6` | **1** | 0.3% | cvb2drelation 1 |
+| 11 | **Format error** (answer not in the option set) | `4` | **1** | 0.3% | blinkdepth 1 |
 
-**三个大类合起来是 241 + 32 + 19 = 292,占 90.7%。**
+**The three large classes together are 241 + 32 + 19 = 292, i.e. 90.7%.**
 
 ```
-工具错合计(1 + 1a)  197 + 35 + 9 = 241   74.8%
-推理错(3)                          19    5.9%
-工具错 : 推理错 = 12.7 : 1
+tool error total (1 + 1a)  197 + 35 + 9 = 241   74.8%
+reasoning error (3)                     19    5.9%
+tool error : reasoning error = 12.7 : 1
 ```
 
-> 论文附录 Table 16 在 grasp 上给的是 30 例中 23 : 7。
-> **我们的比例更偏工具侧,而且是在大十倍的样本上。**
+> The paper's Appendix Table 16 gives 23 : 7 out of 30 cases on grasp.
+> **Our ratio leans further toward the tool side, and on a sample ten times larger.**
 
-**换一个切法 —— 按 benchmark 看每一类占它自己错题的比例:**
+**Another cut — by benchmark, each class as a share of that benchmark's own wrong answers:**
 
-| benchmark | 错题 | 工具错 | 工具集缺口 | 推理错 | 3b | 2a | 其它 |
+| benchmark | Wrong answers | Tool error | Toolset gap | Reasoning error | 3b | 2a | Other |
 |---|--:|--:|--:|--:|--:|--:|--:|
 | reflocation | 46 | **46** | — | — | — | — | — |
 | refplacement | 42 | **42** | — | — | — | — | — |
@@ -96,43 +96,43 @@ turn N  THINK  模型这一轮的 <think> 原文(过长时用 … 截断,不改�
 | blinkdepth | 17 | **15** | — | 1 | — | — | 1 |
 | robospatial | 121 | **49** | **32** | 15 | **14** | **11** | — |
 
-> **除 `robospatial` 外,每一个 benchmark 的错题都被工具错主导(80–100%)。**
-> 全部五个非零的「推理错 / 3b / 2a / 工具集缺口」里,**有 72/77 落在 `robospatial` 一家**。
-> 这不是巧合:`robospatial` 是唯一一个「图像平面两点比较」这条规则不成立的 benchmark(§5)。
+> **Except for `robospatial`, the wrong answers of every benchmark are dominated by tool error (80–100%).**
+> Of all five non-zero "reasoning error / 3b / 2a / toolset gap" counts, **72/77 fall in `robospatial` alone**.
+> This is not a coincidence: `robospatial` is the only benchmark where the rule "compare two points in the image plane" does not hold (§5).
 
 ---
 
-## 2. 错因 1:工具错 —— 检测定位不准(197 条,61.2%)
+## 2. Error cause 1: tool error — detection localization inaccurate (197 items, 61.2%)
 
-### 2.1 怎么判的
+### 2.1 How it was judged
 
-两条判据,都不需要看图:
+Two criteria, neither requires looking at the image:
 
-- **pointing 题**(`reflocation` / `refplacement` / `refunseen` / `robospatial` Vacant):
-  模型的答案是不是 RoboRefer 返回点的**原样透传**?是 → 模型没做任何加工,错只能是工具的。
-  实测 **276/276 原样透传,一次改动都没有**(三个 RefSpatial);Vacant 上 104/122 透传。
-- **关系题**(`cvb2drelation`):模型是不是在执行「比 x / 比 y」这条规则?
-  遵守规则却答错 → 检测点不准。该判据的自洽率(在**答对**的样本上规则与模型是否一致)是 **99.83%**,
-  规则对 GT 的准确率 **95.4%** —— 图像平面就是 CVBench 2D relation 的正确语义,所以这一判可用。
+- **pointing questions** (`reflocation` / `refplacement` / `refunseen` / `robospatial` Vacant):
+  Is the model's answer a **verbatim pass-through** of the point returned by RoboRefer? Yes → the model did no processing at all, so the error can only be the tool's.
+  Measured: **276/276 verbatim pass-through, not a single change** (the three RefSpatial); 104/122 pass-through on Vacant.
+- **relation questions** (`cvb2drelation`): is the model executing the rule "compare x / compare y"?
+  Follows the rule but answers wrong → the detection point is inaccurate. The self-consistency rate of this criterion (whether the rule agrees with the model on the samples answered **correctly**) is **99.83%**,
+  and the rule's accuracy against GT is **95.4%** — the image plane is the correct semantics for CVBench 2D relation, so this criterion is usable.
 
-### 2.2 分析
+### 2.2 Analysis
 
-**这一档是全部错题的主体,而且它的主体是 RoboRefer。** 三个 RefSpatial 上 126 条、
-`robospatial` Vacant 45 条、`cvb2drelation` 26 条,合计 197 条全部由检测点的位置决定。
+**This tier is the bulk of all wrong answers, and its bulk is RoboRefer.** 126 items on the three RefSpatial,
+45 on `robospatial` Vacant, 26 on `cvb2drelation`; all 197 together are determined by the position of the detection point.
 
-有一个尖锐的推论:在 277 个 RefSpatial 样本上,**策略相对于「直接调 RoboRefer」的全部贡献
-就是怎么措辞那个 `obj_name`** —— 它不做任何后处理。论文 Table 2 里 RoboRefer-8B-SFT 单跑
-RefSpatial 是 48.37,SpaceTools-3B 是 53.07,**那 +4.7 全部来自查询构造,没有一分来自推理。**
+There is a sharp corollary: on the 277 RefSpatial samples, **the policy's entire contribution relative to "just call RoboRefer directly"
+is how it words that `obj_name`** — it does no post-processing. In the paper's Table 2, RoboRefer-8B-SFT alone on
+RefSpatial is 48.37 and SpaceTools-3B is 53.07; **that +4.7 comes entirely from query construction, not one point from reasoning.**
 
-间距分布也支持这个判法:`cvb2drelation` 上答对组的判定轴间距中位 **0.410**,
-遵守规则却答错组 **0.192** —— 错的那批点本来就挤在一起。
+The distance distribution also supports this criterion: on `cvb2drelation`, the median distance along the deciding axis is **0.410** in the correct group
+and **0.192** in the follows-rule-but-wrong group — the points in the wrong batch were crowded together to begin with.
 
-### 2.3 样本 A —— `cvb2drelation #10`:规则执行得没错,点错了
+### 2.3 Sample A — `cvb2drelation #10`: the rule was executed correctly, the point was wrong
 
 > *Considering the relative positions of the **rug** (annotated by the red box) and the **pillow** …
 > where is the rug located with respect to the pillow?*   `(A) above  (B) below`   **GT = A**
 
-**轨迹全文**(链路 `roborefer×2@2t`):
+**Full trajectory** (chain `roborefer×2@2t`):
 
 ```
 turn 1  THINK  Looking at this image, I need to identify the positions of the rug (marked by
@@ -152,16 +152,16 @@ turn 2  THINK  Based on the detection results: - The rug (in the red box) is loc
         ANSWER B
 ```
 
-**模型把两个 y 比了大小,比对了** —— 轨迹里那一段推理是教科书式的,一步没错。
-而 GT 说地毯在枕头**上方** —— 在图像平面语义下这只能意味着
-两个检测点里至少有一个不在它该在的地方(地毯是一大片区域,RoboRefer 给的是其中一个点)。
-**推理侧无可指摘。**
+**The model compared the two y values, and compared them correctly** — the reasoning in that part of the trajectory is textbook, not one step wrong.
+Yet the GT says the rug is **above** the pillow — under image-plane semantics this can only mean
+that at least one of the two detection points is not where it should be (the rug is a large area; RoboRefer gives one point within it).
+**The reasoning side is beyond reproach.**
 
-### 2.4 样本 B —— `refplacement #0`:模型就是一根管子
+### 2.4 Sample B — `refplacement #0`: the model is just a pipe
 
 > *Please point out the **free space on the top of the wooden shelf and beside the picture frame**.*
 
-**轨迹全文**(链路 `roborefer×1@2t`,`score = 0.0`):
+**Full trajectory** (chain `roborefer×1@2t`, `score = 0.0`):
 
 ```
 turn 1  THINK  I need to find the free space on the top of the wooden shelf and beside the
@@ -180,57 +180,57 @@ turn 2  THINK  I have found the free space on the top of the wooden shelf and be
         ANSWER [(0.816, 0.485)]
 ```
 
-**注意 turn 1 的 THINK 里那句 "and then find the free space around them" —— 它本来打算做第二步,
-然后 turn 2 直接把返回值抄了。** 模型做的唯一一件事,是把题面整句塞进 `obj_name`,
-再把返回值原样抄进 `<answer>`。
-链路 `roborefer×1@2t`,没有第二次调用、没有校验、没有后处理。
-这 42 条 `refplacement` 错题**每一条都是这个形状**。
+**Note the sentence "and then find the free space around them" in the turn 1 THINK — it originally intended to do a second step,
+and then in turn 2 it just copied the return value.** The only thing the model did was stuff the whole question sentence into `obj_name`,
+and then copy the return value verbatim into `<answer>`.
+Chain `roborefer×1@2t`: no second call, no verification, no post-processing.
+**Every single one** of these 42 `refplacement` wrong answers has this shape.
 
-> 所以这一类的 headroom 不在策略上。P6 §6.2 实测:把 RoboRefer 整体换成 Molmo-7B-D
-> **更差 −14.61 pp**,但逐样本 oracle 选工具 **+10.83 pp** —— 动作是**补上**(router / ensemble),
-> 不是换掉。
+> So the headroom for this class is not in the policy. P6 §6.2 measured: replacing RoboRefer wholesale with Molmo-7B-D is
+> **worse by −14.61 pp**, but per-sample oracle tool selection gives **+10.83 pp** — the move is to **add** (router / ensemble),
+> not to replace.
 
 ---
 
-## 3. 错因 2:工具错 —— 深度估计不准(35 条,10.9%)
+## 3. Error cause 2: tool error — depth estimate inaccurate (35 items, 10.9%)
 
-### 3.1 怎么判的
+### 3.1 How it was judged
 
-`blinkdepth` 与 `cvb3ddepth` 走同一条链(`depth_estimator×1 + roborefer×2 + vision_ops×2`),
-题目问哪个更近。规则:**选测得深度更小的那个**。
+`blinkdepth` and `cvb3ddepth` take the same chain (`depth_estimator×1 + roborefer×2 + vision_ops×2`),
+and the question asks which one is closer. The rule: **pick the one with the smaller measured depth**.
 
-| benchmark | 可判定 | 遵守规则 | 遵守却答错 → 工具错 | 违反且答错 → 推理错 |
+| benchmark | Decidable | Follows rule | Follows but wrong → tool error | Violates and wrong → reasoning error |
 |---|--:|--:|--:|--:|
-| `blinkdepth` | 114/124 | 109(95.6%) | **14** | **1** |
-| `cvb3ddepth` | 599/600 | 598(**99.8%**) | **21** | **0** |
+| `blinkdepth` | 114/124 | 109 (95.6%) | **14** | **1** |
+| `cvb3ddepth` | 599/600 | 598 (**99.8%**) | **21** | **0** |
 
-**`cvb3ddepth` 的 21 个错题 100% 是 DepthPro 的错,推理侧零错误。**
+**100% of the 21 wrong answers on `cvb3ddepth` are DepthPro's errors; zero errors on the reasoning side.**
 
-### 3.2 分析:这 35 条里有一半根本没有裕度
+### 3.2 Analysis: half of these 35 have no margin at all
 
-按相对间距 `|d_A − d_B| / min(d_A, d_B)` 拆开这 35 条:
+Splitting these 35 by relative gap `|d_A − d_B| / min(d_A, d_B)`:
 
-| 相对间距 | 条数 | 读法 |
+| Relative gap | Count | Reading |
 |---|--:|---|
-| **< 10%(近平局)** | **10** | 更像「没有裕度」而非「估错」 |
+| **< 10% (near tie)** | **10** | More like "no margin" than "estimated wrong" |
 | 10 – 50% | 17 | |
-| **> 50%(自信地反了)** | **8** | |
+| **> 50% (confidently reversed)** | **8** | |
 
-对照更有说服力:**答对样本的相对间距中位 83.3%,这 35 条错题中位 25.3%。**
-**大多数深度错题发生在两个物体本来就很接近的地方。**
+The comparison is more convincing: **the median relative gap is 83.3% on correct samples and 25.3% on these 35 wrong answers.**
+**Most depth wrong answers happen where the two objects were very close to begin with.**
 
-> 这条直接给「换深度工具」定了界:**略强一点的工具能翻回近平局那 10 条,
-> 吃掉自信错的那 8 条需要显著更强的模型。**
+> This directly bounds "swap the depth tool": **a slightly stronger tool could flip back the 10 near ties;
+> eating the 8 confident errors needs a significantly stronger model.**
 
-还有一个天然对照:两个 benchmark 同链、同规则、推理保真度都接近 100%,而分数差十个点——
-**那十个点纯粹是 DepthPro 在不同图像上的准确率差异**,与编排、与策略无关。
+There is also a natural control: the two benchmarks share the same chain, the same rule, and reasoning fidelity close to 100% on both, yet the scores differ by ten points —
+**those ten points are purely DepthPro's accuracy difference across different images**, unrelated to orchestration or policy.
 
-### 3.3 样本 A —— `cvb3ddepth #86`:自信地反了(相对间距 91%)
+### 3.3 Sample A — `cvb3ddepth #86`: confidently reversed (relative gap 91%)
 
 > *Which object is closer to the camera, the **lamp** (red box) or the **refrigerator** (blue box)?*
 > `(A) lamp  (B) refrigerator`   **GT = A**
 
-**轨迹全文**(链路 `depth_estimator×1 + roborefer×2 + vision_ops×2@3t`):
+**Full trajectory** (chain `depth_estimator×1 + roborefer×2 + vision_ops×2@3t`):
 
 ```
 turn 1  THINK  I need to determine which object is closer to the camera by analyzing the depth
@@ -257,19 +257,19 @@ turn 3  THINK  Based on the depth analysis: - Lamp (red box): depth = 4.54 meter
         ANSWER B
 ```
 
-**这条轨迹是这套系统「正确工作」时的标准形状** —— 三轮、五次调用、一句比大小。
-两个检测点也都对(审阅卡看图核实过:红框是画面顶部的吸顶灯,`(0.368, 0.144)` 落在框内)。
+**This trajectory is the standard shape of this system when it "works correctly"** — three turns, five calls, one comparison.
+Both detection points are also correct (verified against the image on the review card: the red box is the ceiling light at the top of the frame, and `(0.368, 0.144)` lands inside the box).
 
-**模型做的全部事情就是把 4.536 和 2.378 比大小,而它比对了。**
-红框框住的是画面顶部的一盏**吸顶灯**,物理上离相机很近;GT 说它更近,意味着实际 < 2.378 m,
-而 DepthPro 报了 4.536 m —— **相对间距 91%,不是差一点,是差了近两倍且方向反了。**
-单目深度在纹理稀少的天花板灯具上把「投影得小」读成「远」,是它已知的失效模式。
+**All the model did was compare 4.536 with 2.378, and it compared them correctly.**
+The red box encloses a **ceiling light** at the top of the frame, physically very close to the camera; GT says it is closer, meaning the actual depth is < 2.378 m,
+while DepthPro reported 4.536 m — **a relative gap of 91%; not slightly off, but off by nearly 2× and in the wrong direction.**
+Monocular depth reading "projects small" as "far" on texture-poor ceiling fixtures is a known failure mode of it.
 
-### 3.4 样本 B —— `blinkdepth #5`:近平局,谁来都得抛硬币
+### 3.4 Sample B — `blinkdepth #5`: near tie, anyone would have to flip a coin
 
 > *Which point is closer to the camera?*   `(A) A is closer  (B) B is closer`   **GT = A**
 
-**轨迹全文**(链路 `depth_estimator×1 + roborefer×2 + vision_ops×2 + vlm×2@4t`):
+**Full trajectory** (chain `depth_estimator×1 + roborefer×2 + vision_ops×2 + vlm×2@4t`):
 
 ```
 turn 1  THINK  Looking at the image, I can see: - Point A is labeled near the top center,
@@ -302,52 +302,52 @@ turn 4  THINK  … Point A appears to be on an orange that is slightly more forw
         ANSWER B
 ```
 
-**两个点的深度差 1.16 厘米,而整幅图的深度跨度只有 71 厘米(相对间距 1.3%)。**
-这不是「DepthPro 估错了」,是**这道题在这个工具的分辨率下不可判**。
+**The depth difference between the two points is 1.16 cm, while the depth span of the whole image is only 71 cm (relative gap 1.3%).**
+This is not "DepthPro estimated wrong"; it is that **this question is undecidable at this tool's resolution**.
 
-**而轨迹给出了一个计数表看不见的事实:模型自己发现了这一点。**
-turn 3 它明确写出「差值只有约 0.01 m,落在深度估计可能不可靠的范围内」,
-并按系统提示里的规则改调 `vlm` 复检、最后转成视觉判断 —— **它做了能做的全部动作,还是错了。**
+**And the trajectory gives a fact the count table cannot see: the model noticed this itself.**
+In turn 3 it explicitly writes "the difference is only about 0.01 m, which is within the range where depth estimation may be unreliable",
+and, following the rule in the system prompt, switches to `vlm` to re-check, finally falling back to a visual judgment — **it did every action it could, and was still wrong.**
 
-> 把它和 `#86` 放在同一个「工具错」标签下,是标签的粗糙,不是结论的错误 ——
-> **所以 §3.2 那张间距表必须和计数一起引用。** 顺带一提,判据把这一条计为「遵守规则」
-> 是因为它最终的答案(B)与「选更小的」一致;**但轨迹显示它并不是靠那条规则得到 B 的。**
-> 这是判据的已知误差方向(自洽率 95.6% 的那 4.4%),这里正好抓到一例。
+> Putting it under the same "tool error" label as `#86` is a coarseness of the label, not an error in the conclusion —
+> **so the gap table in §3.2 must be cited together with the counts.** Incidentally, the criterion counts this item as "follows the rule"
+> because its final answer (B) agrees with "pick the smaller one"; **but the trajectory shows it did not get B through that rule.**
+> This is the known error direction of the criterion (the 4.4% of the 95.6% self-consistency rate), and here it caught one instance.
 
 ---
 
-## 4. 错因 3:工具集缺口 —— `fit` 题(32 条,9.9%)
+## 4. Error cause 3: toolset gap — `fit` questions (32 items, 9.9%)
 
-### 4.1 怎么判的
+### 4.1 How it was judged
 
-不靠判据,靠**工具直方图**:题目需要的量,模型从来没有去取过,而且**没有任何单个工具能返回它**。
+Not by a criterion, but by the **tool histogram**: the quantity the question needs, the model never went to fetch, and **no single tool can return it**.
 
 ```
-robospatial VQA 的 fit 题   n = 105   正确率 73/105 = 69.5%
-                            **未调用 depth_estimator 105/105**
-                            GT = no 的正确率  4/18 = 22%
-                            模型答 yes 83/105
+robospatial VQA fit questions   n = 105   accuracy 73/105 = 69.5%
+                                **depth_estimator not called 105/105**
+                                accuracy when GT = no  4/18 = 22%
+                                model answers yes 83/105
 ```
 
-### 4.2 分析
+### 4.2 Analysis
 
-问的是「放不放得下」,而工具返回的是「在哪」。**`bounding_box` 能给物体尺寸、`depth_estimator`
-能给深度,但没有任何工具返回「某个方位上有多少自由空间」** —— 这个量要靠组合多个工具再算,
-而模型从没这么做过。
+The question asks "does it fit", while the tools return "where is it". **`bounding_box` can give object size, `depth_estimator`
+can give depth, but no tool returns "how much free space there is in some direction"** — that quantity has to be computed by combining several tools,
+and the model never did that.
 
-后果非常整齐:**模型在 fit 题上几乎总是答 yes**(105 题答了 83 次),
-所以 GT = yes 的题大半蒙对,GT = no 的题塌到 22%。
-P5 记过的「GT 为 `no` 的题停在随机水平」,**拆开看就集中在这里**
-(fit 22% vs 关系题 58% vs front/behind 64%)。
+The consequence is very clean: **on fit questions the model almost always answers yes** (83 times out of 105 questions),
+so it guesses most GT = yes questions right, and GT = no questions collapse to 22%.
+What P5 recorded as "questions with GT `no` sit at chance level" **is, when split apart, concentrated here**
+(fit 22% vs relation questions 58% vs front/behind 64%).
 
-> **这条路指向加工具或加组合能力,不是调 prompt、不是换 pointing 工具。**
-> 只要 fit 题不再一律答 yes,`robospatial` VQA 相对论文的 6.46 pp 缺口就填平了。
+> **This path points to adding tools or adding composition ability, not tuning the prompt and not swapping the pointing tool.**
+> As soon as fit questions stop being answered yes across the board, the 6.46 pp gap of `robospatial` VQA relative to the paper is closed.
 
-### 4.3 样本 A —— `robospatial #128`:典型形状(该答 no,答了 yes)
+### 4.3 Sample A — `robospatial #128`: the typical shape (should answer no, answered yes)
 
-> *Can the **cup** fit **in front of** the **speaker**?*   **GT = No**,模型答 **Yes**
+> *Can the **cup** fit **in front of** the **speaker**?*   **GT = No**, model answers **Yes**
 
-**轨迹全文**(链路 `roborefer×2@2t`):
+**Full trajectory** (chain `roborefer×2@2t`):
 
 ```
 turn 1  THINK  I need to analyze whether the cup can fit in front of the speaker. To do this,
@@ -365,17 +365,17 @@ turn 2  THINK  Now I have the positions: - Cup is at (0.78, 0.494) - this is on 
         ANSWER Yes
 ```
 
-**turn 1 的 THINK 把计划写得很清楚:第 3 步是 "Assess the spatial relationship and
-available space"。然后它只拿到了两个点位,第 3 步无从做起,turn 2 直接作答。**
+**The turn 1 THINK states the plan clearly: step 3 is "Assess the spatial relationship and
+available space". Then it only got two point positions, step 3 had nothing to work with, and turn 2 answered directly.**
 
-没有任何工具告诉过它:speaker 前面有多少空地、cup 有多大。
-拿到的是「在哪」,问的是「放不放得下」——**它需要的量根本没有工具返回。**
+No tool ever told it how much open space there is in front of the speaker, or how big the cup is.
+What it got was "where", what was asked was "does it fit" — **the quantity it needs is not returned by any tool at all.**
 
-### 4.4 样本 B —— `robospatial #122`:反方向也错,说明不是单纯的 yes 偏置
+### 4.4 Sample B — `robospatial #122`: wrong in the opposite direction too, so it is not simply a yes bias
 
-> *Can the **tissue box** fit **behind** the **chair**?*   **GT = Yes**,模型答 **No**
+> *Can the **tissue box** fit **behind** the **chair**?*   **GT = Yes**, model answers **No**
 
-**轨迹全文**(链路 `roborefer×2@2t`):
+**Full trajectory** (chain `roborefer×2@2t`):
 
 ```
 turn 1  THINK  I need to analyze whether the tissue box can fit behind the chair. To do this,
@@ -390,46 +390,46 @@ turn 2  THINK  Now I have the positions: - Tissue box: (0.306, 0.531) … - Chai
         ANSWER No
 ```
 
-**逐字相同的计划(连 THINK 的措辞都几乎一样),同样只有两个点位,这次它答了 no,一样错。**
+**A verbatim-identical plan (even the THINK wording is almost the same), again only two point positions; this time it answered no, and was just as wrong.**
 
-把这两条放在一起才准确:**不是「模型有个 yes 偏置所以错」,而是「它在瞎猜,
-而猜的先验偏 yes」** —— 先验帮它在 GT=yes 的 87 题上蒙到不少,在 GT=no 的 18 题上塌到 4/18。
-**两个方向上它都没有可依据的量。**
+Only putting these two side by side is accurate: **it is not "the model has a yes bias, so it is wrong", but "it is guessing blindly,
+and the prior of the guess leans yes"** — the prior helps it guess quite a few of the 87 GT=yes questions right, and collapses to 4/18 on the 18 GT=no questions.
+**In both directions it has no quantity to base the answer on.**
 
 ---
 
-## 5. 错因 4:推理错(19 条,5.9%)
+## 5. Error cause 4: reasoning error (19 items, 5.9%)
 
-### 5.1 怎么判的
+### 5.1 How it was judged
 
-反过来用前面两条判据:**违反规则**(深度题没选更小的、关系题没按坐标比)
-或**自行改动工具的输出**(pointing 题不透传),且答错。
+Using the two earlier criteria in reverse: **violates the rule** (depth question did not pick the smaller one, relation question did not compare by coordinates)
+or **modifies the tool's output on its own** (pointing question not passed through), and answers wrong.
 
-分布:`robospatial` Vacant 15 · `cvb2drelation` 3 · `blinkdepth` 1。
-**15/19 集中在 Vacant 一处。**
+Distribution: `robospatial` Vacant 15 · `cvb2drelation` 3 · `blinkdepth` 1.
+**15/19 concentrated in Vacant alone.**
 
-### 5.2 分析:它不是在算,是在目测
+### 5.2 Analysis: it is not computing, it is eyeballing
 
-Vacant 上有一条极干净的统计:
+There is an extremely clean statistic on Vacant:
 
-| | n | 正确率 | 两个坐标都是 0.05 的整数倍 |
+| | n | Accuracy | Both coordinates are multiples of 0.05 |
 |---|--:|--:|--:|
-| 原样透传 | 104 | **54.8%** | 2 条(**2%**) |
-| 模型自行改点 | 18 | **27.8%** | 6 条(**33%**) |
+| Verbatim pass-through | 104 | **54.8%** | 2 items (**2%**) |
+| Point override by the model | 18 | **27.8%** | 6 items (**33%**) |
 
-**一改就减半,而且 0.05 整数倍的比例差了 16 倍。**
+**Once it overrides, accuracy halves, and the share of multiples of 0.05 differs by 16×.**
 
-透传时坐标带着工具的三位小数(`0.271, 0.870`);一旦模型自己动手,就变成
-`(0.40, 0.70)`、`(0.50, 0.85)` 这种**眼估的整数**。
-**所以「推理错」在 Vacant 上的具体含义是:它不是在算,是在目测。**
-而 Vacant 的 GT 是一条几十像素宽的窄带,目测到 0.05 的粒度不够用。
+When passing through, the coordinates carry the tool's three decimal places (`0.271, 0.870`); as soon as the model does it itself, they become
+**eyeballed round numbers** like `(0.40, 0.70)`, `(0.50, 0.85)`.
+**So the concrete meaning of "reasoning error" on Vacant is: it is not computing, it is eyeballing.**
+And Vacant's GT is a narrow strip a few tens of pixels wide; eyeballing at 0.05 granularity is not fine enough.
 
-### 5.3 样本 A —— `robospatial #11`:方向对了,距离没拿准
+### 5.3 Sample A — `robospatial #11`: right direction, distance not nailed
 
 > *In the image, there is a **cup**. Pinpoint one point within the **vacant space** suitable for
 > placing an object **close to and to the right of** the cup.*
 
-**轨迹全文**(链路 `roborefer×1@2t`,**整个样本只有一次工具调用**):
+**Full trajectory** (chain `roborefer×1@2t`, **only one tool call in the entire sample**):
 
 ```
 turn 1  THINK  I need to find a vacant space that is close to and to the right of the cup.
@@ -438,7 +438,7 @@ turn 1  THINK  I need to find a vacant space that is close to and to the right o
                see a white mug/cup on the desk in the lower left portion of the image.
                Let me detect its exact location first.
         CALL   roborefer.detect_one({"obj_name": "cup", "image_index": 0})
-        RESP   Detected 1 instance(s) of 'cup': [(0.271, 0.87)]   ✓ 精准落在桌上那只杯子上
+        RESP   Detected 1 instance(s) of 'cup': [(0.271, 0.87)]   ✓ lands precisely on the cup on the desk
 
 turn 2  THINK  The cup is located at approximately (0.271, 0.87), which is in the lower left
                area of the desk. Now I need to find a vacant space that is: 1. Close to the cup
@@ -450,24 +450,24 @@ turn 2  THINK  The cup is located at approximately (0.271, 0.87), which is in th
 ```
 
 ```
-GT 是 23 个可接受点组成的一片区域 —— 杯子右边那条桌面窄带:
-  x 范围 0.327 – 0.558      y 范围 0.878 – 0.989
+GT is an area made of 23 acceptable points — the narrow desk strip to the right of the cup:
+  x range 0.327 – 0.558      y range 0.878 – 0.989
 ```
 
-**turn 2 的 THINK 里没有一个算式。** 它说「看桌面、杯子右边好像有空位」,
-然后给了一个数 —— **这就是「目测」在轨迹里的样子。**
+**There is not a single formula in the turn 2 THINK.** It says "look at the desk, there seems to be space to the right of the cup",
+then gives a number — **this is what "eyeballing" looks like in a trajectory.**
 
-**它没有照抄工具给的点,自己动了手,而且看清楚是这样错的:**
-`x = 0.50` 落在 GT 范围内(0.327–0.558),**方向完全正确;差的是 y** ——
-GT 的 y 全部 ≥ 0.878,模型给 0.85,**高了约 0.03,落在那条窄带的上沿之外,擦边没中。**
-**它知道往右,没拿准往前多少。** 两个坐标都是 0.05 的整数倍。
+**It did not copy the tool's point; it did it itself, and you can see clearly how it went wrong:**
+`x = 0.50` lands inside the GT range (0.327–0.558); **the direction is entirely correct; what is off is y** —
+all GT y values are ≥ 0.878, the model gave 0.85, **about 0.03 too high, just outside the upper edge of that narrow strip, a near miss.**
+**It knew to go right, but did not nail how far forward.** Both coordinates are multiples of 0.05.
 
-### 5.4 样本 B —— `robospatial #3`:同样的形状,差得更远
+### 5.4 Sample B — `robospatial #3`: the same shape, further off
 
 > *In the image, there is a **speaker**. Pinpoint one point within the vacant space suitable for
 > placing an object **close to and behind** the speaker.*
 
-**轨迹全文**(链路 `roborefer×1@2t`):
+**Full trajectory** (chain `roborefer×1@2t`):
 
 ```
 turn 1  THINK  I need to find a vacant space that is close to and behind the speaker. First, I
@@ -485,59 +485,59 @@ turn 2  THINK  The speaker is detected at position (0.154, 0.491) … Behind the
 ```
 
 ```
-GT 区域(10 个点):x 0.251 – 0.400   y 0.416 – 0.455
+GT area (10 points): x 0.251 – 0.400   y 0.416 – 0.455
 ```
 
-**注意 turn 2 自己写的定义:「behind = to the right in the image」。**
-它把「后方」翻译成了图像里的右边 —— x = 0.40 因此正好压在 GT 的右边界上,**方向判对了**;
-而 y 它给了 0.70,GT 的 y 最大才 0.455,**差了 0.25**。
+**Note the definition turn 2 writes for itself: "behind = to the right in the image".**
+It translated "behind" into the right side of the image — so x = 0.40 sits exactly on the right boundary of the GT, **the direction was judged correctly**;
+but for y it gave 0.70, while the largest GT y is only 0.455, **off by 0.25**.
 
-又是两个 0.05 的整数倍。
+Again two multiples of 0.05.
 
-**两条放在一起就能看出机制:模型对「哪个方向」判断得不错,对「多远」完全靠估,
-而 Vacant 的判分恰恰是对后者敏感的。**
+**Putting the two side by side shows the mechanism: the model judges "which direction" fairly well, but "how far" is pure estimation,
+and Vacant's scoring is exactly sensitive to the latter.**
 
 ---
 
-## 6. 错因 5:坐标系 / 语义不匹配(14 条,4.3%)
+## 6. Error cause 5: coordinate frame / semantic mismatch (14 items, 4.3%)
 
-### 6.1 怎么判的
+### 6.1 How it was judged
 
-**这一类判据判不了,必须看图。** 触发条件是:两个检测点都对、规则也执行得没错,
-但**那条规则不是这道题的语义**。
+**The criteria cannot judge this class; the image has to be looked at.** The trigger condition is: both detection points are correct and the rule was executed correctly,
+but **that rule is not the semantics of this question**.
 
-判据 C 给出了这一类存在的硬证据:
+Criterion C gives hard evidence that this class exists:
 
-| | 可判定 | 自洽率 | **规则对 GT** | 模型对 GT |
+| | Decidable | Self-consistency rate | **Rule vs GT** | Model vs GT |
 |---|--:|--:|--:|--:|
 | `cvb2drelation` | 627/650 | 99.83% | **95.4%** | 94.7% |
-| `robospatial` VQA 关系题 | 87/87 | 98.55% | **79.3%** | 79.3% |
+| `robospatial` VQA relation questions | 87/87 | 98.55% | **79.3%** | 79.3% |
 
-两边模型都在执行同一条规则(自洽率都 ≈99%),但**规则对 GT 的准确率差了 16 个点**。
-`robospatial` 上规则对 GT **69/87**、模型对 GT **69/87**,**68/69 是同一批样本** ——
-**不是接近,是相同:模型在这类题上就是一次两点坐标比较,上限就是那条规则的上限 79.3%。**
+On both sides the model is executing the same rule (self-consistency ≈99% on both), but **the rule's accuracy against GT differs by 16 points**.
+On `robospatial` the rule is right on GT **69/87**, the model is right on GT **69/87**, and **68/69 are the same samples** —
+**not close, identical: on this question type the model is just one two-point coordinate comparison, and its ceiling is that rule's ceiling of 79.3%.**
 
-### 6.2 分析:两个亚型
+### 6.2 Analysis: two subtypes
 
-**① 图像 y ≠ 3D 上方(11 条)。** 图像 y 这一个数**同时编码了「更高」和「更远」**,
-而工具只返回二维点 —— 这个歧义在模型拿到的数据里无解。
+**① Image y ≠ 3D above (11 items).** The single number image y **encodes both "higher" and "farther"**,
+and the tool only returns a 2D point — this ambiguity is unsolvable within the data the model gets.
 
-**② 相机系 ≠ benchmark 的参考系(3 条)。** 左右题上出现系统性反转,
-而且间距 0.40–0.59,**不可能是检测误差**。
+**② Camera frame ≠ the benchmark's reference frame (3 items).** Systematic reversals appear on left/right questions,
+with gaps of 0.40–0.59, **which cannot be detection error**.
 
-### 6.3 样本 A —— `robospatial #283`(亚型 ①)
+### 6.3 Sample A — `robospatial #283` (subtype ①)
 
-> *Is the **lamp** above the **bed**?*   **GT = No**,模型答 **Yes**
+> *Is the **lamp** above the **bed**?*   **GT = No**, model answers **Yes**
 
-**轨迹全文**(链路 `roborefer×2@2t`):
+**Full trajectory** (chain `roborefer×2@2t`):
 
 ```
 turn 1  THINK  I need to determine if the lamp is positioned above the bed in the image …
                From my initial observation: - The lamp appears to be a tall floor lamp with a
                rectangular lampshade, positioned in the center-right area of the image
                - The bed is visible with bedding on the right side of the image
-        CALL   roborefer.detect_one({"obj_name": "lamp", …})  RESP  [(0.561, 0.234)]  ✓ 落在落地灯上
-        CALL   roborefer.detect_one({"obj_name": "bed",  …})  RESP  [(0.703, 0.775)]  ✓ 落在床上
+        CALL   roborefer.detect_one({"obj_name": "lamp", …})  RESP  [(0.561, 0.234)]  ✓ lands on the floor lamp
+        CALL   roborefer.detect_one({"obj_name": "bed",  …})  RESP  [(0.703, 0.775)]  ✓ lands on the bed
 
 turn 2  THINK  Now I have the coordinates: - Lamp: (0.561, 0.234) … - Bed: (0.703, 0.775) …
                In image coordinates, a lower y-value means higher up in the image … Since the
@@ -546,19 +546,19 @@ turn 2  THINK  Now I have the coordinates: - Lamp: (0.561, 0.234) … - Bed: (0.
         ANSWER Yes
 ```
 
-**turn 1 的 THINK 里它自己就说了「a tall floor lamp」—— 它看出那是一盏落地灯。**
-然后 turn 2 里它把问题换成了「in the image 里谁的 y 更小」,这一换就错了。
+**In the turn 1 THINK it says "a tall floor lamp" itself — it saw that it is a floor lamp.**
+Then in turn 2 it swapped the question for "whose y is smaller in the image", and that swap is where it went wrong.
 
-**两个点都对,规则也执行得没问题,但那条规则不是这道题的语义。**
-落地灯**立在床边的地上**,不在床的上方;它在图像里更高,**只是因为它离相机更远**。
+**Both points are correct and the rule was executed without problems, but that rule is not the semantics of this question.**
+The floor lamp **stands on the floor next to the bed**, not above the bed; it is higher in the image **only because it is farther from the camera**.
 
-它既不是工具错(点是对的),也不是普通推理错(规则没被违反),所以单列。
+It is neither a tool error (the points are correct) nor an ordinary reasoning error (the rule was not violated), so it is listed separately.
 
-### 6.4 样本 B —— `robospatial #347`(亚型 ②)
+### 6.4 Sample B — `robospatial #347` (subtype ②)
 
-> *Is the **toilet** right of the **shelf**?*   **GT = Yes**,模型答 **No**
+> *Is the **toilet** right of the **shelf**?*   **GT = Yes**, model answers **No**
 
-**轨迹全文**(链路 `roborefer×2@2t`):
+**Full trajectory** (chain `roborefer×2@2t`):
 
 ```
 turn 1  THINK  I need to determine if the toilet is to the right of the shelf in this bathroom
@@ -575,38 +575,38 @@ turn 2  THINK  Now I have the coordinates: - Toilet: (0.215, 0.766) - x-coordina
         ANSWER No
 ```
 
-**这段推理挑不出毛病 —— 它甚至在 turn 1 就目视确认了「马桶在画面左下、架子在右侧」,
-和检测点一致。** 判定轴上的间距 0.586。
+**Nothing wrong can be found in this reasoning — in turn 1 it even visually confirmed "the toilet is in the lower left of the frame, the shelf on the right",
+consistent with the detection points.** The gap along the deciding axis is 0.586.
 
-**间距 0.586,跨了大半张图 —— 不可能是检测误差。**
-GT 说马桶在右,意味着这道题的「左右」不是相机看过去的左右
-(`#295` microwave/fridge 间距 0.567、`#310` mouse/keyboard 间距 0.400,
-**三条方向全部与相机系相反**)。
+**A gap of 0.586 spans most of the image — it cannot be detection error.**
+GT says the toilet is on the right, meaning "left/right" in this question is not left/right as seen from the camera
+(`#295` microwave/fridge gap 0.567, `#310` mouse/keyboard gap 0.400,
+**all three directions are opposite to the camera frame**).
 
-**这三条就是 §6.1 那个 79.3% vs 95.4% 的直接来源。**
+**These three are the direct source of the 79.3% vs 95.4% in §6.1.**
 
 ---
 
-## 7. 错因 6:工具错 —— 检测退化(9 条,2.8%)
+## 7. Error cause 6: tool error — degenerate detection (9 items, 2.8%)
 
-### 7.1 定义
+### 7.1 Definition
 
-**RoboRefer 对不同的查询返回同一个点。** 它和「定位不准」不同:不准是给了一个错的答案,
-退化是**根本没有在回答那个查询**。跨三个 benchmark 出现,共 9 条。
+**RoboRefer returns the same point for different queries.** It differs from "localization inaccurate": inaccurate means giving a wrong answer,
+degenerate means **not answering that query at all**. It appears across three benchmarks, 9 items in total.
 
-### 7.2 分析
+### 7.2 Analysis
 
-值得注意的是**模型的应对:它会主动换 3–6 种措辞去绕**。这与「措辞是它唯一的手段」这条结论
-互为佐证 —— 而这个失败模式恰好是**措辞打不穿的**。
+Worth noting is **the model's response: it actively switches among 3–6 phrasings to work around it**. This and the conclusion "phrasing is its only lever"
+corroborate each other — and this failure mode happens to be **one that phrasing cannot break through**.
 
-还有一个放大效应:**一次坏检测可以污染多个样本**(下面样本 B)。
-所以本文的「工具责任份额」是**按错题**而不是按**缺陷**计的 —— 同一个工具缺陷会被重复计入。
+There is also an amplification effect: **one bad detection can contaminate multiple samples** (Sample B below).
+So this document's "tool share of blame" is counted **per wrong answer**, not **per defect** — the same tool defect gets counted repeatedly.
 
-### 7.3 样本 A —— `cvb2drelation #621`:六种查询,同一个点
+### 7.3 Sample A — `cvb2drelation #621`: six queries, the same point
 
-> *…where is the **bottle** (red box) located with respect to the **vase**?*  **GT = A**,模型答 **B**
+> *…where is the **bottle** (red box) located with respect to the **vase**?*  **GT = A**, model answers **B**
 
-**轨迹全文**(链路 `roborefer×6@6t` —— 六轮,全是同一件事):
+**Full trajectory** (chain `roborefer×6@6t` — six turns, all the same thing):
 
 ```
 turn 1  THINK  Looking at this bathroom image, I need to identify the bottle (in the red box)
@@ -636,17 +636,17 @@ turn 6  THINK  Based on the visual analysis of the image, the red box is located
         ANSWER B
 ```
 
-**turn 2 的第一句话就是证据:"both objects at the same location (0.558, 0.594), which seems
-unusual"** —— **模型明确地识别出了工具坏了**,然后用四轮、四种措辞去绕,前五次拿到完全相同的坐标。
-它**知道**结果有问题并且一直在尝试,**但没有任何手段能让工具改口**。
-最后 turn 6 它放弃求证,改用「visual analysis」硬答。
+**The first sentence of turn 2 is the evidence: "both objects at the same location (0.558, 0.594), which seems
+unusual"** — **the model explicitly recognized that the tool was broken**, then spent four turns and four phrasings working around it, getting exactly the same coordinate the first five times.
+It **knew** the result was off and kept trying, **but had no means to make the tool change its answer**.
+Finally in turn 6 it gave up on verification and answered by force with "visual analysis".
 
-### 7.4 样本 B —— `robospatial #273` + `#274`:一次坏检测,连错两题
+### 7.4 Sample B — `robospatial #273` + `#274`: one bad detection, two wrong answers in a row
 
-> `#273` *Is the **orange** left of the **bottle**?*    **GT = Yes**,模型答 **No**
-> `#274` *Is the **water pitcher** left of the **bottle**?*  **GT = Yes**,模型答 **No**
+> `#273` *Is the **orange** left of the **bottle**?*    **GT = Yes**, model answers **No**
+> `#274` *Is the **water pitcher** left of the **bottle**?*  **GT = Yes**, model answers **No**
 
-**两条轨迹并排**(都是 `roborefer×2@2t`):
+**The two trajectories side by side** (both `roborefer×2@2t`):
 
 ```
 #273
@@ -654,7 +654,7 @@ turn 1  THINK  I need to determine if the orange is to the left of the bottle �
                orange on the counter - There's a water bottle (gray/silver colored) on the
                counter - Various other items like a paper towel holder, utensils …
         CALL   roborefer.detect_one({"obj_name": "orange"})  RESP  [(0.477, 0.552)]
-        CALL   roborefer.detect_one({"obj_name": "bottle"})  RESP  [(0.082, 0.498)]  ← 错检
+        CALL   roborefer.detect_one({"obj_name": "bottle"})  RESP  [(0.082, 0.498)]  ← wrong detection
 turn 2  THINK  … Since the orange's x-coordinate (0.477) is greater than the bottle's
                x-coordinate (0.082), the orange is to the RIGHT of the bottle …
         ANSWER No
@@ -664,45 +664,45 @@ turn 1  THINK  I need to determine if the water pitcher is to the left of the bo
                a water pitcher/jug on the left side of the counter … 2. There's a gray water
                bottle (Hydro Flask) in the center-right area …
         CALL   roborefer.detect_one({"obj_name": "water pitcher"})  RESP  [(0.266, 0.509)]
-        CALL   roborefer.detect_one({"obj_name": "bottle"})         RESP  [(0.082, 0.498)]  ← 同一点
+        CALL   roborefer.detect_one({"obj_name": "bottle"})         RESP  [(0.082, 0.498)]  ← same point
 turn 2  THINK  … Since 0.266 > 0.082, the water pitcher is actually to the RIGHT of the bottle …
         ANSWER No
 ```
 
-**`#274` 的 THINK 里模型自己写了「gray water bottle (Hydro Flask) in the center-right area」
-—— 它看到的瓶子在画面中右,而工具返回的是 x = 0.082(最左)。**
-两处认知直接打架,模型没有察觉,照着坐标算下去了。
+**In the `#274` THINK the model itself wrote "gray water bottle (Hydro Flask) in the center-right area"
+— the bottle it saw is center-right in the frame, while the tool returned x = 0.082 (far left).**
+The two perceptions directly contradict each other; the model did not notice and computed on from the coordinates.
 
-`'bottle'` 被检到了 x = 0.082(画面最左侧,人工审阅认定是洗手液),
-于是**这张图上凡是「X 在 bottle 左边吗」的题,全部会被判成 no。**
-两道题,一个缺陷。
+`'bottle'` was detected at x = 0.082 (the far left of the frame; manual review identified it as hand soap),
+so **every question on this image of the form "is X left of the bottle" will be answered no.**
+Two questions, one defect.
 
 ---
 
-## 8. 错因 7:该调没调(11 条,3.4%)
+## 8. Error cause 7: should have called, did not (11 items, 3.4%)
 
-### 8.1 定义
+### 8.1 Definition
 
-**工具表里有能直接给出答案所需量的工具,模型一次都没调。**
-与「工具集缺口」(§4)的区别就在这里:那 105 道 `fit` 是**没有工具可调**,
-这 11 条是**有工具却没调**。**前者是工具集的错,后者是模型的错。**
+**The tool list has a tool that directly provides the quantity needed for the answer, and the model never called it.**
+This is exactly the difference from "toolset gap" (§4): those 105 `fit` questions have **no tool to call**,
+these 11 items **have a tool but did not call it**. **The former is the toolset's fault, the latter is the model's.**
 
-两个亚型:**front/behind 未调深度 8 条** · **只检测了主体、参照物从未获取 3 条**。
+Two subtypes: **front/behind without calling depth, 8 items** · **only detected the subject, the reference object never fetched, 3 items**.
 
-### 8.2 分析
+### 8.2 Analysis
 
-最刺眼的一个数:**`robospatial` 全部 350 个样本,0 个调用过 `depth_estimator`** ——
-而它就在该 benchmark 的工具表里。29 道 `front/behind` 问的就是深度序,**29 次一次都没调**,
-正确率 72.4%。
+The most glaring number: **across all 350 `robospatial` samples, 0 called `depth_estimator`** —
+and it is right there in that benchmark's tool list. The 29 `front/behind` questions ask precisely about depth order, **and not one of the 29 called it**,
+accuracy 72.4%.
 
-这一类是**唯一一处「存在已知有效替代链、策略却从不走」的地方**,
-也因此是奖励塑形最直接的靶子(上界约 +8 题)。
+This class is **the only place where "a known effective alternative chain exists, yet the policy never takes it"**,
+and is therefore the most direct target for reward shaping (upper bound about +8 questions).
 
-### 8.3 样本 A —— `robospatial #246`:只拿到了比较的一半
+### 8.3 Sample A — `robospatial #246`: only got half of the comparison
 
-> *Is the **paper towel** above the **counter**?*   **GT = Yes**,模型答 **No**
+> *Is the **paper towel** above the **counter**?*   **GT = Yes**, model answers **No**
 
-**轨迹全文**(链路 `roborefer×1@2t`,**一共只有一次工具调用**):
+**Full trajectory** (chain `roborefer×1@2t`, **only one tool call in total**):
 
 ```
 turn 1  THINK  I need to determine if the paper towel is above the counter. The paper towel is
@@ -720,19 +720,19 @@ turn 2  THINK  The detection shows that the paper towel is at coordinates (0.293
         ANSWER No
 ```
 
-**turn 1 的 THINK 里它就写死了计划:「locate the paper towel」——
-从头到尾没有打算去取 counter 的位置。** turn 2 拿一个点做了一次不可能成立的比较,
-最后靠「Looking at the image」目测收尾。
+**In the turn 1 THINK it already locked in the plan: "locate the paper towel" —
+from start to finish it never intended to fetch the position of the counter.** Turn 2 made an impossible comparison with one point,
+and finally wrapped up by eyeballing with "Looking at the image".
 
-**参照物 `counter` 的位置从未被获取。** 比较两个物体的上下关系,
-却只拿到了其中一个的坐标 —— **另一半是猜的。**
-`#272`(bottle / water)、`#301`(game controller / sofa)是同一形状。
+**The position of the reference object `counter` was never fetched.** It compares the above/below relation of two objects
+but only got the coordinates of one of them — **the other half is guessed.**
+`#272` (bottle / water) and `#301` (game controller / sofa) have the same shape.
 
-### 8.4 样本 B —— `robospatial #230`:问深度序,却只拿两个二维点
+### 8.4 Sample B — `robospatial #230`: asks about depth order, but only fetches two 2D points
 
-> *Is the **speaker** in front of the **cup**?*   **GT = Yes**,模型答 **No**
+> *Is the **speaker** in front of the **cup**?*   **GT = Yes**, model answers **No**
 
-**轨迹全文**(链路 `roborefer×2@2t` —— **没有调 `depth_estimator`**):
+**Full trajectory** (chain `roborefer×2@2t` — **`depth_estimator` not called**):
 
 ```
 turn 1  THINK  I need to determine if the speaker is in front of the cup. To do this, I should:
@@ -748,29 +748,29 @@ turn 2  THINK  Now I have the positions: - Speaker: (0.154, 0.491) - This is on 
         ANSWER No
 ```
 
-**它两次写下自己需要深度**(turn 1 第 3 步、turn 2 "I need to consider depth"),
-**而 `depth_estimator.estimate_depth` 就在它的工具表里,它一次都没调。**
-最后靠两个 x 坐标和一句「appears to be」作答。
+**It writes down twice that it needs depth** (turn 1 step 3, turn 2 "I need to consider depth"),
+**and `depth_estimator.estimate_depth` is right there in its tool list, yet it never called it.**
+In the end it answered with two x coordinates and an "appears to be".
 
-「in front of」问的是**深度序**,而两个二维点里没有深度。
-`depth_estimator.estimate_depth` 就在工具表里,一次调用就能拿到
-(`cvb3ddepth` 上 600 道题全都是这么做的,正确率 96.5%)。
-**它在这里没调,于是只能拿 x 坐标硬答。**
+"in front of" asks about **depth order**, and two 2D points contain no depth.
+`depth_estimator.estimate_depth` is in the tool list; one call would get it
+(all 600 questions on `cvb3ddepth` do exactly this, with accuracy 96.5%).
+**Here it did not call it, so it could only answer by force from the x coordinates.**
 
-> 对照 §3 里 `cvb3ddepth` 的链路 `depth_estimator×1 + roborefer×2 + vision_ops×2` ——
-> **同一个模型、同一批工具,在另一个 benchmark 上就会正确地摆出这三步。**
-> 所以这不是能力缺失,是**编排在 `robospatial` 上塌到了 `roborefer×2` 一条链**。
+> Compare with the `cvb3ddepth` chain `depth_estimator×1 + roborefer×2 + vision_ops×2` in §3 —
+> **the same model with the same tools lays out these three steps correctly on another benchmark.**
+> So this is not a missing capability; it is **the orchestration on `robospatial` collapsing into the single chain `roborefer×2`**.
 
 ---
 
-## 9. 错因 8:二维投影不可分(2 条)
+## 9. Error cause 8: not separable in the 2D projection (2 items)
 
-**两条全部列出。** 定义:两个检测点**都对**,但它们在判定轴上的差小到二维投影里
-**不含判定所需的信息** —— 与 3b 的区别是这里不涉及语义错位,纯粹是信息量不够。
+**Both are listed in full.** Definition: both detection points are **correct**, but their difference along the deciding axis is so small that the 2D projection
+**does not contain the information needed for the decision** — the difference from 3b is that no semantic misalignment is involved here; there is simply not enough information.
 
 ### 9.1 `cvb2drelation #412`
 
-> *…where is the **person** (red box) located with respect to the **cell phone**?*  **GT = B**,模型答 **A**
+> *…where is the **person** (red box) located with respect to the **cell phone**?*  **GT = B**, model answers **A**
 
 ```
 turn 1  CALL   roborefer.detect_one({"obj_name": "person in red box"})  RESP  [(0.58, 0.545)]
@@ -781,11 +781,11 @@ turn 2  THINK  Comparing the vertical positions (v-coordinates): - Person in red
         ANSWER A
 ```
 
-**判定轴(y)上相差 0.006** —— 模型把 0.545 和 0.539 当成了一个可判的差。
+**A difference of 0.006 along the deciding axis (y)** — the model treated 0.545 vs 0.539 as a decidable difference.
 
 ### 9.2 `cvb2drelation #478`
 
-> *…where is the **person** (red box) located with respect to the **bottle**?*  **GT = A**,模型答 **B**
+> *…where is the **person** (red box) located with respect to the **bottle**?*  **GT = A**, model answers **B**
 
 ```
 turn 1  CALL   roborefer.detect_one({"obj_name": "person in red box"})  RESP  [(0.507, 0.431)]
@@ -796,25 +796,25 @@ turn 2  THINK  Comparing the x-coordinates (horizontal position): - Person in re
         ANSWER B
 ```
 
-**判定轴(x)上相差 0.004,而两者的 y 差了 0.42 —— 人和瓶子是竖直叠置的。**
-模型自己都写了 "slightly",还是照着这个差下了判断。
+**A difference of 0.004 along the deciding axis (x), while their y differs by 0.42 — the person and the bottle are stacked vertically.**
+The model itself wrote "slightly", and still made the judgment from that difference.
 
-**0.004–0.006 的间距在一张归一化到 [0,1] 的图上是 2–3 个像素。**
-这两条既不能怪检测(点是对的),也不能怪推理(规则执行了),
-**它们是「用二维点回答这道题」这个方案本身的边界。**
+**A gap of 0.004–0.006 on an image normalized to [0,1] is 2–3 pixels.**
+These two can be blamed neither on detection (the points are correct) nor on reasoning (the rule was executed);
+**they are the boundary of the approach "answer this question with 2D points" itself.**
 
 ---
 
-## 10. 错因 9–11:各 1 条(全部列出)
+## 10. Error causes 9–11: 1 item each (all listed)
 
-### 10.1 `2c` 参数错 —— `cvb2drelation #169`
+### 10.1 `2c` argument error — `cvb2drelation #169`
 
-> *…where is the **fluorescent tube** located with respect to the **tank**?*  **GT = A**,模型答 **B**
+> *…where is the **fluorescent tube** located with respect to the **tank**?*  **GT = A**, model answers **B**
 
 ```
 turn 1  THINK  Looking at this image, I need to identify the positions of the fluorescent tube
                and the tank … Let me detect both objects to get their precise locations:
-        CALL   roborefer.detect_one({"obj_name": "fluentice tube"})   ← fluorescent 拼成 fluentice
+        CALL   roborefer.detect_one({"obj_name": "fluentice tube"})   ← fluorescent spelled as fluentice
         RESP   Detected 1 instance(s) of 'fluentice tube': [(0.84, 0.631)]
         CALL   roborefer.detect_one({"obj_name": "tank"})   RESP  [(0.532, 0.461)]
 
@@ -824,21 +824,21 @@ turn 2  THINK  Based on the detection results: - The fluorescent tube is located
         ANSWER B
 ```
 
-**THINK 里它写的是 "fluorescent tube",`obj_name` 里打成了 `fluentice tube`
-—— 错发生在从思考到调用的那一步,而且它后面一直以为自己查的是荧光灯管。**
+**In THINK it wrote "fluorescent tube", in `obj_name` it typed `fluentice tube`
+— the error happened in the step from thinking to calling, and afterwards it kept believing it had queried a fluorescent tube.**
 
-**模型把查询串写错了,而 RoboRefer 照样返回了一个点。**
-工具没有任何「我不认识这个词」的信号 —— 于是**错误静默传播**,
-后面的坐标比较是在一个无关的点上做的。
+**The model wrote the query string wrong, and RoboRefer returned a point anyway.**
+The tool gives no "I don't recognize this word" signal — so **the error propagates silently**,
+and the subsequent coordinate comparison is done on an unrelated point.
 
-> 这是整份归因里唯一一条**纯粹的参数错**,但它指出的接口问题是普遍的:
-> 检测工具对无意义查询不报错(对比 `reflocation #6`,那里工具明确返回了
-> `Detected 0 instance(s)`,模型仍自行给了一个点 —— 那条被归到 `1a`)。
+> This is the only **pure argument error** in the whole attribution, but the interface problem it points to is general:
+> the detection tool does not report an error on meaningless queries (compare `reflocation #6`, where the tool explicitly returned
+> `Detected 0 instance(s)` and the model still produced a point on its own — that item was assigned to `1a`).
 
-### 10.2 `6` 标注 / 指代歧义 —— `cvb2drelation #263`
+### 10.2 `6` annotation / reference ambiguity — `cvb2drelation #263`
 
 > *…where is the **plant** (annotated by the red box) located with respect to the **plants**?*
-> **GT = B**,模型答 **A**
+> **GT = B**, model answers **A**
 
 ```
 turn 1  THINK  … I need to identify the plant in the red box and compare its position to other
@@ -853,25 +853,25 @@ turn 3  THINK  … - The plant in the red box is at (0.845, 0.18) - in the upper
         ANSWER A
 ```
 
-题面的选项是 `(A) left` / `(B) right`。两个点都对(红框内那株在上、前景那株在下),
-而它们的 **x 相差 0.010** —— 模型据此判「红框内的略偏左」答 A,GT 说 B。
-题面里的 `the plants`(复数)究竟指哪一株存疑,所以归到标注/指代歧义,
-**不计入模型或工具的过失。**
+The question's options are `(A) left` / `(B) right`. Both points are correct (the one in the red box is above, the one in the foreground below),
+and their **x differs by 0.010** — from this the model judged "the one in the red box is slightly to the left" and answered A; GT says B.
+Which plant `the plants` (plural) in the question refers to is doubtful, so it is assigned to annotation/reference ambiguity,
+**not counted as a fault of the model or the tool.**
 
-> ⚠ **复核时发现人工判定的证据串写错了轴。** `p6/manual/verdicts.jsonl` 里这一条写的是
-> 「图像上红框内的更高 ⇒ 规则给 above,GT=below」,**而这道题问的是 left/right,不是 above/below**
-> (原始 `question` 字段:`(A) left\n(B) right`)。
+> ⚠ **During re-check, the evidence string of the manual verdict was found to use the wrong axis.** In `p6/manual/verdicts.jsonl` this item says
+> "in the image the one in the red box is higher ⇒ rule gives above, GT=below", **but this question asks left/right, not above/below**
+> (original `question` field: `(A) left\n(B) right`).
 >
-> 分类结论本身不受影响(两点都对、GT 相反、指代存疑,仍是 `6`),
-> **但按 0.010 的 x 间距看,它同样落在判据 C 的「规则退化」区间(阈值 0.02)之内** ——
-> 也就是说它和 §9 那两条 `2D不可分` 的形状其实更接近。
-> **本文按归档的分类计数,不重新裁决;但这条证据需要修。**
+> The classification itself is unaffected (both points correct, GT opposite, reference doubtful — still `6`),
+> **but judging by the x gap of 0.010, it also falls inside criterion C's "rule degenerates" interval (threshold 0.02)** —
+> that is, its shape is actually closer to the two `2D-indistinguishable` items in §9.
+> **This document counts by the archived classification and does not re-adjudicate; but this evidence needs fixing.**
 
-### 10.3 `4` 格式错 —— `blinkdepth #69`
+### 10.3 `4` format error — `blinkdepth #69`
 
 > *Which point is closer to the camera?*   `(A) A is closer  (B) B is closer`   **GT = B**
 
-**轨迹全文**(链路 `depth_estimator×1 + roborefer×3 + vision_ops×3@3t`):
+**Full trajectory** (chain `depth_estimator×1 + roborefer×3 + vision_ops×3@3t`):
 
 ```
 turn 1  THINK  Looking at the image, I can see three children playing with a bicycle on a
@@ -892,52 +892,52 @@ turn 3  THINK  Based on the depth analysis: - Child on the left (A): depth = 3.1
                - Child in red jacket (B): depth = 2.04m - Child on the right (C): depth = 1.35m
                The child on the right has the smallest depth value (1.35m vs 3.12m for child on
                the left), indicating they are closest to the camera.
-        ANSWER C      <- **选项只有 (A)/(B)**
+        ANSWER C      <- **the only options are (A)/(B)**
 ```
 
-**看 turn 3 就明白它是怎么走到 `C` 的:它自己给三个小孩编了 A/B/C 三个标签**,
-然后忠实地报告了「C 最近」—— **而题面的 (A)/(B) 指的是图上那两个标注点,不是三个小孩。**
-整条深度链路执行得毫无问题,错在它重新定义了选项集。
+**Turn 3 makes it clear how it arrived at `C`: it invented its own A/B/C labels for the three children**,
+then faithfully reported "C is closest" — **while the question's (A)/(B) refer to the two annotated points on the image, not to three children.**
+The whole depth chain was executed without any problem; the error is that it redefined the option set.
 
-**模型检测了三个小孩、探了三个深度,然后回答了一个不存在的选项。**
+**The model detected three children, probed three depths, and then answered with an option that does not exist.**
 
-这一条还牵出一个流水线问题:`parse_ok` 为真(`<answer>` 标签完好、能解析),
-**所以 `--strict` 没有拦住它**,「格式错 = 0」因此漏报。
-全量扫描 1374 道有选项的题:`blinkdepth` 1/124 · `cvb2drelation` 0/650 · `cvb3ddepth` 0/600。
+This item also surfaces a pipeline issue: `parse_ok` is true (the `<answer>` tag is intact and parseable),
+**so `--strict` did not catch it**, and "format error = 0" was therefore under-reported.
+A full scan of the 1374 questions with options: `blinkdepth` 1/124 · `cvb2drelation` 0/650 · `cvb3ddepth` 0/600.
 
-> **已修**:`parse_dump.py` 新增 `answer_off_options` 字段,做成 warning 不做污染标记 ——
-> 「答出选项之外」是模型的错而不是流水线坏了。
+> **Fixed**: `parse_dump.py` gained an `answer_off_options` field, made a warning rather than a contamination flag —
+> "answering outside the options" is the model's fault, not a broken pipeline.
 
 ---
 
-## 11. 连续判分的两个 benchmark(另 120 个样本)
+## 11. The two continuously scored benchmarks (another 120 samples)
 
-`boppose` / `bopgrasp` 没有「对/错」,判据 A、C 都不适用。
-**但透传判据适用,而且更干净** —— 两个工具都把最终答案直接以 2D 形式放在返回文本里。
+`boppose` / `bopgrasp` have no "right/wrong"; criteria A and C do not apply.
+**But the pass-through criterion does apply, and more cleanly** — both tools put the final answer directly in 2D form in the returned text.
 
-### 11.1 `boppose`:60/60 透传,全部误差都是 `bounding_box` 的
+### 11.1 `boppose`: 60/60 pass-through, all error belongs to `bounding_box`
 
 ```
-逐位同序             56/60
-同一集合(允许重排)   60/60        仅重排的样本 #0 #10 #25 #35
+bit-for-bit, same order        56/60
+same set (reordering allowed)  60/60        samples with reordering only: #0 #10 #25 #35
 ```
 
-**模型从不修改角点的取值。** 那 4 次只是重新排序 —— 而指标是凸包 IoU、对顺序不敏感,
-所以重排既不改分数,也正好说明**它在试着满足题面「bottom face first, counter-clockwise」
-的要求而做不到**。
+**The model never modifies corner values.** Those 4 cases are only reorderings — and the metric is convex-hull IoU, insensitive to order,
+so reordering neither changes the score, and it also shows precisely that **it is trying to satisfy the question's requirement "bottom face first, counter-clockwise"
+and cannot**.
 
-零分也不是随机的,它跟着**点云拟合退化**走:
+The zero scores are not random either; they follow **point-cloud fitting degeneracy**:
 
-| | n | OBB 最短边/最长边(中位) | 比值 < 0.20 |
+| | n | OBB shortest/longest edge (median) | Ratio < 0.20 |
 |---|--:|--:|--:|
-| 零分 | 9 | **0.161** | **6/9** |
-| 非零 | 51 | 0.306 | 12/51 |
+| Zero score | 9 | **0.161** | **6/9** |
+| Non-zero | 51 | 0.306 | 12/51 |
 
-Fisher 精确 **p = 0.0164**。**框被拟合得又扁又薄时,投影凸包就废了。**
+Fisher exact **p = 0.0164**. **When the box is fitted flat and thin, the projected convex hull is useless.**
 
-#### 样本 A —— `boppose #0`(IoU = 0.000)
+#### Sample A — `boppose #0` (IoU = 0.000)
 
-**轨迹全文**(链路 `bounding_box×1 + depth_estimator×1 + roborefer×1 + sam2×1@5t`):
+**Full trajectory** (chain `bounding_box×1 + depth_estimator×1 + roborefer×1 + sam2×1@5t`):
 
 ```
 turn 1  THINK  I'll help you find the 8 normalized corner coordinates of the bounding box for
@@ -955,59 +955,59 @@ turn 4  CALL   bounding_box.compute_bbox({"point_cloud": "$point_cloud",
                                           "mask": "$segmentation_mask", …})
         RESP   Oriented bounding box computed from **524/2109744 points**.
                Corners in 3D: [[0.326, 0.195, 0.899], [0.34, 0.189, 0.904], …]
-               Extent [0.016, 0.017, **0.001**]   最短/最长 = 0.059
+               Extent [0.016, 0.017, **0.001**]   shortest/longest = 0.059
 
 turn 5  ANSWER [(0.786, 0.803), (0.797, 0.793), (0.777, 0.781), (0.787, 0.803),
                 (0.788, 0.77), (0.798, 0.792), (0.778, 0.781), (0.788, 0.771)]
 ```
 
-**turn 2 到 turn 5 没有一句 THINK。** 模型在这条链上是纯粹的管道:
-检测 → 分割 → 点云 → 拟合 → 抄答案。唯一的「主动动作」是把工具给的八个点里两个对调了
-(同一集合、非同序)。
+**There is not a single THINK from turn 2 to turn 5.** On this chain the model is a pure pipe:
+detect → segment → point cloud → fit → copy the answer. The only "active action" is swapping two of the eight points the tool gave
+(same set, different order).
 
-**这个「长方体」是 1.6 cm × 1.7 cm × 1 mm —— 一张纸。**
-只有 524 个点参与拟合,OBB 塌成了一个面,投影出来是一条细缝,和 GT 的凸包零重叠。
+**This "cuboid" is 1.6 cm × 1.7 cm × 1 mm — a sheet of paper.**
+Only 524 points took part in the fit, the OBB collapsed into a plane, the projection is a thin slit, and it has zero overlap with the GT convex hull.
 
-#### 样本 B —— `boppose #28`(IoU = 0.952)
+#### Sample B — `boppose #28` (IoU = 0.952)
 
-**轨迹全文**(同一条链,逐步对照):
+**Full trajectory** (the same chain, compared step by step):
 
 ```
 turn 1  THINK  I'll help you find the 8 normalized corner coordinates of the oatmeal-raisin
-               cookies box. Let me process this step by step.          <- 与 #0 逐字同构
+               cookies box. Let me process this step by step.          <- verbatim isomorphic to #0
         CALL   roborefer.detect_one({"obj_name": "oatmeal-raisin cookies"})
         RESP   [(0.479, 0.417)]
 
 turn 2  CALL   sam2.segment_from_point({"x": 0.479, "y": 0.417, …})
-        RESP   Segmented object … with **IoU score: 0.971**          <- #0 是 0.640
+        RESP   Segmented object … with **IoU score: 0.971**          <- #0 is 0.640
 
 turn 3  CALL   depth_estimator.estimate_depth_with_pointcloud({"image_index": 0})
-        RESP   Generated … 2,109,744 3D points …                      <- 与 #0 完全相同
+        RESP   Generated … 2,109,744 3D points …                      <- identical to #0
 
 turn 4  CALL   bounding_box.compute_bbox(…)
         RESP   Oriented bounding box computed from **36801/2109744 points**
-               Extent [0.214, 0.158, 0.046]   最短/最长 = 0.215        <- #0 是 524 点 / 0.059
+               Extent [0.214, 0.158, 0.046]   shortest/longest = 0.215        <- #0 is 524 points / 0.059
 
-turn 5  ANSWER [(0.428, 0.351), (0.445, 0.544), (0.504, 0.276), …]     逐位同序 ✓
+turn 5  ANSWER [(0.428, 0.351), (0.445, 0.544), (0.504, 0.276), …]     bit-for-bit, same order ✓
 ```
 
-**模型对这两个样本做的事情完全一样:把工具给的八个点抄下来。**
-差别全在 `sam2` 的掩膜质量(0.640 vs 0.971)和进入拟合的点数(524 vs 36,801)。
-`#0` 里模型还多做了一件事 —— 把两个点对调,大概是在试着满足题面的顺序要求 ——
-**那次重排对分数毫无影响,但它是模型唯一一次「主动做了点什么」的痕迹,而且做了也没用。**
+**The model does exactly the same thing on these two samples: copy down the eight points the tool gave.**
+The difference lies entirely in `sam2`'s mask quality (0.640 vs 0.971) and the number of points entering the fit (524 vs 36,801).
+In `#0` the model did one extra thing — swapped two points, probably trying to satisfy the question's ordering requirement —
+**that reordering has no effect on the score at all, but it is the only trace of the model "actively doing something", and doing it did not help.**
 
-### 11.2 `bopgrasp`:工具失败 40/60,模型有一个完全确定的回退
+### 11.2 `bopgrasp`: tool failure 40/60, the model has a fully deterministic fallback
 
 ```
-compute_grasp 给出 5 个点的 20 条 -> 逐位透传 19
-走失败出口的 40 条 -> 模型把 grasp center 放在 roborefer 检测点上 **40/40(±0.02)**
+compute_grasp gives 5 points on 20 items -> bit-for-bit pass-through 19
+40 items take the failure exit -> model places the grasp center on the roborefer detection point **40/40 (±0.02)**
 ```
 
-**工具失败时模型不弃答,而是执行一条确定的规则:抓物体中心。**
+**When the tool fails, the model does not abstain; it executes a deterministic rule: grasp the object center.**
 
-#### 样本 A —— `bopgrasp #0`(工具成功)
+#### Sample A — `bopgrasp #0` (tool succeeds)
 
-**轨迹全文**(链路 `depth_estimator×1 + grasp_generator×1 + roborefer×1 + sam2×1@5t`):
+**Full trajectory** (chain `depth_estimator×1 + grasp_generator×1 + roborefer×1 + sam2×1@5t`):
 
 ```
 turn 1  THINK  I need to find the grasp plane for the carton of orange juice. To do this, I'll
@@ -1028,24 +1028,24 @@ turn 5  THINK  Excellent! The grasp generator has provided me with the five norm
                points … Let me format this according to the user's requested format.
         ANSWER Grasp center: [0.375, 0.190], Left finger base: [0.422, 0.200],
                Right finger base: [0.323, 0.178], Left finger tip: [0.407, 0.300],
-               Right finger tip: [0.310, 0.291]          <- 逐位透传 compute_grasp
+               Right finger tip: [0.310, 0.291]          <- bit-for-bit pass-through of compute_grasp
 ```
 
 ```
-GT center        (0.358, 0.257)     中心距 0.069
-夹爪轴与 GT 夹角   17.1°              NCE = 1.31
+GT center                    (0.358, 0.257)     center distance 0.069
+gripper axis vs GT angle     17.1°              NCE = 1.31
 ```
 
-#### 样本 B —— `bopgrasp #1`(工具失败 → 回退)
+#### Sample B — `bopgrasp #1` (tool fails → fallback)
 
-**轨迹全文**(前四轮与 `#0` 同构,第五轮岔开):
+**Full trajectory** (the first four turns are isomorphic to `#0`; the fifth turn diverges):
 
 ```
 turn 1  THINK  I need to find the grasp plane points for the cylindrical Parmesan cheese
                container … 1. Detect 2. Segment 3. Estimate depth 4. Compute grasp 5. Extract …
         CALL   roborefer.detect_one({"obj_name": "grated Parmesan cheese container"})
         RESP   [(0.73, 0.594)]
-turn 2  CALL   sam2.segment_from_point(…)  RESP  … **IoU score: 0.516** …   <- #0 是 0.932
+turn 2  CALL   sam2.segment_from_point(…)  RESP  … **IoU score: 0.516** …   <- #0 is 0.932
 turn 3  CALL   depth_estimator.estimate_depth_with_pointcloud(…)  RESP  … 937,664 3D points …
 turn 4  THINK  Perfect! Now I have … Now I can compute the grasp pose for the Parmesan …
         CALL   grasp_generator.compute_grasp(…)
@@ -1062,178 +1062,178 @@ turn 5  THINK  The grasp generator couldn't find a collision-free grasp, likely 
                Right finger tip: [0.79, 0.594]
 ```
 
-**turn 5 把那条回退规则写得明明白白:「我被要求工具失败后不要再调第二次,所以只能自己估」。**
-于是它把 grasp center 原封不动放在检测点上(**位移 0.0000**),
-五个点的 **y 坐标全是 0.594** —— 一把水平的、张在物体中心的夹爪。
+**Turn 5 spells out that fallback rule plainly: "I was told not to call it a second time after the tool fails, so I can only estimate it myself".**
+So it places the grasp center unchanged on the detection point (**displacement 0.0000**),
+and the **y coordinates of all five points are 0.594** — a horizontal gripper opened at the object center.
 
 ```
-GT center        (0.730, 0.518)     中心距 0.076
-夹爪轴与 GT 夹角   54.9°              NCE = 1.23
+GT center                    (0.730, 0.518)     center distance 0.076
+gripper axis vs GT angle     54.9°              NCE = 1.23
 ```
 
-**这一对把整个矛盾压进了两个样本。** `#1` 的朝向错了 **54.9°**
-(几乎垂直于正确的夹持方向,现实中抓不起来),
-**而 NCE 给它 1.23,比工具真正算出抓取的 `#0`(1.31)还低。**
-**一条能抓的和一条抓不起来的,奖励函数判后者更好。**
+**This pair compresses the whole contradiction into two samples.** `#1`'s orientation is off by **54.9°**
+(almost perpendicular to the correct grasp direction; in reality it would not pick anything up),
+**yet NCE gives it 1.23, lower than `#0` (1.31), where the tool actually computed a grasp.**
+**Of one that can grasp and one that cannot, the reward function rates the latter better.**
 
-全组统计:
+Whole-group statistics:
 
-| | 工具成功(n=20) | 回退(n=40) |
+| | Tool succeeds (n=20) | Fallback (n=40) |
 |---|--:|--:|
-| grasp center 到 GT 的距离(中位) | 0.116 | **0.092** |
-| 夹爪轴与 GT 的夹角(中位) | **18.3°** | 63.9° |
-| 夹角 < 30° | **16/20** | 7/40 |
-| NCE(越低越好) | 1.38 | **1.07** |
+| Distance from grasp center to GT (median) | 0.116 | **0.092** |
+| Angle between gripper axis and GT (median) | **18.3°** | 63.9° |
+| Angle < 30° | **16/20** | 7/40 |
+| NCE (lower is better) | 1.38 | **1.07** |
 
-**回退赢在位置、输在朝向** —— 这正好解释了两个指标为什么打架:
-**NCE 主要由位置决定,SR 由朝向决定。**
+**The fallback wins on position and loses on orientation** — which is exactly why the two metrics disagree:
+**NCE is mostly determined by position, SR by orientation.**
 
-> **一条能要,一条不能。**
-> **不能**读成「回退比工具好」—— 两组是不同的场景,工具在哪些场景失败并不随机,这是有混淆的对比。
-> **能**读的是:**这个 RL 奖励(NCE)对夹爪朝向不敏感。**
-> 一个朝向中位错 64° 的答案,在 NCE 上比工具生成的真抓取还低。
+> **One reading is valid, one is not.**
+> It **cannot** be read as "the fallback is better than the tool" — the two groups are different scenes, and which scenes the tool fails on is not random; this is a confounded comparison.
+> What it **can** be read as: **this RL reward (NCE) is insensitive to gripper orientation.**
+> An answer whose orientation is off by a median of 64° scores lower on NCE than a real grasp generated by the tool.
 >
-> ⚠ **`p4/parsed/bopgrasp.jsonl` 的 `correct` 字段没有意义** ——
-> 它是 `score >= 0.5` 的通用判据,而 `bopgrasp` 的 `score` 是 NCE、**越低越好**。
+> ⚠ **The `correct` field in `p4/parsed/bopgrasp.jsonl` is meaningless** —
+> it is the generic criterion `score >= 0.5`, while `bopgrasp`'s `score` is NCE, **where lower is better**.
 
 ---
 
-## 12. 第四类错误:一致性(不在上面 11 类里)
+## 12. A fourth kind of error: consistency (not among the 11 classes above)
 
-采样实验(`n=5, T=1.0`)显示还有一类**不属于任何单次运行的归因**:
-同一道题模型自己给不出稳定答案。关键的一刀是按「五次的 `<tool_call>` 是否逐字相同」再切一次 ——
-**调用相同 ⇒ 五次面对同一批证据,翻转只可能翻在决策层**:
+The sampling experiment (`n=5, T=1.0`) shows another class that **does not belong to the attribution of any single run**:
+the model cannot give a stable answer to the same question by itself. The key cut is to split again by "whether the `<tool_call>` of the five runs are verbatim identical" —
+**identical calls ⇒ the five runs face the same evidence, so a flip can only happen at the decision layer**:
 
-| | n | 分裂 | 其中工具调用**逐字相同** | 调用不同 |
+| | n | Split | Of which tool calls **verbatim identical** | Calls differ |
 |---|--:|--:|--:|--:|
-| RoboSpatial VQA | 228 | 100(43.9%) | **46** | 54 |
-| RoboSpatial Vacant | 122 | 51(41.8%) | **0** | 51 |
-| `blinkdepth` | 124 | 30(24.2%) | **3** | 27 |
+| RoboSpatial VQA | 228 | 100 (43.9%) | **46** | 54 |
+| RoboSpatial Vacant | 122 | 51 (41.8%) | **0** | 51 |
+| `blinkdepth` | 124 | 30 (24.2%) | **3** | 27 |
 
-- **VQA 的 46 个是纯决策翻转**:同一张图、同一批 `roborefer` 返回,给出相反的 yes/no。
-- **Vacant 一个都没有**:51 次翻转全部伴随不同的 `obj_name` —— 那不是「投五票」,
-  是「问五个不同的问题」。
-- **`blinkdepth` 只有 3 个**,反过来印证了深度判据:给定同样两个深度读数,
-  「选更小的」几乎不会被违反。
+- **The 46 on VQA are pure decision flips**: same image, same `roborefer` returns, opposite yes/no.
+- **Vacant has none at all**: all 51 flips come with a different `obj_name` — that is not "casting five votes",
+  it is "asking five different questions".
+- **`blinkdepth` has only 3**, which in turn corroborates the depth criterion: given the same two depth readings,
+  "pick the smaller one" is almost never violated.
 
-> **⚠ 现象在,收益不在。** 多数表决@5 在第二组独立采样上复核后:
-> **0/12 次配对比较显著,VQA 的方向在两组之间翻了号。**
-> **正确表述:多数表决@5 在这三个 benchmark 上没有效应。**
-> 模型确实在同一批证据上摇摆,但**摇摆是对称的,投票捞不回来**。
+> **⚠ The phenomenon is there, the gain is not.** After re-checking majority vote@5 on the second group of independent samples:
+> **0/12 paired comparisons are significant, and the sign of the VQA direction flipped between the two groups.**
+> **Correct statement: majority vote@5 has no effect on these three benchmarks.**
+> The model does waver on the same evidence, but **the wavering is symmetric, and voting cannot recover it**.
 
 ---
 
-## 13. 汇总:这份表推出来的三件事
+## 13. Summary: three things this table yields
 
-**① 责任份额压倒性地在工具侧,而且集中在一个工具。**
+**① The share of blame is overwhelmingly on the tool side, and concentrated in one tool.**
 
-| 工具 | 直接造成的错题 | 占 322 |
+| Tool | Wrong answers directly caused | Share of 322 |
 |---|--:|--:|
-| **RoboRefer** | 126(RefSpatial 三项)+ 45(Vacant 透传)+ 26(cvb2d)+ 9(退化)= **206** | **64.0%** |
-| **DepthPro** | 21(`cvb3ddepth`)+ 14(`blinkdepth`)= **35** | 10.9% |
-| `bounding_box` | `boppose` 全部误差(另计) | — |
-| `grasp_generator` | 40/60 直接失败(另计) | — |
+| **RoboRefer** | 126 (the three RefSpatial) + 45 (Vacant pass-through) + 26 (cvb2d) + 9 (degenerate) = **206** | **64.0%** |
+| **DepthPro** | 21 (`cvb3ddepth`) + 14 (`blinkdepth`) = **35** | 10.9% |
+| `bounding_box` | all `boppose` error (counted separately) | — |
+| `grasp_generator` | 40/60 direct failures (counted separately) | — |
 
-> **口径**:这里按**逐样本归类**统计,所以 RoboRefer 的份额(64.0%)比底稿摘要里的
-> 53.4% 高 —— 底稿只计了 RefSpatial 三项 + Vacant 透传,本表另外计入了
-> `cvb2drelation` 的 26 条(遵守规则却答错 = 检测点不准)和 9 条检测退化。
-> **两个数不矛盾,是统计范围不同;引用时必须带口径。**
+> **Definition**: counted here by **per-sample classification**, so RoboRefer's share (64.0%) is higher than the
+> 53.4% in the base draft's summary — the base draft only counted the three RefSpatial + Vacant pass-through, while this table additionally counts
+> the 26 items of `cvb2drelation` (follows rule but wrong = detection point inaccurate) and the 9 degenerate detections.
+> **The two numbers do not contradict each other; the counting scope differs. Always cite them with the definition.**
 
-**但这块 headroom 不能靠替换单个工具吃掉**:实测整体换成 Molmo **更差 −14.61 pp**,
-逐样本 oracle 却 **+10.83 pp**。要么做 router / ensemble,要么引入显著更强的第三个工具。
-**oracle 上界不是可实现收益。**
+**But this headroom cannot be eaten by replacing a single tool**: measured, replacing it wholesale with Molmo is **worse by −14.61 pp**,
+while the per-sample oracle is **+10.83 pp**. Either build a router / ensemble, or bring in a significantly stronger third tool.
+**The oracle upper bound is not an achievable gain.**
 
-**② 除 `robospatial` 外,「推理」是一条能写成代码的规则,而模型逐字执行它。**
-pointing 上 276/276 原样透传;`boppose` 上 60/60;深度题上 95.6% / 99.8% 遵守规则。
-**这意味着在这些 benchmark 上换任何策略模型,结果都一样。**
+**② Except on `robospatial`, "reasoning" is a rule that can be written as code, and the model executes it verbatim.**
+276/276 verbatim pass-through on pointing; 60/60 on `boppose`; 95.6% / 99.8% rule-following on the depth questions.
+**This means swapping in any policy model on these benchmarks gives the same result.**
 
-**③ 唯一有真实策略缺口的是 `robospatial`,而它的缺口有明确的形状:**
+**③ The only real policy gap is `robospatial`, and its gap has a clear shape:**
 
-| 题类 | n | 正确率 | 未调深度 | GT=`no` 正确率 | 做到 100% 能补 |
+| Question type | n | Accuracy | Depth not called | Accuracy at GT=`no` | Reaching 100% would add |
 |---|--:|--:|--:|--:|--:|
-| 关系题(2D 可判定) | 87 | 79.3% | — | 18/31 = 58% | +18 |
-| `front/behind`(需深度序) | 29 | 72.4% | **29/29** | 7/11 = 64% | **+8**(有工具没调) |
-| **`fit`(需自由空间范围)** | 105 | 69.5% | **105/105** | **4/18 = 22%** | **+32**(没工具可调) |
-| 检测对不上 | 7 | 57.1% | — | — | +3 |
+| Relation questions (2D-decidable) | 87 | 79.3% | — | 18/31 = 58% | +18 |
+| `front/behind` (needs depth order) | 29 | 72.4% | **29/29** | 7/11 = 64% | **+8** (has a tool, did not call it) |
+| **`fit` (needs free-space extent)** | 105 | 69.5% | **105/105** | **4/18 = 22%** | **+32** (no tool to call) |
+| Detection does not match | 7 | 57.1% | — | — | +3 |
 
-**可操作的优先级只有两条:**
-1. **`front/behind` 的 8 条** —— 唯一一处「存在已知有效替代链、策略却从不走」,
-   奖励塑形直接可打,上界 +8 题。
-2. **`fit` 的 32 条** —— 需要加工具或加组合能力,**不是调 prompt、不是换 pointing 工具**。
-
----
-
-## 14. 局限
-
-- **人工归类只有一轮标注,κ 算不出来。** 32 条是单标注、无第二标注者,
-  **没有标注一致性度量**。补救是逐条证据公开在 `p6/manual/verdicts.jsonl`。
-- **`3b` 的归属有争议**(见 §0 第 ④ 条),两种读法都报。
-- **一处归档证据需要修**:`p6/manual/verdicts.jsonl` 里 `cvb2drelation #263` 的证据串
-  写成了 above/below,而该题选项是 left/right(见 §10.2)。分类结论不受影响。
-- **判据与轨迹偶有出入**:`blinkdepth #5` 被判为「遵守规则」,但轨迹显示它最终是靠视觉推理
-  得到同一个答案的(见 §3.4)。这是判据已知误差方向上的一例,自洽率 95.6% 量化了它的上界。
-- **一次坏检测可以污染多个样本**(§7.4),所以「工具责任份额」是**按错题**而非按**缺陷**计的。
-- **「工具错」是个粗标签**,§3.2 的间距表必须和计数一起引用,否则会把「没有裕度」读成「估不准」。
-- **`bopgrasp` 的两组对比有混淆**(工具在哪些场景失败并不随机)。
-- **本文不覆盖 accuracy 与偏差归因**,那是 P5 的内容;**也不涉及 P7 / GFlowRL。**
-- **与底稿的一处差异**:`01_official_checkpoint_eval/reports/p6_error_attribution_report.md` 把人工那批记成 31 条,
-  `p6/manual/verdicts.jsonl` 实际 **32 条**(`pending31.json` 也是 32 个条目)。
-  本文按 32 条计,总数仍是 322,**各类计数与底稿摘要表逐项一致**。
+**There are only two actionable priorities:**
+1. **The 8 items of `front/behind`** — the only place where "a known effective alternative chain exists, yet the policy never takes it";
+   directly targetable with reward shaping, upper bound +8 questions.
+2. **The 32 items of `fit`** — needs added tools or added composition ability, **not prompt tuning, not swapping the pointing tool**.
 
 ---
 
-## 附录:复算
+## 14. Limitations
 
-### A.1 已有脚本(在 `spacetools-repro` 仓库根目录跑)
+- **Manual classification has only one round of annotation, so κ cannot be computed.** The 32 items are single-annotated with no second annotator,
+  so there is **no inter-annotator agreement measure**. The mitigation is the per-item evidence published in `p6/manual/verdicts.jsonl`.
+- **The assignment of `3b` is disputed** (see item ④ in §0); both readings are reported.
+- **One piece of archived evidence needs fixing**: in `p6/manual/verdicts.jsonl`, the evidence string for `cvb2drelation #263`
+  is written as above/below, while that question's options are left/right (see §10.2). The classification is unaffected.
+- **The criterion and the trajectory occasionally disagree**: `blinkdepth #5` was judged "follows the rule", but the trajectory shows it ultimately reached the same answer through visual reasoning
+  (see §3.4). This is one instance in the criterion's known error direction; the 95.6% self-consistency rate quantifies its upper bound.
+- **One bad detection can contaminate multiple samples** (§7.4), so the "tool share of blame" is counted **per wrong answer**, not **per defect**.
+- **"Tool error" is a coarse label**; the gap table in §3.2 must be cited together with the counts, otherwise "no margin" gets read as "estimates badly".
+- **The two-group comparison on `bopgrasp` is confounded** (which scenes the tool fails on is not random).
+- **This document does not cover accuracy or deviation attribution**, which is P5's content; **nor does it cover P7 / GFlowRL.**
+- **One difference from the base draft**: `01_official_checkpoint_eval/reports/p6_error_attribution_report.md` records the manual batch as 31 items,
+  while `p6/manual/verdicts.jsonl` actually has **32 items** (`pending31.json` also has 32 entries).
+  This document counts 32; the total is still 322, and **every class count matches the base draft's summary table item by item**.
 
-| 脚本 | 产出 |
+---
+
+## Appendix: recomputation
+
+### A.1 Existing scripts (run from the root of the `spacetools-repro` repo)
+
+| Script | Output |
 |---|---|
-| `tools/p6/p6_inventory.py` | §0 那张 clean 表 |
-| `tools/p6/p6_split.py` | 判据 A(深度)· 判据 B(pointing) |
-| `tools/p6/p6_relations.py` | 判据 C(关系题),内置自洽率与语义两道校验;Vacant 透传 vs 改点 |
-| `tools/p6/p6_continuous.py` | §11 的两个连续 benchmark |
-| `tools/p6/p6_consistency.py` | §12 一致性 |
+| `tools/p6/p6_inventory.py` | the clean table in §0 |
+| `tools/p6/p6_split.py` | criterion A (depth) · criterion B (pointing) |
+| `tools/p6/p6_relations.py` | criterion C (relation questions), with built-in self-consistency and semantics checks; Vacant pass-through vs point override |
+| `tools/p6/p6_continuous.py` | the two continuous benchmarks in §11 |
+| `tools/p6/p6_consistency.py` | §12 consistency |
 
-> ⚠ `p6_inventory.py` / `p6_split*.py` 把路径写成 `$HOME/mnt/Agentic RL/spacetools-repro/p4/parsed`。
-> 换机器后用软链接绕开,不要改归档脚本:
+> ⚠ `p6_inventory.py` / `p6_split*.py` hardcode the path as `$HOME/mnt/Agentic RL/spacetools-repro/p4/parsed`.
+> On a different machine, work around it with a symlink; do not edit the archived scripts:
 >
 > ```bash
 > mkdir -p "$HOME/p6shim/mnt" && ln -sfn "$HOME/mnt" "$HOME/p6shim/mnt/Agentic RL"
 > HOME="$HOME/p6shim" python3 tools/p6/p6_inventory.py
 > ```
 >
-> `p6_relations.py` / `p6_continuous.py` 用相对路径,在仓库根目录直接跑即可。
+> `p6_relations.py` / `p6_continuous.py` use relative paths; just run them from the repo root.
 
-### A.2 本文新增:逐样本归类脚本
+### A.2 New in this document: per-sample classification script
 
-§1 那张交叉表由一个新脚本生成,它把上述判据合到一起、以**人工判定优先**,
-给 322 个错题各分配唯一一个类,并自检「未覆盖 / 重复」:
+The cross-tab in §1 is generated by a new script that combines the criteria above, gives **manual verdicts priority**,
+assigns each of the 322 wrong answers exactly one class, and self-checks for "uncovered / duplicates":
 
 ```
 python3 attrib.py p4/parsed p6/manual/verdicts.jsonl
-→ 错题总数 322 · 已归类 322 · 未覆盖 0 · 多出 0
+→ total wrong answers 322 · classified 322 · uncovered 0 · extra 0
 ```
 
-脚本与 `p6_split.py` 的唯一实现差异,在深度判据的一处修补:
+The only implementation difference between the script and `p6_split.py` is one patch in the depth criterion:
 
 ```python
-# 取「实际被探过深度」的前两个检测点 —— roborefer 退化时模型会改用 vlm 重检,
-# 此时前两个检测点并未进入 index_at,必须按 pix 的键来对齐
+# Take the first two detection points "whose depth was actually probed" — when roborefer degenerates the model re-detects with vlm,
+# in which case the first two detection points never entered index_at, so they must be aligned by the keys of pix
 probed = [p for p in d if p in pix]
 dA, dB = (pix[probed[0]], pix[probed[1]]) if len(probed) >= 2 else (pix.get(d[0]), pix.get(d[1]))
 ```
 
-**不打这个补丁,`blinkdepth #119` 会落进「判据跳过」而无法归类**
-(该样本 RoboRefer 对 A/B 返回同一点 `(0.55, 0.283)`,模型改用 `vlm` 重检后才拿到可用坐标)。
-打上之后 322/322 全覆盖,且各类计数与底稿摘要表逐项一致。
+**Without this patch, `blinkdepth #119` falls into "criterion skipped" and cannot be classified**
+(for this sample RoboRefer returns the same point `(0.55, 0.283)` for A/B, and the model only got usable coordinates after re-detecting with `vlm`).
+With it applied, 322/322 are fully covered, and every class count matches the base draft's summary table item by item.
 
-### A.3 数据
+### A.3 Data
 
-| 数据 | 路径 |
+| Data | Path |
 |---|---|
-| 逐样本记录(全部统计的来源) | `spacetools-repro/p4/parsed/` |
-| 人工归类:待判定 / 结论 / 审阅卡 | `spacetools-repro/p6/manual/` |
-| 工具对调的探测与产出 | `spacetools-repro/p6/probes/` · `p6/swap/` |
-| 采样实验(两组) | `spacetools-repro/p6/passk/` · `p6/passk2/` |
+| Per-sample records (source of all statistics) | `spacetools-repro/p4/parsed/` |
+| Manual classification: pending / verdicts / review cards | `spacetools-repro/p6/manual/` |
+| Probes and outputs of the tool swap | `spacetools-repro/p6/probes/` · `p6/swap/` |
+| Sampling experiment (two groups) | `spacetools-repro/p6/passk/` · `p6/passk2/` |
 
-**除审阅卡外,每一个数字都可以从仓库副本直接重算,不需要 GPU,也不需要重跑评测。**
+**Except for the review cards, every number can be recomputed directly from the repo copy, with no GPU and no rerun of the evaluation.**

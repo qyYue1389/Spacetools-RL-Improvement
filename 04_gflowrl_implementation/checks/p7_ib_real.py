@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""P7 判据 i-b(真实一半):用**实测**的 logprob 差替掉 p7_estimators.py 的合成漂移。
+"""P7 criterion i-b (real half): replace the synthetic drift in p7_estimators.py with **measured** logprob gaps.
 
-p7_estimators.py 第 4 节的结论是:该选哪个批内常数,**完全取决于漂移的分布形状** ——
-高斯 -> 算术平均最优;重尾 -> median/huber 好 0.6x;双峰 -> 算术平均好 3.5-7.4x。
-那一半是在合成噪声上做的,并写明「前向 pass 之后必须用真值重跑」。**本脚本就是重跑。**
+The conclusion of section 4 of p7_estimators.py: which within-batch constant to pick **depends entirely on the shape of the drift distribution** —
+Gaussian -> arithmetic mean is best; heavy-tailed -> median/huber better by 0.6x; bimodal -> arithmetic mean better by 3.5-7.4x.
+That half was done on synthetic noise, with the note "must be rerun on real values after the forward pass". **This script is that rerun.**
 
-⚠ **量的不是训练漂移。** P4/P6/passk2 的数据里没有训练发生过,
-π_old = π_ref = 同一个 ckpt,所以 GFlowRL 的 log π_ref − log π_old 恒等于 0。
-本脚本用的是 **rollout(sglang)与 trainer(FSDP)之间的 logprob 差** ——
-GFlowRL 的 IS 权重 w_i 正是为它设立的,零训练下它也存在,
-是漂移的**第一个真实代理**。单位与量级可比,**不是同一个量**。
+⚠ **What is measured is not training drift.** No training happened in the P4/P6/passk2 data,
+π_old = π_ref = the same ckpt, so GFlowRL's log π_ref − log π_old is identically 0.
+This script uses **the logprob gap between rollout (sglang) and trainer (FSDP)** —
+GFlowRL's IS weight w_i exists precisely for it, and it is present even with zero training;
+it is the **first real proxy** for drift. Units and magnitude are comparable; it is **not the same quantity**.
 
-替掉的两条合成假设:
-  (a) 分布形状 —— 合成用独立高斯 x |y|;真实形状由数据说了算;
-  (b) |y| —— 合成用字符代理,这里是 n_policy_tokens,真 token 数。
+The two synthetic assumptions replaced:
+  (a) distribution shape — synthetic used independent Gaussian x |y|; the real shape is whatever the data says;
+  (b) |y| — synthetic used a character proxy; here it is n_policy_tokens, the real token count.
 
-用法:  python3 tools/p7/p7_ib_real.py <dump 目录或 jsonl> [...]
+Usage:  python3 tools/p7/p7_ib_real.py <dump dir or jsonl> [...]
 """
 import argparse
 import json
@@ -23,7 +23,7 @@ import os
 
 import numpy as np
 
-EPS_LOW, EPS_HIGH = 0.2, 0.28          # 论文 Table 9
+EPS_LOW, EPS_HIGH = 0.2, 0.28          # paper Table 9
 RNG = np.random.default_rng(20260902)
 
 
@@ -48,7 +48,7 @@ EST = {"mean(GFlowRL Eq.4)": c_mean, "median(DevGrad)": c_median, "huber(DevGrad
 
 
 def load(path, G=5):
-    """-> R [n,G] 奖励, L [n,G] 真 token 数 |y|, D [n,G] 实测 logprob 差(整条求和)."""
+    """-> R [n,G] rewards, L [n,G] real token count |y|, D [n,G] measured logprob gap (summed over the whole sequence)."""
     if os.path.isdir(path):
         path = os.path.join(path, "0.jsonl")
     g = {}
@@ -82,32 +82,32 @@ def shape_report(D, L):
 
 
 def estimator_variance(D, G=5, trials=20000):
-    """判据 i-b 的落点:在**实测**漂移分布上重抽 G 个样本,比三个常数的方差。"""
+    """Where criterion i-b lands: resample G samples from the **measured** drift distribution and compare the variance of the three constants."""
     pool = D.ravel()
     idx = RNG.integers(0, len(pool), size=(trials, G))
     T = pool[idx]
-    print(f"  重抽 {trials} 次 x G={G},从 {len(pool)} 条实测漂移里有放回抽样")
+    print(f"  resample {trials} times x G={G}, sampling with replacement from {len(pool)} measured drift values")
     base = None
     for name, fn in EST.items():
         v = float(np.var(fn(T)))
         base = v if base is None else base
-        print(f"    {name:22s} Var {v:10.5f}   相对 mean {v / base:5.2f}x")
+        print(f"    {name:22s} Var {v:10.5f}   relative to mean {v / base:5.2f}x")
 
 
 def saturation_and_collapse(R, L, D, beta):
-    T = beta * R + D                       # Eq.4 的被平均项(未按 |y| 归一化)
+    T = beta * R + D                       # the averaged term of Eq.4 (not normalized by |y|)
     keep = {}
     print(f"  beta={beta}")
     for name, fn in EST.items():
         C = fn(T)[:, None]
-        g = C - D / L - beta * R           # Eq.6:D 这一侧按 |y| 归一化
+        g = C - D / L - beta * R           # Eq.6: the D side is normalized by |y|
         gt = np.clip(g, -EPS_LOW, EPS_HIGH)
         sat = float(((g < -EPS_LOW) | (g > EPS_HIGH)).mean())
         same = float((gt.max(1) - gt.min(1) < 1e-12).mean())
         keep[name] = gt
-        print(f"    {name:22s} clip 饱和 {100 * sat:5.1f}%   整组 g 同值 {100 * same:5.1f}%")
+        print(f"    {name:22s} clip saturated {100 * sat:5.1f}%   whole group g identical {100 * same:5.1f}%")
     dis = float((np.sign(keep["mean(GFlowRL Eq.4)"]) != np.sign(keep["huber(DevGrad)"])).mean())
-    print(f"    mean 与 huber 给出相反更新方向的 rollout: {100 * dis:.1f}%")
+    print(f"    rollouts where mean and huber give opposite update directions: {100 * dis:.1f}%")
 
 
 def normalised_eq4(R, L, D, beta=8.0):
@@ -118,8 +118,8 @@ def normalised_eq4(R, L, D, beta=8.0):
         gt = np.clip(g, -EPS_LOW, EPS_HIGH)
         sat = float(((g < -EPS_LOW) | (g > EPS_HIGH)).mean())
         same = float((gt.max(1) - gt.min(1) < 1e-12).mean())
-        tag = "长度归一化后" if norm else "原样 Eq.4   "
-        print(f"    {tag}  clip 饱和 {100 * sat:5.1f}%   整组 g 同值 {100 * same:5.1f}%")
+        tag = "after length normalization" if norm else "Eq.4 as is   "
+        print(f"    {tag}  clip saturated {100 * sat:5.1f}%   whole group g identical {100 * same:5.1f}%")
 
 
 def main():
@@ -137,15 +137,15 @@ def main():
         if len(R) == 0:
             print("  no complete groups with logprobs\n")
             continue
-        print(f"  groups {len(R)}   G={R.shape[1]}   |y| 中位 {np.median(L):.0f} tokens\n")
-        print("[1] 实测漂移代理的分布形状(判据 i-b 的输入)")
+        print(f"  groups {len(R)}   G={R.shape[1]}   |y| median {np.median(L):.0f} tokens\n")
+        print("[1] distribution shape of the measured drift proxy (input to criterion i-b)")
         shape_report(D, L)
-        print("\n[2] 判据 i-b 的落点:三个常数在**实测**分布上的方差")
+        print("\n[2] where criterion i-b lands: variance of the three constants on the **measured** distribution")
         estimator_variance(D)
-        print("\n[3] clip 饱和与整组塌缩(真实漂移)")
+        print("\n[3] clip saturation and whole-group collapse (real drift)")
         for b in args.beta:
             saturation_and_collapse(R, L, D, b)
-        print("\n[4] 候选修法:Eq.4 也做长度归一化(beta=8,真实漂移)")
+        print("\n[4] candidate fix: apply length normalization to Eq.4 as well (beta=8, real drift)")
         normalised_eq4(R, L, D)
         print()
 

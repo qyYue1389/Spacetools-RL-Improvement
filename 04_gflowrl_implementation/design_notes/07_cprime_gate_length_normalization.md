@@ -1,170 +1,170 @@
-# C′ 闸门:长度归一化的三个配置,在真实数据上比一次
+# C′ gate: the three length normalization configs, compared once on real data
 
-> C 路的前置闸门。**零 GPU。** 写于 2026-09-02。
-> 脚本 `tools/p7/p7_cprime_gate.py`(仅标准库,可直接重跑)。
-> 数据:`p6/passk2/` 的真实 `|y|`(token)、真实奖励、真实两侧 logprob 差。
+> Prerequisite gate for Route C. **Zero GPU.** Written 2026-09-02.
+> Script `tools/p7/p7_cprime_gate.py` (stdlib only, can be rerun directly).
+> Data: real `|y|` (tokens), real rewards, and real two-sided logprob differences from `p6/passk2/`.
 
 ---
 
-## 0. 为什么要有这道闸门
+## 0. Why this gate exists
 
-A′ 的结论是:论文原样(A)与「归一化 `Eq.4`」(B)各有一种病,而
-**「两边都不归一化」(C′)是三者里唯一两个指标都健康的**
-(`P7_GPU_RESULTS.md` §6 的三配置表)。但 C′ 的代价正是论文当初引入长度归一化
-要解决的问题 —— 原文:*"Reasoning rollouts can span thousands of tokens, causing
+A′'s conclusion: the paper as is (A) and "normalized `Eq.4`" (B) each have one illness, while
+**"no normalization on either side" (C′) is the only one of the three healthy on both metrics**
+(the three-config table in `P7_GPU_RESULTS.md` §6). But C′'s cost is exactly the problem the paper introduced length normalization
+to solve in the first place — original text: *"Reasoning rollouts can span thousands of tokens, causing
 instability as log-probabilities scale with length; we normalize by response length
 to **prevent long sequences from dominating the loss**."*
 
-**本文量那个代价,在我们自己的长度分布上。**
+**This doc measures that cost, on our own length distribution.**
 
-三个配置(`d_i := log π_ref − log π_old`):
+The three configs (`d_i := log π_ref − log π_old`):
 
-    A  论文原样    Z_t = mean_j(β·r_j + d_j)        g_i = Z_t − d_i/L_i − β·r_i
-    B  归一化 Eq.4 Z_t = mean_j(β·r_j + d_j/L_j)    g_i = Z_t − d_i/L_i − β·r_i
-    C′ 两边都不    Z_t = mean_j(β·r_j + d_j)        g_i = Z_t − d_i     − β·r_i
+    A   paper as is      Z_t = mean_j(β·r_j + d_j)        g_i = Z_t − d_i/L_i − β·r_i
+    B   normalized Eq.4  Z_t = mean_j(β·r_j + d_j/L_j)    g_i = Z_t − d_i/L_i − β·r_i
+    C′  neither side     Z_t = mean_j(β·r_j + d_j)        g_i = Z_t − d_i     − β·r_i
 
-**长度主导发生在 Eq. 8 的 update 项,不在 flow gap** —— flow gap 被 clip 钳住了,
-update 项没有。这一点决定了本文怎么量。
+**Length dominance happens in the update term of Eq. 8, not in the flow gap** — the flow gap is clamped by the clip,
+the update term is not. This determines how this doc measures it.
 
-> ⚠ **`d_i` 是代理不是真值。** passk2 里没有训练发生过(`π_old = π_ref`),真实漂移恒为 0。
-> 这里用 **rollout(sglang)与 trainer(FSDP)的 logprob 差**代替,单位与量级可比
-> (正是 IS 权重 `w_i` 设立的那个量),**但不是训练漂移**。见 §5。
-
----
-
-## 1. 判决:**闸门通过,C′ 可以作为 C 路的训练臂**
-
-三条,依次是代价、收益、和一条必须一起说的代价。
+> ⚠ **`d_i` is a proxy, not the true value.** No training happened in passk2 (`π_old = π_ref`), so the real drift is identically 0.
+> Here it is replaced by the **logprob difference between rollout (sglang) and trainer (FSDP)**, comparable in units and magnitude
+> (exactly the quantity the IS weight `w_i` was set up for), **but it is not training drift**. See §5.
 
 ---
 
-## 2. 代价:长度主导是温和的,因为我们的轨迹短
+## 1. Verdict: **gate passed, C′ can be the training arm for Route C**
 
-`|y|`(策略生成 token,来自 `patches/rl/0009` 的真实计数):
+Three items, in order: the cost, the benefit, and a cost that must be stated alongside.
 
-| | 中位 | 均值 | min | max | max/min |
+---
+
+## 2. Cost: length dominance is mild, because our trajectories are short
+
+`|y|` (policy-generated tokens, real counts from `patches/rl/0009`):
+
+| | median | mean | min | max | max/min |
 |---|--:|--:|--:|--:|--:|
 | `robospatial` | 334 | 350 | 45 | 900 | 20.0× |
 | `blinkdepth` | 423 | 441 | 125 | 1240 | 9.9× |
 | `boppose` | 305 | 317 | 294 | 973 | 3.3× |
 
-update 项 = `(1/L)·Σδ_t`(A、B)或 `Σδ_t`(C′),loss ∝ 该项的平方。
-`δ` 的两种假设都报:token 间**独立**(∝√L)与完全**同向**(∝L)。
+Update term = `(1/L)·Σδ_t` (A, B) or `Σδ_t` (C′); loss ∝ the square of that term.
+Both assumptions on `δ` are reported: **independent** across tokens (∝√L) and fully **aligned** (∝L).
 
-**最长 10% 的 rollout 占多少 loss**(均分 = 10%):
+**Share of the loss taken by the longest 10% of rollouts** (even share = 10%):
 
-| | 归一化·独立 | 归一化·同向 | 未归一化·独立 | **未归一化·同向(最坏)** |
+| | normalized · independent | normalized · aligned | unnormalized · independent | **unnormalized · aligned (worst)** |
 |---|--:|--:|--:|--:|
-| `robospatial` | 5.4%(0.54×) | 10.0% | 16.4%(1.64×) | **24.2%(2.42×)** |
-| `blinkdepth` | 6.5%(0.65×) | 10.0% | 15.1%(1.51×) | **22.8%(2.28×)** |
-| `boppose` | 7.9%(0.79×) | 10.0% | 13.7%(1.37×) | **20.7%(2.07×)** |
+| `robospatial` | 5.4% (0.54×) | 10.0% | 16.4% (1.64×) | **24.2% (2.42×)** |
+| `blinkdepth` | 6.5% (0.65×) | 10.0% | 15.1% (1.51×) | **22.8% (2.28×)** |
+| `boppose` | 7.9% (0.79×) | 10.0% | 13.7% (1.37×) | **20.7% (2.07×)** |
 
-**组内**(真正影响某个 prompt 梯度方向的是组内相对权重):
-最长 rollout 相对组内均值只有 **1.02–1.15×(独立)/ 1.04–1.32×(同向)**。
+**Within group** (what actually affects the gradient direction for a given prompt is the relative weight within the group):
+the longest rollout relative to the group mean is only **1.02–1.15× (independent) / 1.04–1.32× (aligned)**.
 
-### 2.1 为什么这么温和:我们的长度散布小
+### 2.1 Why so mild: our length spread is small
 
-同样的算法在对数均匀长度分布上的敏感性(仅作参照,**不是我们的形状**):
+Sensitivity of the same calculation on a log-uniform length distribution (reference only, **not our shape**):
 
-    max/min      1×      3×     10×     20×    100×
-    最长10%     10.0%   22%     36%     45%     ~57–60%
+    max/min        1×      3×     10×     20×    100×
+    longest 10%   10.0%   22%     36%     45%     ~57–60%
 
-**我们的真实分布比对数均匀集中得多** —— `|y|` 中位 305–423 token,**不是论文担心的
-「thousands of tokens」**。所以即使 max/min 到 20×,份额仍只有 24.2%。
+**Our real distribution is much more concentrated than log-uniform** — median `|y|` is 305–423 tokens, **not the
+"thousands of tokens" the paper worries about**. So even with max/min reaching 20×, the share is still only 24.2%.
 
-> **一条反过来的观察:归一化也不是中性的。** token 间独立时,归一化把最长 10%
-> 压到 **0.54–0.79×** —— 它**过度加权短序列**。所以这不是「有偏 vs 无偏」的选择,
-> 是两种方向相反的偏置之间选一个。
+> **An observation in the other direction: normalization is not neutral either.** With independent tokens, normalization pushes the longest 10%
+> down to **0.54–0.79×** — it **over-weights short sequences**. So this is not a choice of "biased vs unbiased";
+> it is a choice between two biases pointing in opposite directions.
 
 ---
 
-## 3. 收益:奖励信号在 C′ 下不会被漂移淹掉
+## 3. Benefit: under C′ the reward signal is not drowned by drift
 
-组内 `g` 的方差分解(`g_i = [Z − β·r_i] + [漂移项]`,β=8):
+Within-group variance decomposition of `g` (`g_i = [Z − β·r_i] + [drift term]`, β=8):
 
-| | 组数 | Var(奖励项) | Var(漂移项) A | Var(漂移项) C′ | **漂移/奖励 C′** |
+| | groups | Var(reward term) | Var(drift term) A | Var(drift term) C′ | **drift/reward C′** |
 |---|--:|--:|--:|--:|--:|
-| `robospatial` 非简并 | 153 | 10.24 | 2.9e-06 | 0.523 | **0.042** |
-| `robospatial` 简并 | 197 | 0 | 2.7e-06 | 0.265 | —(奖励方差为 0) |
-| `blinkdepth` 非简并 | 26 | 10.24 | 1.9e-06 | 0.504 | **0.041** |
-| `blinkdepth` 简并 | 98 | 0 | 1.9e-06 | 0.368 | — |
-| `boppose` 非简并 | 25 | 0.038 | 1.8e-07 | 0.016 | 0.555 |
+| `robospatial` non-degenerate | 153 | 10.24 | 2.9e-06 | 0.523 | **0.042** |
+| `robospatial` degenerate | 197 | 0 | 2.7e-06 | 0.265 | — (reward variance is 0) |
+| `blinkdepth` non-degenerate | 26 | 10.24 | 1.9e-06 | 0.504 | **0.041** |
+| `blinkdepth` degenerate | 98 | 0 | 1.9e-06 | 0.368 | — |
+| `boppose` non-degenerate | 25 | 0.038 | 1.8e-07 | 0.016 | 0.555 |
 
-**在有奖励信号的地方,奖励以约 24 : 1 压过漂移**(两个准确率 benchmark 都是 0.041–0.042)。
-`boppose` 的 0.555 是因为它的奖励是连续 IoU、组内方差只有 0.038 ——
-而它按 `P7_DECISION.md` §0.2 本就排除在 P7 范围之外。
+**Where there is a reward signal, reward dominates drift by about 24 : 1** (0.041–0.042 on both accuracy benchmarks).
+`boppose`'s 0.555 is because its reward is continuous IoU with within-group variance of only 0.038 —
+and per `P7_DECISION.md` §0.2 it is excluded from P7's scope anyway.
 
-**在没有奖励信号的简并组上**(56–79% 的 prompt),对比很尖锐:
+**On degenerate groups with no reward signal** (56–79% of prompts), the contrast is sharp:
 
-    A   漂移方差 2.7e-06  ——  等于没有,而且是**公共平移**
-                             -> 30.0%(robospatial)/ 49.2%(blinkdepth)的组被削成同值
-    C′  漂移方差 0.26     ——  有区分,**整组同值率 0.0%**
+    A   drift variance 2.7e-06  —  effectively nothing, and a **common shift**
+                                -> 30.0% (robospatial) / 49.2% (blinkdepth) of groups clipped to the same value
+    C′  drift variance 0.26     —  discriminative, **whole-group same-value rate 0.0%**
 
-后者正是 TB 该做的事:即使奖励相同,`π_old` 相对 `π_ref` 的偏离仍应被纠正。
-**A 在这些组上什么都不做,C′ 在做。**
+The latter is exactly what TB should do: even when the rewards are identical, the deviation of `π_old` from `π_ref` should still be corrected.
+**A does nothing on these groups; C′ does.**
 
-### 3.1 一条要诚实说的:C′ 的饱和率最高
+### 3.1 One thing to state honestly: C′ has the highest saturation rate
 
-| 配置 | 饱和率(robospatial / blinkdepth / boppose) | 整组同值 |
+| config | saturation rate (robospatial / blinkdepth / boppose) | whole group same value |
 |---|---|---|
-| A 论文原样 | 73.7% / 70.8% / 21.7% | **30.0% / 49.2% / 5.0%** |
-| B 归一化 Eq.4 | 43.7% / 21.0% / 16.3% | 0.0% |
-| **C′ 都不归一化** | **77.9% / 77.1% / 28.0%** | **0.0%** |
+| A paper as is | 73.7% / 70.8% / 21.7% | **30.0% / 49.2% / 5.0%** |
+| B normalized Eq.4 | 43.7% / 21.0% / 16.3% | 0.0% |
+| **C′ normalize neither** | **77.9% / 77.1% / 28.0%** | **0.0%** |
 
-漂移项未归一化后进入 `g`,量级(整条求和的中位 0.42 / 0.50 nats)本就超过 clip 半宽 0.28,
-所以 C′ 被 clip 的 rollout **最多**。
+Once the drift term enters `g` unnormalized, its magnitude (median of the whole-sequence sum 0.42 / 0.50 nats) already exceeds the clip half-width 0.28,
+so C′ has the **most** clipped rollouts.
 
-> **取舍是明确的:C′ 用「更多 rollout 被削到 ±ε」换「没有一组的奖励被整体抹掉」。**
-> 而在有奖励的地方,奖励仍以 24:1 压过漂移。**这个交换划算。**
-
----
-
-## 4. ⚠ 一条耦合:β 不能独立选,而且早先的建议不成立
-
-`Var(奖励项) = β²·Var(r)`,而 `Var(漂移项)` 与 β 无关。所以
-
-    漂移/奖励 ∝ 1/β²        实测 β=8 时为 0.042(robospatial)
-
-推出去:
-
-    β = 8    0.042      奖励主导 24×
-    β = 4    0.168      奖励主导 6×
-    β = 2    0.672      奖励主导 1.5×
-    β = 1.64 1.00       **临界:漂移与奖励等量**
-    β = 1    2.69       **漂移主导奖励 2.7×**
-
-**所以 `P7_STEP23_RESULTS.md` §1.4 那条「β 应从 1 附近起步而不是 8」在 C′ 下不成立。**
-那条是在**零漂移**的起点上、按 clip 饱和推出来的;C′ 下饱和主要由漂移驱动,
-β 对饱和的影响远小,而 β 太小会让**漂移淹掉奖励**。
-
-**C′ 下的 β 建议:不低于 ~2,起步仍用论文的 8。** 这条与步骤 2 的建议冲突,
-**以本文为准**(那条的适用前提是配置 A 且漂移为零)。
+> **The trade-off is explicit: C′ trades "more rollouts clipped to ±ε" for "no group has its reward erased entirely".**
+> And where there is reward, reward still dominates drift 24:1. **This trade is worth it.**
 
 ---
 
-## 5. 局限
+## 4. ⚠ A coupling: β cannot be chosen independently, and the earlier recommendation does not hold
 
-- **`d` 是 rollout/trainer 的框架差,不是训练漂移。** 真实训练漂移只会更大:
-  C′ 的饱和率会更高,A 的「整组同值」也会更严重。**方向上不改变判决,幅度未知。**
-- **§4 的 β 推算依赖 `Var(漂移项)` 与 β 无关**这一点(成立),
-  但用的是框架差的方差;真实漂移的方差不同,**临界 β 会移动**。
-- **只测了起点**(`π_θ = π_old`,update 项为 0)。§2 的长度主导是按 `δ` 的两种假设
-  推的,**不是实测的梯度**。要实测得真的训练。
-- **`boppose` 的数字一并列出但不参与判决**(§0.2 已排除)。
-- 奖励与长度来自**单次采样运行**(passk2),同前几份文档的标注。
+`Var(reward term) = β²·Var(r)`, while `Var(drift term)` does not depend on β. So
+
+    drift/reward ∝ 1/β²        measured 0.042 at β=8 (robospatial)
+
+Extrapolating:
+
+    β = 8    0.042      reward dominates 24×
+    β = 4    0.168      reward dominates 6×
+    β = 2    0.672      reward dominates 1.5×
+    β = 1.64 1.00       **critical: drift and reward equal**
+    β = 1    2.69       **drift dominates reward 2.7×**
+
+**So the item in `P7_STEP23_RESULTS.md` §1.4, "β should start near 1, not 8", does not hold under C′.**
+That item was derived from clip saturation at a **zero-drift** starting point; under C′ saturation is mainly driven by drift,
+β has a much smaller effect on saturation, and too small a β lets **drift drown the reward**.
+
+**β recommendation under C′: no lower than ~2, still start with the paper's 8.** This conflicts with step 2's recommendation;
+**this doc takes precedence** (that item's precondition is config A with zero drift).
 
 ---
 
-## 6. 对 C 路的净影响
+## 5. Limitations
 
-| 条目 | 处置 |
+- **`d` is the rollout/trainer framework difference, not training drift.** Real training drift can only be larger:
+  C′'s saturation rate will be higher, and A's "whole group same value" will be more severe. **Does not change the verdict's direction; magnitude unknown.**
+- **The β extrapolation in §4 relies on `Var(drift term)` not depending on β** (this holds),
+  but it uses the variance of the framework difference; real drift has a different variance, so **the critical β will move**.
+- **Only the starting point was measured** (`π_θ = π_old`, update term is 0). The length dominance in §2 is derived under two assumptions on `δ`,
+  **not measured gradients**. Measuring it requires actually training.
+- **`boppose` numbers are listed but do not take part in the verdict** (already excluded by §0.2).
+- Rewards and lengths come from a **single sampling run** (passk2), same caveat as the previous docs.
+
+---
+
+## 6. Net effect on Route C
+
+| item | disposition |
 |---|---|
-| **训练臂** | **定为 C′**(两边都不归一化)。闸门通过 |
-| 长度主导的代价 | 最坏 2.1–2.4×(最长 10%),组内仅 1.04–1.32×。**可接受** |
-| 奖励是否被淹 | 否,非简并组上奖励主导 24× |
-| 简并组 | C′ 有区分(0% 整组同值),A 没有 |
-| **β** | **不低于 2,起步用 8**。步骤 2 的「β≈1」在 C′ 下作废(§4) |
-| 仍未解决 | C 的机器可行性(当前 4×A100-40GB 上 Step 4 装不下)与统计功效 |
+| **training arm** | **set to C′** (no normalization on either side). Gate passed |
+| cost of length dominance | worst case 2.1–2.4× (longest 10%), only 1.04–1.32× within group. **Acceptable** |
+| is the reward drowned | no, reward dominates 24× on non-degenerate groups |
+| degenerate groups | C′ discriminates (0% whole group same value), A does not |
+| **β** | **no lower than 2, start with 8**. Step 2's "β≈1" is void under C′ (§4) |
+| still unresolved | machine feasibility for C (Step 4 does not fit on the current 4×A100-40GB) and statistical power |
 
-**闸门的作用是排除,不是批准。** 它排除了「三个配置全军覆没」这个可能,
-**没有**回答 C 值不值得跑 —— 那取决于机器与统计功效,见 C 路计划。
+**The gate's job is to rule out, not to approve.** It rules out the possibility that "all three configs fail",
+and does **not** answer whether C is worth running — that depends on the machine and statistical power, see the Route C plan.

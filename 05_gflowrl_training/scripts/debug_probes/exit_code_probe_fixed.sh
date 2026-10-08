@@ -1,4 +1,4 @@
-# 同一个复现,cleanup 开头加了 set +e —— 就是打进 run_rl.sh 的那一行
+# The same reproduction, with set +e added at the start of cleanup — exactly the line patched into run_rl.sh
 set -euxo pipefail
 cleanup(){
   set +e

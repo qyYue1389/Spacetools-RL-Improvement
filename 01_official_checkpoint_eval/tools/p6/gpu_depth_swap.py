@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""P6 实验 B:深度工具对比 —— 同样不需要 policy。
+"""P6 experiment B: depth-tool comparison — likewise does not need the policy.
 
-为什么可以绕开 policy:P6 的离线分析证明,在 cvb3ddepth 上模型 99.8%、
-blinkdepth 上 95.6% 严格遵守同一条规则 —— **回答测得深度更小的那个点**。
-所以「换一个深度工具能涨多少分」= 用同样的两个探测点跑新深度工具,
-重新套这条规则。探测点直接取自 P4 的 dump(模型当时实际探的点),
-所以 pointing 那一环保持不变,变量只有深度工具本身。
+Why the policy can be bypassed: the P6 offline analysis showed that the model strictly follows one rule on 99.8% of cvb3ddepth and
+95.6% of blinkdepth — **answer with the point whose measured depth is smaller**.
+So "how much does swapping in another depth tool gain" = run the new depth tool on the same two probe points,
+then reapply this rule. The probe points come straight from the P4 dump (the points the model actually probed at the time),
+so the pointing stage stays unchanged and the only variable is the depth tool itself.
 
-**代理的误差已量化**:用基线深度重放规则得 674/714,而基线实际是 677/714,
-差 3 个样本(0.4%)—— 正是那几个「违反规则却蒙对」的。对比时用重放值当基准,
-不要用 677,否则会把这 0.4% 算到新工具头上。
+**The proxy's error is quantified**: replaying the rule with the baseline depth gives 674/714, while the actual baseline is 677/714,
+a gap of 3 samples (0.4%) — exactly the few that "broke the rule but guessed right". When comparing, use the replay value as the reference,
+not 677, otherwise this 0.4% gets attributed to the new tool.
 
-用法(Toolshed 必须已经起来):
+Usage (Toolshed must already be up):
 
     conda run -n spacetools-rl python tools/p6/gpu_depth_swap.py \
         --probes p6/probes/depth_probes.jsonl \
         --data-dir /workspace/eval-benchmarks \
         --out p6/swap/depth_baseline.jsonl
 
-先不带 --new-depth 跑一次:它用**现有的 depth_estimator** 重跑,
-应当重现 674/714。对不上就说明这条通路有问题,别往下走。
-换工具时把新的深度工具注册进 Toolshed,再用 --tool 指定它的名字。
+First run once without --new-depth: it reruns with the **existing depth_estimator**,
+and should reproduce 674/714. If it doesn't match, this path is broken; don't go further.
+To swap tools, register the new depth tool in Toolshed, then pass its name with --tool.
 """
 import argparse, json, os, re, io, base64, time
 from collections import defaultdict
@@ -35,8 +35,8 @@ PIXVAL = re.compile(r"is\s+([\d.eE+-]+)")
 def load_image(cell):
     from PIL import Image
     import numpy as np
-    # 同 gpu_pointing_swap.py:pandas 把 parquet 的 list<struct> 读成
-    # dtype=object 的 ndarray,不是 list。
+    # Same as gpu_pointing_swap.py: pandas reads the parquet list<struct> as
+    # an ndarray with dtype=object, not a list.
     if isinstance(cell, np.ndarray):
         cell = cell.reshape(-1)[0] if cell.size else None
     if isinstance(cell, (list, tuple)) and cell:
@@ -51,7 +51,7 @@ def load_image(cell):
         cell = base64.b64decode(cell)
     if isinstance(cell, (bytes, bytearray)):
         return Image.open(io.BytesIO(cell)).convert("RGB")
-    raise TypeError(f"无法识别的 image 单元格:{type(cell)}")
+    raise TypeError(f"unrecognized image cell: {type(cell)}")
 
 
 def main():
@@ -59,7 +59,7 @@ def main():
     ap.add_argument("--probes", required=True)
     ap.add_argument("--data-dir", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--tool", default="depth_estimator", help="Toolshed 里深度工具的名字")
+    ap.add_argument("--tool", default="depth_estimator", help="name of the depth tool in Toolshed")
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
 
@@ -121,23 +121,23 @@ def main():
             if n % 50 == 0:
                 print(f"  {bench} {n}/{len(ps)}  {time.time()-t0:.0f}s", flush=True)
         summary[bench] = (n, ok, replay_base, failed)
-        print(f"[{bench}] n={n}  新工具 {ok} ({100*ok/n:.2f}%)  "
-              f"基线重放 {replay_base} ({100*replay_base/n:.2f}%)  失败 {failed}  "
+        print(f"[{bench}] n={n}  new tool {ok} ({100*ok/n:.2f}%)  "
+              f"baseline replay {replay_base} ({100*replay_base/n:.2f}%)  failed {failed}  "
               f"{time.time()-t0:.0f}s", flush=True)
     fout.close()
 
-    print("\n=== 汇总 ===")
-    print(f"{'benchmark':14}{'n':>6}{'新工具':>10}{'基线重放':>11}{'差值':>10}")
+    print("\n=== Summary ===")
+    print(f"{'benchmark':14}{'n':>6}{'new tool':>10}{'baseline replay':>11}{'diff':>10}")
     tn = tok = tb = 0
     for b, (n, ok, rb, failed) in summary.items():
         print(f"{b:14}{n:6}{100*ok/n:9.2f}%{100*rb/n:10.2f}%{100*(ok-rb)/n:+9.2f}")
         tn += n; tok += ok; tb += rb
-    print(f"{'合计':14}{tn:6}{100*tok/tn:9.2f}%{100*tb/tn:10.2f}%{100*(tok-tb)/tn:+9.2f}")
-    print(f"\n写入 {args.out}")
-    print("\n注意:基线重放列应当精确等于 —— blinkdepth 97/115 (84.35%)、"
-          "cvb3ddepth 577/599 (96.33%)、合计 674/714 (94.40%)。")
-    print("它是纯算术(不调工具),所以必然复现;对不上说明 probes 文件被改过。")
-    print("而『新工具』一列不带 --tool 时应当≈重放值,差异来自 DepthPro 自身的非确定性。")
+    print(f"{'total':14}{tn:6}{100*tok/tn:9.2f}%{100*tb/tn:10.2f}%{100*(tok-tb)/tn:+9.2f}")
+    print(f"\nwrote {args.out}")
+    print("\nNote: the baseline-replay column should equal exactly — blinkdepth 97/115 (84.35%), "
+          "cvb3ddepth 577/599 (96.33%), total 674/714 (94.40%).")
+    print("It is pure arithmetic (no tool calls), so it must reproduce; a mismatch means the probes file was modified.")
+    print("The 'new tool' column without --tool should be ≈ the replay value; the difference comes from DepthPro's own nondeterminism.")
 
 
 if __name__ == "__main__":

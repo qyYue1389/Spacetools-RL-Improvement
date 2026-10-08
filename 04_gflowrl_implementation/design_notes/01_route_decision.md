@@ -1,251 +1,251 @@
-# P7 路线决定:那一句话
+# P7 route decision: the one sentence
 
-> 承接 `records/P7_HANDOFF.md`。**本文只做一件事:定下 P7 要回答的问题,并写下判据。**
-> 写于 2026-09-01。决定作出时**没有**下载数据、没有租机器、没有写训练脚本,
-> 也没有打开 `run_rl.sh` —— 这是交接文档 §5 第 1 步的产出。
+> Follows on from `records/P7_HANDOFF.md`. **This document does exactly one thing: fix the question P7 answers, and write down the criteria.**
+> Written 2026-09-01. When the decision was made, **no** data had been downloaded, no machine rented, no training script written,
+> and `run_rl.sh` had not been opened — this is the output of step 1 in §5 of the handoff document.
 >
-> 依据:`P7_HANDOFF.md`(全文)· `P6_REPORT.md`(全文)· `P6_GPU_HANDOFF.md` §0 作废清单 ·
-> 项目文档《两篇论文笔记》· 本文 §3 的新测量。
+> Based on: `P7_HANDOFF.md` (full text) · `P6_REPORT.md` (full text) · `P6_GPU_HANDOFF.md` §0 void list ·
+> project doc "Notes on the two papers" · the new measurements in §3 of this document.
 
 ---
 
-## 0. 决定
+## 0. Decision
 
-**选 A(算法侧贡献),但重写它的那一句话。**
+**Pick A (algorithm-side contribution), but rewrite its one sentence.**
 
-> **在 SpaceTools 的多轮工具轨迹上,GFlowRL 的批内 Monte Carlo 估计量 `Z_t`
-> 还是不是一个可用的 log-partition 估计?**
-> **若不是 —— 同一个批内常数的另外两种估计(VarGrad 的最小化方差、DevGrad 的最优常数)是不是?**
+> **On SpaceTools' multi-turn tool trajectories, is GFlowRL's within-batch Monte Carlo estimator `Z_t`
+> still a usable log-partition estimate?**
+> **If not — are the two other estimates of the same within-batch constant (VarGrad's variance minimizer, DevGrad's optimal constant)?**
 >
-> 拆成三问:
-> 1. `Z_t` 的**组内方差**相对 `β·r` 是什么量级;
-> 2. **长度归一化**在 2–16 轮的异质轨迹上引入的偏差,是否大到移动不动点;
-> 3. 在**奖励简并**的那些组上(§3),Eq. 8 的残差是有意义的梯度,还是噪声。
+> Split into three questions:
+> 1. What is the magnitude of the **within-group variance** of `Z_t` relative to `β·r`;
+> 2. Is the bias that **length normalization** introduces on heterogeneous 2–16-turn trajectories large enough to move the fixed point;
+> 3. On the groups with **degenerate rewards** (§3), is the Eq. 8 residual a meaningful gradient, or noise.
 
-> **后半句是 2026-09-01 检索现成实现之后加的**(见 `records/P7_PRIOR_ART.md`)。
-> 加它的理由:原来的问法答「不能用」时**无处可去**;加上另外两个估计量之后,
-> **两个方向的答案都可行动**。成本不变 —— 三者是同一个常数的不同估计,
-> `tools/p7/p7_fixedpoint.py` 的框架与 `p6/passk` 的真实组直接可跑,**仍然零 GPU**。
-> **范围钉死在离线估计量诊断(方差、饱和率、量纲),不进训练** ——
-> 三个估计量很容易滑成「哪个分高」的刷分实验,那正是交接文档 ⚠ 段警告过的。
+> **The second half of the sentence was added on 2026-09-01 after searching for existing implementations** (see `records/P7_PRIOR_ART.md`).
+> Why add it: when the original question answers "not usable", it **has nowhere to go**; with the two other estimators added,
+> **the answer is actionable in both directions**. Cost unchanged — the three are different estimates of the same constant,
+> the framework in `tools/p7/p7_fixedpoint.py` runs directly on the real groups in `p6/passk`, **still zero GPU**.
+> **Scope is pinned to offline estimator diagnostics (variance, saturation rate, units), no training** —
+> three estimators slide very easily into a "which one scores higher" score-chasing experiment, which is exactly what the ⚠ paragraph of the handoff document warned against.
 
-**为什么是这一句:两个方向的答案都可归因。** 它问的是数据、奖励与 reference policy
-的性质,不是我们 Eq. 8 写得对不对。后者由合成不动点检验**单独**守住:
-构造 `π_θ = π_ref·exp(β·r)/Z` 查 loss ≈ 0;查 clip 在不动点邻域失效(论文 Remark B.3)。
-**这两条职责必须分开**,否则又回到不可归因的否定结果(§1)。
+**Why this sentence: the answer is attributable in both directions.** It asks about properties of the data, the reward and the reference policy,
+not whether our Eq. 8 is written correctly. The latter is guarded **separately** by the synthetic fixed-point test:
+construct `π_θ = π_ref·exp(β·r)/Z` and check loss ≈ 0; check that clip fails in the neighborhood of the fixed point (paper Remark B.3).
+**These two responsibilities must be kept separate**, otherwise we are back to a non-attributable negative result (§1).
 
-### 0.1 预登记判据(先写死,避免事后挑)
+### 0.1 Pre-registered criteria (written down first, to avoid picking after the fact)
 
-| # | 判据 | 怎么算通过 / 不通过 |
+| # | Criterion | What counts as pass / fail |
 |---|---|---|
-| i | 报 `Var(Z_t)/(β·r)²` 的**分布**,不报单个数 | 按 §3.3 纪律,**两侧散布都要有** —— 第二组独立的 5 次采样是它的**前置条件,不是可选项** |
-| i-b | **同一批内常数的三种取法并排报** | ~~三种估计~~ **说法已更正**:平方损失 + `π_θ=π_old` 时三者数值相同,差别只在 **`sg` 与否**(GFlowRL vs VarGrad)与 **`f` 的选择**(平方/绝对值/Huber)。**合成一半已完成,见 `records/P7_CRITERION_IB.md`;真实一半必须等前向 pass** —— 该选哪个常数完全取决于漂移的**分布形状**(高斯→mean 最优;重尾→median 好 0.6×;双峰→mean 好 3.5–7.4×) |
-| ii | 长度归一化 on/off 各跑一遍 | 比较**不动点位置**,不比较分数 |
-| iii | 简并组的残差 | 要与「把 `π_old` 换成 `π_ref` 的零信息对照」比,**不能只看它非零** |
+| i | Report the **distribution** of `Var(Z_t)/(β·r)²`, not a single number | Per the §3.3 discipline, **spread on both sides is required** — a second independent set of 5 samples is a **precondition for it, not optional** |
+| i-b | **Report the three ways of taking the same within-batch constant side by side** | ~~three estimates~~ **wording corrected**: with squared loss + `π_θ=π_old` the three are numerically identical, and differ only in **`sg` or not** (GFlowRL vs VarGrad) and **the choice of `f`** (squared/absolute/Huber). **The synthetic half is done, see `records/P7_CRITERION_IB.md`; the real half has to wait for the forward pass** — which constant to pick depends entirely on the **shape of the distribution** of the drift (Gaussian → mean optimal; heavy-tailed → median 0.6× better; bimodal → mean 3.5–7.4× better) |
+| ii | Run length normalization on/off once each | Compare **fixed-point location**, not scores |
+| iii | Residual on degenerate groups | Must be compared against "the zero-information control with `π_old` replaced by `π_ref`", **not just checked for being nonzero** |
 
-> **2026-09-01 · 判据 i-b 的合成一半又追加了一条候选修法**(`P7_CRITERION_IB.md` §6):
-> **把 `Eq. 4` 的 logprob 项也按 `|y|` 归一化**,合成上把「整组 `g̃` 被削成同值」
-> 从 36%–93% 压回 **0.0%** 且不随漂移增长。**代价(不动点)未测。**
-> 这条让 A′ 的否定答案变成建设性的:「`Z_t` 不可用,但原因是归一化不一致,而它有修法」。
+> **2026-09-01 · The synthetic half of criterion i-b added one more candidate fix** (`P7_CRITERION_IB.md` §6):
+> **also normalize the logprob term of `Eq. 4` by `|y|`**; on synthetic data this pushes "the whole group's `g̃` clipped to the same value"
+> from 36%–93% back to **0.0%**, and it does not grow with drift. **Cost (fixed point) not measured.**
+> This turns A′'s negative answer into a constructive one: "`Z_t` is not usable, but the cause is inconsistent normalization, and that has a fix".
 
-> **2026-09-01 · 三条判据都被步骤 2/3 改写了一次,详见 `records/P7_STEP23_RESULTS.md` §3。**
-> 最重要的一条:**起点上 flow gap 只取 `{−ε_low, 0, +ε_high}` 三个值**
-> (两个二值 benchmark 上非简并 rollout **100% 饱和**),
-> 所以 **`Var(Z_t)` 在起点无关紧要,它与 T6 的量纲失配同时开始起作用** ——
-> 两者都由 `log π_ref − log π_old` 这一项驱动。判据 (i) 要测的是**漂移之后**。
+> **2026-09-01 · All three criteria were rewritten once by steps 2/3, see `records/P7_STEP23_RESULTS.md` §3 for details.**
+> The most important one: **at the starting point the flow gap takes only three values `{−ε_low, 0, +ε_high}`**
+> (on both binary benchmarks the non-degenerate rollouts are **100% saturated**),
+> so **`Var(Z_t)` does not matter at the starting point; it starts to matter at the same time as the T6 unit mismatch** —
+> both are driven by the `log π_ref − log π_old` term. What criterion (i) has to measure is **after drift**.
 
-### 0.2 明确排除在 P7 之外
+### 0.2 Explicitly excluded from P7
 
-**`bopgrasp` / `boppose`。** P6 §4.2:`r`(NCE)对夹爪朝向不敏感 ——
-朝向中位错 **63.9°** 的回退答案 NCE **1.07**,优于工具真算出抓取的 **1.38**。
+**`bopgrasp` / `boppose`.** P6 §4.2: `r` (NCE) is insensitive to gripper orientation —
+a fallback answer with a median orientation error of **63.9°** gets NCE **1.07**, better than the **1.38** of a grasp actually computed by the tool.
 
-> 奖励规格错的地方,任何以 `r` 为目标的算法都无话可说。
-> 而且分布匹配比奖励最大化更糟一层:GRPO 只保住 `r` 最高的那一个坏模式,
-> **分布匹配会按 `exp(β·r)` 的比例把那个坏模式一起养着。**
-> **这是范围声明,不是风险提示** —— P7 不对这两个 benchmark 声称任何东西。
+> Where the reward is misspecified, any algorithm that targets `r` has nothing to say.
+> And distribution matching is one level worse than reward maximization: GRPO only keeps the single bad mode with the highest `r`,
+> **distribution matching keeps that bad mode alive too, in proportion to `exp(β·r)`.**
+> **This is a scope statement, not a risk note** — P7 claims nothing about these two benchmarks.
 
-**换工具(2026-09-02 · 用户决定)。** 不装第二个深度模型,不装更强的 pointing 模型。
+**Swapping tools (2026-09-02 · user decision).** No second depth model installed, no stronger pointing model installed.
 
-`P6_NOTES.md` 里那两项「被安装挡住、建议单独排期」的实验,状态改为**已决定不做**。
-理由是范围而不是成本:**P7 检验的是换目标函数,换工具是另一条正交路径**,
-混在一起任何结果都不可归因。已测得的 headroom 数字全部保留
-(工具错 : 推理错 ≈ 13:1 · RoboRefer 占 53.4% · 深度近平局 17 个 ·
-pointing oracle +10.83 pp),只是不再安排实验去吃。
+The two experiments in `P6_NOTES.md` that were "blocked by installation, suggest scheduling separately" are now **decided against**.
+The reason is scope, not cost: **P7 tests swapping the objective; swapping tools is a separate, orthogonal path**,
+and with both mixed together no result is attributable. All measured headroom numbers are kept
+(tool error : reasoning error ≈ 13:1 · RoboRefer accounts for 53.4% · 17 near-ties on depth ·
+pointing oracle +10.83 pp), there are just no experiments scheduled to claim them any more.
 
-> **同时记住 P6 的那条结论,否则会误读 P7 的成败**:
-> **换目标函数动不了 273/322(84.7%)的工具错与工具集缺口。**
-> P7 无论结果如何,都不该被期待去动这块 headroom —— 它不在 P7 的作用域里。
+> **Also keep P6's conclusion in mind, otherwise P7's success or failure will be misread**:
+> **swapping the objective cannot touch the 273/322 (84.7%) tool errors and tool-set gaps.**
+> Whatever P7's result, it should not be expected to move this headroom — it is outside P7's scope.
 
-### 0.3 ⚠ 「提高 accuracy」与 A′ 不是同一个目标 —— 这条要写明,不要含糊
+### 0.3 ⚠ "Improve accuracy" and A′ are not the same goal — this has to be written out, not left vague
 
-用户 2026-09-02 表述的 P7 目的是「**尝试应用 GFlowRL 看能不能提高模型 accuracy**」。
-**这个表述对应的是 C 路(全量同起点对比),不是本文选定的 A′。** 两者的区别不是措辞:
+The P7 goal the user stated on 2026-09-02 is "**try applying GFlowRL and see whether it improves model accuracy**".
+**That statement corresponds to Route C (full same-starting-point comparison), not to the A′ chosen in this document.** The difference is not wording:
 
-| | 问什么 | 成本 | 本文的处置 |
+| | What it asks | Cost | How this document handles it |
 |---|---|---|---|
-| **A′**(已选) | `Z_t` 这个批内估计量在多轮工具轨迹上还能不能用 | 小,大部分离线 | §0 |
-| **C**(已排除) | GFlowRL 对 GRPO 能提多少分 | 重跑 SFT + 两臂 × 多 seed,3–4 天机时 | §4.1 |
+| **A′** (chosen) | Is the within-batch estimator `Z_t` still usable on multi-turn tool trajectories | Small, mostly offline | §0 |
+| **C** (excluded) | How many points GFlowRL gains over GRPO | Rerun SFT + both arms × multiple seeds, 3–4 days of machine time | §4.1 |
 
-C 被排除的理由是**数字**,不是偏好(§4.1):可动份额上界 **33–44/2001 = 1.65–2.20 pp**
-且是「全部吃掉、一个不漏」的上界;而单次运行的散布聚合到 2001 个样本已经是 **0.5–0.8 pp**。
-**期望效应与噪声同量级**,要有分辨率就得两臂各多个 seed,再加上我们没有 SFT checkpoint、
-四卡机吞吐差 8 倍(实验 D)。
+C is excluded on **numbers**, not preference (§4.1): the upper bound on the movable share is **33–44/2001 = 1.65–2.20 pp**,
+and that is an "eat all of it, miss none" upper bound; while the spread of a single run aggregated to 2001 samples is already **0.5–0.8 pp**.
+**The expected effect is the same order of magnitude as the noise**; resolving it would need multiple seeds for both arms, on top of us having no SFT checkpoint
+and the 4-GPU machine being 8× short on throughput (experiment D).
 
-> **⚠ 2026-09-02 更新:C 的闸门已跑,通过。** 见 `records/P7_ROUTE_C_GATE.md`。
-> A′ 判定 `Z_t` 按论文原样不可用之后,C 路的第一个问题不再是「要不要花 3–4 天」,
-> 而是「**训哪个 loss**」——三个配置各有一种病。闸门在真实数据上比了一次:
-> **训练臂定为 C′(`Eq.4` 与 `Eq.5/6` 两边都不做长度归一化)。**
-> · 长度主导的代价温和:最长 10% 占 loss 的 20.7–24.2%(均分 10%),**组内仅 1.04–1.32×** ——
->   因为我们的 `|y|` 中位只有 305–423 token,不是论文担心的 thousands。
-> · 奖励不会被漂移淹掉:非简并组上**奖励主导漂移 24 倍**(漂移/奖励 = 0.041–0.042)。
-> · 简并组上 C′ 有区分(整组同值 **0.0%**),而 A 是 30–49%。
-> · **代价是 C′ 的 clip 饱和率最高(77.9%)** —— 用「更多被削到 ±ε」换「没有一组的奖励被抹掉」。
-> · **连带:`P7_STEP23_RESULTS.md` §1.4 的「β 从 1 起步」在 C′ 下作废** ——
->   漂移/奖励 ∝ 1/β²,β=1 时漂移主导奖励 2.7×。**C′ 下 β 不低于 2,起步仍用 8。**
+> **⚠ 2026-09-02 update: the gate for C has been run, and passed.** See `records/P7_ROUTE_C_GATE.md`.
+> After A′ judged `Z_t` unusable as in the paper, the first question for Route C is no longer "should we spend 3–4 days",
+> but "**which loss to train**" — each of the three configurations has its own disease. The gate compared them once on real data:
+> **the training arm is set to C′ (no length normalization on either side, `Eq.4` or `Eq.5/6`).**
+> · The cost of length dominance is mild: the longest 10% account for 20.7–24.2% of the loss (even share would be 10%), **only 1.04–1.32× within a group** —
+>   because our median `|y|` is only 305–423 tokens, not the thousands the paper worries about.
+> · The reward is not drowned by drift: on non-degenerate groups **reward dominates drift 24×** (drift/reward = 0.041–0.042).
+> · On degenerate groups C′ discriminates (whole group same value **0.0%**), while A is 30–49%.
+> · **The price is that C′ has the highest clip saturation rate (77.9%)** — trading "more clipped to ±ε" for "no group has its reward erased".
+> · **Knock-on: `P7_STEP23_RESULTS.md` §1.4's "start β at 1" is void under C′** —
+>   drift/reward ∝ 1/β², and at β=1 drift dominates reward 2.7×. **Under C′ β is no lower than 2; still start at 8.**
 >
-> **闸门的作用是排除,不是批准**:它排掉了「三个配置全军覆没」,
-> 没有回答 C 值不值得跑 —— 那取决于机器可行性与统计功效。
+> **The gate's job is to exclude, not to approve**: it ruled out "all three configurations fail",
+> it did not answer whether C is worth running — that depends on machine feasibility and statistical power.
 >
-> **完整的 C 路计划已成文:`records/P7_ROUTE_C_PLAN.md`。** 两个必须由用户作的决定:
-> **① 租不租 2 节点 × 8 卡** —— 当前 4×A100-40GB **跑不了 Step 4**(工具吃 3 张、
-> 训练剩 1 张、优化器态 60.6 GB;`model_dtype=bf16` 不能救场,fp32 master 正是优化器要的)。
-> **② 接受不接受「主指标只报 `robospatial`」** —— 以九个 benchmark 的总分为主指标,
-> **即使效应拉满也测不出来**(需要净差 ≥48,天花板 44);而 P6 已把可动份额定位到
-> **44 条里约 42 条在 `robospatial`**,收窄到 n=350 后需要 ≥20、天花板 42,**功效才够**。
+> **The full Route C plan is written up: `records/P7_ROUTE_C_PLAN.md`.** Two decisions that must be made by the user:
+> **① Rent 2 nodes × 8 GPUs or not** — the current 4×A100-40GB **cannot run Step 4** (tools take 3 GPUs,
+> 1 is left for training, optimizer state is 60.6 GB; `model_dtype=bf16` cannot rescue it, the fp32 master is exactly what the optimizer needs).
+> **② Accept or not "the primary metric reports only `robospatial`"** — with the total over nine benchmarks as the primary metric,
+> **it cannot be detected even at maximal effect** (needs a net difference ≥48, ceiling 44); while P6 has already located the movable share to
+> **about 42 of the 44 in `robospatial`**; narrowed to n=350 it needs ≥20 with a ceiling of 42, **and power is sufficient**.
 
-**处置:范围不变,仍走 A′。** 本文不擅自改成 C —— 那是一次 3–4 天机时的排期决定,
-必须由用户在看到上面这组数字之后明确作出。
+**Disposition: scope unchanged, still going with A′.** This document does not switch to C on its own — that is a scheduling decision for 3–4 days of machine time,
+and it must be made explicitly by the user after seeing the numbers above.
 
-**但 A′ 的产出与「能不能提高 accuracy」是相关的,不是无关**:A′ 若答「`Z_t` 在我们这里
-不可用」,那么 C 无论怎么跑都不会赢,**先做 A′ 恰恰是通向那个问题的最省路径**;
-A′ 若答「可用,且归一化不一致有修法」(`P7_CRITERION_IB.md` §6),
-那时再谈要不要花 3–4 天去测分数,才有依据。
+**But A′'s output is related to "can it improve accuracy", not unrelated**: if A′ answers "`Z_t` is not usable
+here", then C will not win however it is run, **so doing A′ first is exactly the cheapest path to that question**;
+if A′ answers "usable, and the normalization inconsistency has a fix" (`P7_CRITERION_IB.md` §6),
+then there is a basis for discussing whether to spend 3–4 days measuring scores.
 
 ---
 
-## 1. 为什么不用交接文档的 A 原句
+## 1. Why not use the original A sentence from the handoff document
 
-原句:「GFlowRL 能不能在多轮工具轨迹上稳定训练?」**它同时有两个毛病。**
+Original sentence: "Can GFlowRL train stably on multi-turn tool trajectories?" **It has two flaws at once.**
 
-**① 为「是」几乎白送。**「稳定」这个词的含义来自 GFlowRL 对 FlowRL 的对比
-(FlowRL 421 步里 55 步梯度范数 ≥ 1e6),而论文自己诊断的根因是**随机初始化的
-`Z_φ` 与预训练 policy 的学习时程失配**。GFlowRL 的做法就是把 `Z_φ` 删掉。
-**没有 `Z_φ`,就没有那个失败模式** —— 梯度范数正常说明不了什么。
+**① A "yes" is almost free.** The meaning of "stable" comes from GFlowRL's comparison against FlowRL
+(in 421 FlowRL steps, 55 had gradient norm ≥ 1e6), and the root cause the paper itself diagnoses is **the learning-schedule mismatch between a randomly initialized
+`Z_φ` and the pretrained policy**. What GFlowRL does is delete `Z_φ`.
+**Without `Z_φ`, that failure mode does not exist** — normal gradient norms show nothing.
 
-**② 为「否」不可归因。** `microsoft/gflowrl` 是 404,loss 要照 Eq. 4–8 自己写。
-那么「训练不稳定」到底是算法不推广到多轮工具轨迹,还是我们的 Eq. 8 写错了?
-要分开,得先在论文自己的 setting(7B 数学)上复现它报的梯度统计 —— 那是另一个项目的预算。
+**② A "no" is not attributable.** `microsoft/gflowrl` is a 404; the loss has to be written ourselves from Eq. 4–8.
+So is "training unstable" because the algorithm does not generalize to multi-turn tool trajectories, or because our Eq. 8 is wrong?
+To separate them, we would first have to reproduce the gradient statistics the paper reports in its own setting (7B math) — that is the budget of another project.
 
-> 交接文档说「A 的失败也是结果」。**这句话只在结果可归因时成立。**
-> 在没有参考实现的前提下,「稳定 / 不稳定」恰好是最不可归因的那一类判据。
+> The handoff document says "A failing is also a result". **That only holds when the result is attributable.**
+> Without a reference implementation, "stable / unstable" is exactly the least attributable kind of criterion.
 
-### 1.1 ⚠ 2026-09-01 复核:FlowRL 有代码了,要不要退回原来的 A?
+### 1.1 ⚠ 2026-09-01 re-check: FlowRL has code now — should we fall back to the original A?
 
-**不要。** 当初把 A 重写成 A′ 的主要理由是**归因**(上面 ②):没有参考实现,
-「训练不稳定」分不清是算法不推广还是我们写错。`Xuekai-Zhu/FlowRL` 建在 verl 上、
-Apache-2.0,看起来正好补上这个缺口。
+**No.** The main reason for rewriting A into A′ was **attribution** (② above): without a reference implementation,
+"training unstable" cannot be told apart between the algorithm not generalizing and us writing it wrong. `Xuekai-Zhu/FlowRL` is built on verl,
+Apache-2.0, and seems to fill exactly that gap.
 
-**但它补的恰好是 A′ 之外的那部分。** 两者共享 TB 残差、`response_mask`、长度归一化、
-verl 管道;差别正好在 **`Z_φ` vs `Z_t`、Eq. 7 的非对称 clip、以及 IS 那一段** ——
-**也就是 GFlowRL 的全部贡献,一行参照都没有。**
+**But what it fills is precisely the part outside A′.** The two share the TB residual, `response_mask`, length normalization and
+the verl pipeline; the differences are exactly **`Z_φ` vs `Z_t`, Eq. 7's asymmetric clip, and the IS part** —
+**that is, all of GFlowRL's contribution, with not a single line of reference.**
 
-> 所以借来的代码把「管道写错」的可能性变小了,**没有**让「估计量在多轮工具轨迹上行不行」
-> 变得可归因。**A′ 问的正是那个残差。这次检索不削弱 A′,是把它周围的噪声清掉了。**
+> So the borrowed code makes "the pipeline is wrong" less likely, and does **not** make "does the estimator work on multi-turn tool trajectories"
+> attributable. **A′ asks about exactly that residual. This search does not weaken A′; it clears away the noise around it.**
 
-同一次检索还外部证实了 A′ 的空位:**没有找到任何 GFlowNet 式目标用在多轮工具轨迹上的实现**,
-与论文 Appendix A 自己那句「unclear whether ... extends to broader agentic or multimodal
-RL settings」一致。(检索不是不存在性证明,见 `P7_PRIOR_ART.md` 顶部的标注。)
+The same search also externally confirmed A′'s gap: **no implementation of a GFlowNet-style objective on multi-turn tool trajectories was found**,
+consistent with the paper's own Appendix A sentence "unclear whether ... extends to broader agentic or multimodal
+RL settings". (A search is not a proof of non-existence, see the note at the top of `P7_PRIOR_ART.md`.)
 
 ---
 
-## 2. 「编排坍塌」这个动机,一半站不住
+## 2. Half of the "orchestration collapse" motivation does not hold
 
-`P7_HANDOFF.md` 的 ⚠ 段与 `P6_REPORT.md` §7.1 都把
-`三个 RefSpatial 277/277 用同一条链路` 当作坍塌的实测证据。**这条证据大部分是伪的。**
+The ⚠ paragraph of `P7_HANDOFF.md` and `P6_REPORT.md` §7.1 both treat
+`all three RefSpatial 277/277 use the same chain` as measured evidence of collapse. **Most of this evidence is spurious.**
 
-RefSpatial 的题就是「指出那个东西在哪」,正确链路本来就只有 `detect_one` 一次;
-P6 §2.2 自己写着策略在这 277 条上的全部贡献是措辞 `obj_name`。
-**没有第二条等价有效的链可供保留 —— 这不是坍塌,是任务只有一条路。**
-同理 `boppose` 的 60/60 透传、深度题 95.6% / 99.8% 的规则遵守。
-P6 §7 那句「最优策略本来就是一条确定性规则」,**恰恰把分布匹配的用武之地一起否掉了**。
+RefSpatial questions are "point to where that thing is"; the correct chain is just one `detect_one` call;
+P6 §2.2 itself says the policy's entire contribution on these 277 is the wording of `obj_name`.
+**There is no second equally valid chain to preserve — this is not collapse, the task just has one path.**
+The same goes for `boppose`'s 60/60 pass-through and the 95.6% / 99.8% rule compliance on depth questions.
+P6 §7's sentence "the optimal policy is a deterministic rule to begin with" **rules out the use case for distribution matching along with it**.
 
-**真正有代价的坍塌只有一处,而且 P6 已经把它定位干净:**
+**There is only one place where collapse really costs something, and P6 has already located it cleanly:**
 
-- **2a 该调没调,11 条** = 手工归类 3 条(`#246` / `#272` / `#301`)+ `front/behind` 8 条
-- `front/behind`:29 道题问的是深度序,**`depth_estimator` 就在该 benchmark 的工具表里,
-  29/29 一次没调**(`robospatial` 全部 350 个样本,0 次调用)
+- **2a should-have-called-but-didn't, 11 cases** = 3 hand-classified (`#246` / `#272` / `#301`) + 8 `front/behind`
+- `front/behind`: 29 questions ask about depth order, **`depth_estimator` is in that benchmark's tool list,
+  and was called 0 times in 29/29** (all 350 `robospatial` samples, 0 calls)
 
-**这是唯一一处「存在已知有效的替代链、策略却从不走它、且代价可量化(+8 个样本)」的地方。**
-分布匹配声称能保住的正是这种被压掉的模式。
+**This is the only place where "a known valid alternative chain exists, the policy never takes it, and the cost is quantifiable (+8 samples)".**
+This kind of suppressed mode is exactly what distribution matching claims to preserve.
 
-### 2.1 可动份额的修正
+### 2.1 Correction to the movable share
 
-| 口径 | 条数 | 占 322 | 说明 |
+| Definition | Count | Share of 322 | Notes |
 |---|--:|--:|---|
-| 交接文档下界(仅推理错) | 19 | 5.9% | |
-| 交接文档上界(+3b) | 33 | 10.2% | 3b 归属有争议,P6 §8 报两种读法 |
-| **本文修正(+2a)** | **44** | **13.7%** | **2a 那 11 条是三块里唯一机制上「分布匹配形状」的** |
+| Handoff lower bound (reasoning errors only) | 19 | 5.9% | |
+| Handoff upper bound (+3b) | 33 | 10.2% | Attribution of 3b is disputed; P6 §8 reports both readings |
+| **This document's correction (+2a)** | **44** | **13.7%** | **The 11 in 2a are the only one of the three blocks whose mechanism is "distribution-matching shaped"** |
 
-**方向不变,但三块可以分别下注了。** 2a 是编排问题,推理错 19 与 3b 14 不是。
+**The direction is unchanged, but the three blocks can now be bet on separately.** 2a is an orchestration problem; the 19 reasoning errors and the 14 in 3b are not.
 
 ---
 
-## 3. 新测量:`p6/passk` 本身就是 G=5 的真实 rollout 组
+## 3. New measurement: `p6/passk` itself is a set of real G=5 rollout groups
 
-那三个文件是为 pass@k 跑的(`n=5, T=1.0`),结论是空的。
-**但它恰好是 P7 唯一真正缺的那种数据** —— 每个 prompt 五条 rollout,带奖励、轮数、完整轨迹。
+Those three files were run for pass@k (`n=5, T=1.0`), and the conclusion was null.
+**But they happen to be the only kind of data P7 really lacks** — five rollouts per prompt, with reward, turn count and full trajectory.
 
-    p6/passk/robospatial/0.jsonl   1750 行 = 350 prompt × 5
-    p6/passk/blinkdepth/0.jsonl     620 行 = 124 × 5
-    p6/passk/boppose/0.jsonl        300 行 =  60 × 5
+    p6/passk/robospatial/0.jsonl   1750 lines = 350 prompts × 5
+    p6/passk/blinkdepth/0.jsonl     620 lines = 124 × 5
+    p6/passk/boppose/0.jsonl        300 lines =  60 × 5
 
-### 3.1 长度异质性(`num_turns` 为 **verl 口径** = user + assistant + 1)
+### 3.1 Length heterogeneity (`num_turns` is the **verl definition** = user + assistant + 1)
 
-| | 组内均值 | 全体范围 | **组内极差**(均值 / 最大) | output 长度相对极差(中位) |
+| | Within-group mean | Overall range | **Within-group range** (mean / max) | Output-length relative range (median) |
 |---|--:|--:|--:|--:|
 | `robospatial` | 4.00 | 2–10 | 0.09 / 6 | 0.29 |
 | `blinkdepth` | 6.70 | **2–16** | **2.24 / 10** | 0.18 |
 | `boppose` | 10.00 | 6–16 | 0.90 / 6 | 0.03 |
 
-**两种异质性要分开读:** `robospatial` / `boppose` 的异质性主要在 **prompt 之间**
-(组内轮数几乎恒定);`blinkdepth` **组内**就差 2.24 轮、最大差 10。
-论文 Remark B.4 的「各 rollout 长度接近时可忽略」,**在 `blinkdepth` 上是直接被违反的**。
+**Read the two kinds of heterogeneity separately:** for `robospatial` / `boppose` the heterogeneity is mainly **between prompts**
+(turn count is nearly constant within a group); `blinkdepth` differs by 2.24 turns **within a group**, max difference 10.
+The paper's Remark B.4 "negligible when rollouts have similar lengths" **is directly violated on `blinkdepth`**.
 
-### 3.2 组内奖励简并 —— 最值得下注的一条
+### 3.2 Within-group reward degeneracy — the one most worth betting on
 
-    奖励在 G=5 内完全相同的 prompt 比例
-      robospatial   199/350 = 56.9%       组内奖励极差:均值 0.431  中位 0.000
-      blinkdepth     94/124 = 75.8%       均值 0.242  中位 0.000
-      boppose        32/60  = 53.3%       均值 0.116  中位 0.000
+    Fraction of prompts whose reward is identical across all G=5
+      robospatial   199/350 = 56.9%       within-group reward range: mean 0.431  median 0.000
+      blinkdepth     94/124 = 75.8%       mean 0.242  median 0.000
+      boppose        32/60  = 53.3%       mean 0.116  median 0.000
 
-**一半到四分之三的 prompt,五条 rollout 拿到同一个奖励。**
+**For half to three quarters of the prompts, all five rollouts get the same reward.**
 
-- 对 **GRPO**:advantage 归一化后为 0,**整个 prompt 不产生梯度**。
-- 对 **GFlowRL**:Eq. 8 是逐轨迹的残差平方,`g_i` 里还有长度归一化的
-  `log(π_old/π_ref)` 项 —— **即使 `r` 全同,残差一般不为零,它仍然出梯度**。
+- For **GRPO**: after advantage normalization it is 0, **the whole prompt produces no gradient**.
+- For **GFlowRL**: Eq. 8 is a per-trajectory squared residual, and `g_i` also contains the length-normalized
+  `log(π_old/π_ref)` term — **even if `r` is all equal, the residual is generally nonzero, and it still produces a gradient**.
 
-> **所以在 SpaceTools 上,GFlowRL 与 GRPO 的差别在超过一半的 prompt 上
-> 不是程度差别,是有无差别。** 这比论文的多样性打分(3.93 vs 1.21)具体,
-> 也比「编排坍塌」这个已被 §2 削弱的动机结实,
-> **而且它是关于数据与奖励的性质,不是关于我们代码写得对不对。**
+> **So on SpaceTools, on more than half the prompts, the difference between GFlowRL and GRPO
+> is not one of degree but of presence vs absence.** This is more concrete than the paper's diversity score (3.93 vs 1.21),
+> and sturdier than the "orchestration collapse" motivation already weakened by §2,
+> **and it is about properties of the data and reward, not about whether our code is right.**
 
-> **⚠ 按 §3.3 纪律标注:以上全部来自单次采样运行,n=1,没有重复过。**
-> 现在它是**一条待复核的观察,不是结论**。
-> 复核它需要的正是交接文档已列出的「第二组独立的 5 次采样」——
-> **那件事现在有了第二个理由,而且这个理由比原来那个(给多数表决测散布)更重要。**
-> 另:训练数据是 `spacetools-rlfulltools`,不是这三个 eval benchmark,
-> **简并率在训练分布上可能不同,无法从现有数据外推。**
+> **⚠ Labeled per the §3.3 discipline: all of the above comes from a single sampling run, n=1, never repeated.**
+> For now it is **an observation pending re-check, not a conclusion**.
+> Re-checking it needs exactly the "second independent set of 5 samples" already listed in the handoff document —
+> **that task now has a second reason, and this reason matters more than the original one (measuring spread for majority voting).**
+> Also: the training data is `spacetools-rlfulltools`, not these three eval benchmarks;
+> **the degeneracy rate may differ on the training distribution, and cannot be extrapolated from the existing data.**
 
-> **⚠ 修正 2026-09-01(回 PDF 之后)。** 上面「GFlowRL 在简并组上仍出梯度、GRPO 不出」
-> **数学上仍然成立**(Eq. 8 是逐轨迹的残差平方,不是组内对比),
-> **但它不是「GFlowRL 已发表配置」的性质**:论文 Table 9 的 rollout 设置里写着
-> `Filter groups: Accuracy-based` —— **奖励一致的组被整组丢掉**,
-> 所以在他们的配方下这个问题根本不出现。对我们则是两难:
-> 照搬 filter,会在 `G=5` 上丢掉 **53%–76%** 的 prompt(叠在已有的 8× 吞吐赤字上);
-> 不 filter,则是**对论文配方的一处主动偏离,必须自己论证**。
-> **这条从「我们的一个优势」降级为「一个必须做且必须论证的设计决定」,归入判据 (iii)。**
+> **⚠ Correction 2026-09-01 (after going back to the PDF).** The statement above, "GFlowRL still produces gradient on degenerate groups, GRPO does not",
+> **still holds mathematically** (Eq. 8 is a per-trajectory squared residual, not a within-group contrast),
+> **but it is not a property of "GFlowRL's published configuration"**: the rollout settings in the paper's Table 9 say
+> `Filter groups: Accuracy-based` — **groups with identical rewards are dropped whole**,
+> so under their recipe the problem never comes up. For us it is a dilemma:
+> copying the filter would drop **53%–76%** of prompts at `G=5` (on top of the existing 8× throughput deficit);
+> not filtering is **an active deviation from the paper's recipe, which we have to justify ourselves**.
+> **This is downgraded from "one of our advantages" to "a design decision that must be made and must be justified", and goes under criterion (iii).**
 
-### 3.3 复算
+### 3.3 Recompute
 
     cd p6/passk && python3 - <<'PY'
     import json, statistics as st
@@ -261,171 +261,171 @@ P6 §7 那句「最优策略本来就是一条确定性规则」,**恰恰把分�
 
 ---
 
-## 4. B 与 C 的处置
+## 4. Disposition of B and C
 
-### 4.1 C(全量同起点对比):排除,理由比交接文档更硬
+### 4.1 C (full same-starting-point comparison): excluded, for harder reasons than the handoff document gives
 
-可动份额上界 **33/2001 = 1.65 pp**(文档口径)或 **44/2001 = 2.20 pp**(§2.1 修正口径),
-**且是全部吃掉、一个不漏**的上界。而单次运行的散布:
+The upper bound on the movable share is **33/2001 = 1.65 pp** (handoff definition) or **44/2001 = 2.20 pp** (§2.1 corrected definition),
+**and that is an upper bound for eating all of it, missing none**. Meanwhile the spread of a single run:
 
-    robospatial VQA 四次 161 / 167 / 168 / 169   =  8 个样本 = 3.5 pp
-    聚合到 2001 个样本                            ≈  0.5–0.8 pp
+    robospatial VQA four runs 161 / 167 / 168 / 169   =  8 samples = 3.5 pp
+    aggregated to 2001 samples                       ≈  0.5–0.8 pp
 
-> **⚠ 2026-09-02 · 一处更正(实查 HuggingFace,不是转述)。**
-> 「没有 SFT checkpoint」**成立**:`siyich` 名下只有 2 个 model 仓库,
-> `spacetools-ckpt` 只有 `main` 一个分支、无 tag、只有一套权重,
-> README 标 `base_model: Qwen/Qwen2.5-VL-3B-Instruct` + `reinforcement-learning`,
-> 即 RL 之后那个;全站搜 `spacetools` 也只有它。
+> **⚠ 2026-09-02 · One correction (checked on HuggingFace directly, not second-hand).**
+> "No SFT checkpoint" **holds**: there are only 2 model repos under `siyich`,
+> `spacetools-ckpt` has only one branch `main`, no tags, only one set of weights,
+> its README marks `base_model: Qwen/Qwen2.5-VL-3B-Instruct` + `reinforcement-learning`,
+> i.e. the post-RL one; searching the whole site for `spacetools` finds only that.
 >
-> **但「重跑 SFT」的门槛此前被高估了:SFT 的数据是公开的。**
-> `siyich/spacetools-sft`(**7463 文件 / 6.32 GB**,`data/train.json` + images)
-> 从未在任何记录里出现过。另有 `siyich/spacetools-rlpointtools`(4 文件 / 1.00 GB)同样没被提过。
-> 加上 `ChicyChen/SpaceTools-SFT` 代码 Apache 2.0(commit `b7ebbf32`),
-> **重跑 Step 3 的卡点是算力,不是资料。**
+> **But the bar for "rerun SFT" was previously overestimated: the SFT data is public.**
+> `siyich/spacetools-sft` (**7463 files / 6.32 GB**, `data/train.json` + images)
+> never appeared in any record. Likewise `siyich/spacetools-rlpointtools` (4 files / 1.00 GB) was never mentioned.
+> Add `ChicyChen/SpaceTools-SFT`, code Apache 2.0 (commit `b7ebbf32`):
+> **the blocker for rerunning Step 3 is compute, not materials.**
 >
-> **这不改变 C 被排除的结论** —— 那条基于可动份额 1.65–2.20 pp 与噪声同量级、
-> 以及四卡机 8× 吞吐赤字。但「还得先自己重跑 SFT 才有同起点」这句话的分量降一档:
-> 那是一次可执行的训练,不是一次需要先解决数据问题的探险。
+> **This does not change the conclusion that C is excluded** — that rests on the movable share of 1.65–2.20 pp being the same order as noise,
+> and on the 4-GPU machine's 8× throughput deficit. But the weight of "we would also have to rerun SFT ourselves to get the same starting point" drops a notch:
+> it is an executable training run, not an expedition that first has to solve a data problem.
 
-**期望效应与噪声同量级。** 要有分辨率就得逐样本配对 + **两侧各多个 seed**
-(§3.3 第 3 条的直接要求),两臂 × 多 seed × 3–4 天,还得先自己重跑 SFT 才有同起点。
+**The expected effect is the same order of magnitude as the noise.** Resolution would require per-sample pairing + **multiple seeds on both sides**
+(a direct requirement of item 3 in §3.3), both arms × multiple seeds × 3–4 days, and we would first have to rerun SFT ourselves to get the same starting point.
 
-> **C 不是不值得,是要到那个分辨率的代价不可承担。**
+> **It is not that C is not worth it; the cost of reaching that resolution is unaffordable.**
 
-### 4.2 B:同意放到 A 下游,但靶子要换
+### 4.2 B: agree to put it downstream of A, but change the target
 
-交接文档写的是「补上 `robospatial` 那 14 个样本」。P6 §6.4 已经把那 14 个拆开了:
+The handoff document says "recover those 14 samples in `robospatial`". P6 §6.4 has already broken those 14 down:
 
-- **`fit` 105 道是工具集缺口** —— 没有任何工具返回自由空间范围,`no` 类正确率 **4/18 = 22%**。
-  **换任何目标函数都动不了:模型缺的是信息,不是分布。**
-- **`front/behind` 29 道**是干净的 2a,已知有效的替代链存在,上界明确(**+8 个样本**)。
+- **The 105 `fit` questions are a tool-set gap** — no tool returns a free-space extent, and accuracy on the `no` class is **4/18 = 22%**.
+  **No objective swap can move it: what the model lacks is information, not distribution.**
+- **The 29 `front/behind` questions** are clean 2a: a known valid alternative chain exists, and the upper bound is clear (**+8 samples**).
 
-**所以 B 应当改写为:「分布匹配会不会让 `depth_estimator` 在这 29 道题上被调回来?」**
+**So B should be rewritten as: "Will distribution matching get `depth_estimator` called again on these 29 questions?"**
 
 ---
 
-## 5. 已核对:Eq. 4 与 Eq. 6 的长度归一化(2026-09-01,回 `2607.13394v1.pdf` 原文)
+## 5. Verified: length normalization in Eq. 4 and Eq. 6 (2026-09-01, back to the original `2607.13394v1.pdf`)
 
-**笔记没有转述错 —— 这个不对称是论文原样,而且它比「一处笔误」重要得多。**
+**The notes did not misreport it — this asymmetry is in the paper as is, and it matters much more than "a typo".**
 
-    Eq. 4   Z_t(x) := (1/G) Σ_i ( β·r + log π_ref(y_i|x) − log π_old(y_i|x) )       无 1/|y|
-    Eq. 5   Δ_i    = sg[Z_t] + (1/|y_i|)·log( π_θ(y_i|x)   / π_ref(y_i|x) ) − β·r    有 1/|y|
-    Eq. 6   g_i    = sg[Z_t] + (1/|y_i|)·log( π_old(y_i|x) / π_ref(y_i|x) ) − β·r    有 1/|y|
+    Eq. 4   Z_t(x) := (1/G) Σ_i ( β·r + log π_ref(y_i|x) − log π_old(y_i|x) )       no 1/|y|
+    Eq. 5   Δ_i    = sg[Z_t] + (1/|y_i|)·log( π_θ(y_i|x)   / π_ref(y_i|x) ) − β·r    has 1/|y|
+    Eq. 6   g_i    = sg[Z_t] + (1/|y_i|)·log( π_old(y_i|x) / π_ref(y_i|x) ) − β·r    has 1/|y|
     Eq. 8   L      = (1/G) Σ_i w_i · ( g̃_i + (1/|y_i|)·log( π_θ / π_old ) )²
 
-Appendix B 的 Eq. 10(`Z_t` 的总体形式)同样**没有**长度归一化,可确认不是排版问题。
-**Prop. B.1 是在「不做长度归一化」的前提下证的**;长度归一化的后果被单独放进 Remark B.4。
+Appendix B's Eq. 10 (the population form of `Z_t`) likewise has **no** length normalization, confirming this is not a typesetting issue.
+**Prop. B.1 is proved under the premise of "no length normalization"**; the consequences of length normalization are put separately in Remark B.4.
 
-### 5.1 Remark B.4 的原文,比笔记里那句「轻微偏差」严重
+### 5.1 The original text of Remark B.4 is more serious than the "slight bias" in the notes
 
-论文自己把长度归一化之后的不动点写了出来:
+The paper itself writes out the fixed point after length normalization:
 
     π_θ*(y|x) = π_ref(y|x) · exp( |y| · ( β·r(x,y) − Z_t(x) ) )
 
-**有效逆温度是 `|y|·β`,不是 `β`。** 原文:「in the idealized setting where all rollouts share
+**The effective inverse temperature is `|y|·β`, not `β`.** Original text: "in the idealized setting where all rollouts share
 a common length |y| = L, the fixed point recovers the reward-tilted distribution at inverse
-temperature **Lβ**; equivalently, Proposition B.1 applies with **β ↦ Lβ**.」
-长度不一致时 `exp(−|y|·Z_t)` **不再是跨序列的公共归一化常数**,不动点被长度扭曲。
+temperature **Lβ**; equivalently, Proposition B.1 applies with **β ↦ Lβ**."
+When lengths differ, `exp(−|y|·Z_t)` **is no longer a normalizing constant shared across sequences**, and the fixed point is distorted by length.
 
-**两条直接后果:**
+**Two direct consequences:**
 
-1. ~~**交接文档 §2④「β 从论文默认的 8 起步」是欠定的。可迁移的量是 `L·β`。**~~
-   **⚠ 2026-09-01 已收回,见 `records/P7_STEP23_RESULTS.md` §2.3。**
-   数值检验显示:`c = L` 那个形式只在**把 `Z_t` 当自由常数**时才是零点;
-   一旦要求 `Z_t` 按 Eq. 4 自洽,极小点落在 **`c ≈ 0.93–1.15`,不是 `c = L`**。
-   **tilt 不随 `L` 膨胀,这条后果作废。**
-   **结论「β 不该直接取 8」仍然成立,但换了理由**:二值奖励 + `G=5` 时
-   flow gap 对**非简并 rollout 100% 被 clip 饱和**,要不饱和需要 `β ≲ 1.4`。
-   (这条当初是从论文一句话推出来、没跑过任何数就写进文档的。推翻它花了三十行代码。)
-   顺带按 §3.3 的纪律读一眼论文自己:β ∈ {1,5,8,10,15} 的 37.9 / 37.2 / 38.2 / 37.7 / 36.4
-   **每个 β 只有一个数** —— 「[1,10] 内不敏感」这个说法本身也是单点。
+1. ~~**Handoff document §2④ "start β at the paper's default of 8" is underdetermined. The transferable quantity is `L·β`.**~~
+   **⚠ 2026-09-01 withdrawn, see `records/P7_STEP23_RESULTS.md` §2.3.**
+   The numerical test shows: the `c = L` form is a zero only **when `Z_t` is treated as a free constant**;
+   once `Z_t` is required to be self-consistent per Eq. 4, the minimum falls at **`c ≈ 0.93–1.15`, not `c = L`**.
+   **The tilt does not inflate with `L`; this consequence is void.**
+   **The conclusion "β should not be taken directly as 8" still holds, but for a different reason**: with binary reward + `G=5`,
+   the flow gap is **100% clip-saturated for non-degenerate rollouts**; avoiding saturation needs `β ≲ 1.4`.
+   (This was inferred from one sentence of the paper and written into the document without running any numbers. Overturning it took thirty lines of code.)
+   In passing, reading the paper itself with the §3.3 discipline: the 37.9 / 37.2 / 38.2 / 37.7 / 36.4 for β ∈ {1,5,8,10,15}
+   **are one number per β** — the claim "insensitive within [1,10]" is itself a single point.
 
-2. **一个新的实现陷阱,与交接文档 §2① 不是同一处。**
-   `|y_i|` 必须是**策略生成的 token 数**(即 `response_mask` 的和),**不能是原始 response 长度**。
-   多轮轨迹的 response 里含 `<tool_response>`,单次上限 `max_tool_response_length = 2048`,
-   一个样本可有 4–5 次调用。
-   **若按原始长度归一化,有效温度 `L·β` 就由工具输出的啰嗦程度决定,而不是由推理长度决定。**
-   §2① 说的是 `log π` 的**分子**要 mask,这一条说的是**分母也要 mask**;
-   两处用同一个 `response_mask`,但漏掉任何一处的症状完全不同 ——
-   前者算错概率,后者悄悄改掉目标分布的温度。
-   **2026-09-01 已量化**(`P7_STEP23_RESULTS.md` §1.2):原始/assistant 长度倍数
-   `robospatial` **1.14×** · `blinkdepth` **1.41×** · `boppose` **2.40×** ——
-   **而且按 benchmark 系统性不同**,等于给不同任务施加了由工具啰嗦程度决定的不同温度。
+2. **A new implementation trap, not the same place as handoff document §2①.**
+   `|y_i|` must be **the number of tokens generated by the policy** (i.e. the sum of `response_mask`), **not the raw response length**.
+   The response of a multi-turn trajectory contains `<tool_response>`, each capped at `max_tool_response_length = 2048`,
+   and one sample can have 4–5 calls.
+   **If normalized by raw length, the effective temperature `L·β` is set by how verbose the tool output is, not by reasoning length.**
+   §2① says the **numerator** of `log π` must be masked; this one says **the denominator must be masked too**;
+   both use the same `response_mask`, but missing either one gives completely different symptoms —
+   the former computes the wrong probability, the latter silently changes the temperature of the target distribution.
+   **Quantified on 2026-09-01** (`P7_STEP23_RESULTS.md` §1.2): raw/assistant length ratio
+   `robospatial` **1.14×** · `blinkdepth` **1.41×** · `boppose` **2.40×** —
+   **and it differs systematically by benchmark**, which amounts to imposing on different tasks different temperatures set by tool verbosity.
 
-### 5.2 顺带核到的两条,都直接压在判据 (i) 上
+### 5.2 Two more things checked in passing, both bearing directly on criterion (i)
 
-- **`G = 16`(论文 Table 9),而我们是 `rollout.n = 5`。**
-  Remark B.2 写明估计量方差是 **O(1/G)**;Appendix A 的局限第一句就是
-  「in-batch MC estimate of log Z can have higher variance in principle,
-  **especially when the group size is small**」。
-  **16 → 5 是 3.2× 的方差,我们正好站在方差最不利的一侧。** 这就是判据 (i) 要量的东西。
-- **Appendix A 第二句局限逐字确认了 A′ 的空位**:「it remains unclear whether the same
-  estimator-centric design principle extends to broader **agentic or multimodal RL** settings」。
+- **`G = 16` (paper Table 9), while we have `rollout.n = 5`.**
+  Remark B.2 states the estimator variance is **O(1/G)**; the first sentence of the limitations in Appendix A is
+  "in-batch MC estimate of log Z can have higher variance in principle,
+  **especially when the group size is small**".
+  **16 → 5 is 3.2× the variance; we are standing right on the side least favorable for variance.** This is exactly what criterion (i) has to measure.
+- **The second limitation sentence in Appendix A confirms A′'s gap verbatim**: "it remains unclear whether the same
+  estimator-centric design principle extends to broader **agentic or multimodal RL** settings".
 
-### 5.3 其余已抄录的超参(论文 Table 9,供实现时对齐)
+### 5.3 The remaining hyperparameters transcribed (paper Table 9, for alignment during implementation)
 
     G = 16 · T = 1.0 · top-p = 1.0 · lr 1e-6 · AdamW · warmup 10 · weight decay 0.1
     grad clip 1.0 · KL 0.0 · entropy 0.0 · loss aggregation token-mean
-    ε_low 0.2 / ε_high 0.28(非对称 flow-gap clipping)
-    importance sampling 序列级 · IS 阈值 2.0 · ratio scaling 几何 · RS 阈值 1.01 / 0.99
-    Filter groups: Accuracy-based        <- 见 §3.2 的修正
+    ε_low 0.2 / ε_high 0.28 (asymmetric flow-gap clipping)
+    importance sampling sequence-level · IS threshold 2.0 · ratio scaling geometric · RS threshold 1.01 / 0.99
+    Filter groups: Accuracy-based        <- see the correction in §3.2
 
-    去掉 flow-gap clipping 的消融:平均分 40.92 -> 37.02;梯度范数均值 0.095 -> 0.601(6.3×)、
-    最大 6.184 -> 16.57。**clipping 不是可选项。**
+    Ablation removing flow-gap clipping: average score 40.92 -> 37.02; gradient norm mean 0.095 -> 0.601 (6.3×),
+    max 6.184 -> 16.57. **Clipping is not optional.**
 
 ---
 
-## 6. 下一步的顺序(替换交接文档 §5)
+## 6. Order of next steps (replaces handoff document §5)
 
-交接文档 §5 的顺序是 loss → mask → 梯度范数。**A′ 下应改为:**
+The order in handoff document §5 is loss → mask → gradient norm. **Under A′ it should become:**
 
-1. ~~**核对 §5 的 Eq. 4 / Eq. 6**(回 PDF,零成本)~~ —— **2026-09-01 已完成,见 §5。**
-   产出三条:β 不可直接迁(要迁 `L·β`)、`|y_i|` 必须用 `response_mask` 的和、`G=16→5` 是 3.2× 方差
-2. ~~**在 `p6/passk` 上把 `Z_t` 的三项拆开量**~~ —— **2026-09-01 已完成,见 `records/P7_STEP23_RESULTS.md` §1。**
-   `tools/p7/p7_zt_offline.py`。剩 `log π_ref` / `log π_old` 需要一次
-   **前向、不接工具、不起 sglang 池**的 pass,**比训练小得多的 GPU 请求,单独排期**
-3. ~~**合成不动点检验**~~ —— **2026-09-01 已完成,全部 PASS,见 §2。**
-   `tools/p7/p7_fixedpoint.py`(T1–T6)。**它已把「loss 写得对不对」从 P7 的问题里摘出去**
-3b. ~~**判据 i-b 的合成一半**~~ —— **2026-09-01 已完成,见 `records/P7_CRITERION_IB.md`。**
-   `tools/p7/p7_estimators.py`。**头条**:`Eq.4` 未归一化 / `Eq.5-6` 已归一化,使漂移在组内
-   成为**公共平移**,超过 clip 半宽就把整组 `g̃` 削成同值 —— **奖励贡献被抹掉**,
-   阈值仅 **≈5e-4 nat/token**。**待办**:用 `p7_fixedpoint.py` 测 §6 那条修法的不动点代价
-4. ~~**接 `response_mask`**~~ —— **2026-09-01 已完成,见 `records/P7_STEP4_RESULTS.md`。**
-   `|y_i| = response_mask.sum()`,已从 verl 源码逐行确认。**两条新发现:**
-   (a) `response_mask` 这个名字有**两种相反语义** —— agent loop 给的是「策略 token」,
-   `ray_trainer.py:157` 的 fallback `compute_response_mask()` 是 `attention_mask[:,-L:]`,
-   **工具 token 全是 1**,且 fallback 是**静默**的 -> 必须加运行时守卫(§2 给了写法);
-   (b) 见下面第 5 步的新增前置
-5. **第二组独立的 5 次采样** —— 同时是判据 (i) 的前置条件与 §3.2 的复核。
-   **⚠ 2026-09-01 更正:「前向 pass 量漂移分布」这个目标不成立。**
-   P4/P6 的数据里**没有训练发生过**,`π_old = π_ref = 同一个 ckpt`,
-   所以 `log π_ref − log π_old` 在这些数据上**恒等于 0**,跑多少次前向都是 0。
-   **改成量 rollout(sglang)与 trainer(FSDP)之间的 logprob 差** ——
-   那正是 GFlowRL 的 IS 权重 `w_i` 设立的理由(论文引 Yao et al. 2025),
-   **零训练下它也存在**,是漂移的第一个真实代理。
-   好消息:`calculate_log_probs` **一个开关同时管两边**,
-   所以前向 pass **并进采样那一趟**,不需要单独开机。
-   GPU 侧的完整任务书见 **`records/P7_GPU_HANDOFF.md`**。
-   **⚠ 新增前置依赖:开机之前必须先打 dump 补丁。**
-   `p4/dumps/` 与 `p6/passk/` 只存文本,没有 token id 与 mask,
-   所以对已记录轨迹做前向就得**从文本重推 mask** —— 正是 §2① 禁止的事。
-   按 `patches/rl/0008` 的形状,在 `_dump_generations()` 里多写
-   `response_mask_rle`(游程编码)与 `n_policy_tokens`。
-   **先打补丁再跑,否则跑完要重跑。**
-6. 以上都过了,再谈上 GPU 与下 3.38 GB 训练数据
+1. ~~**Verify Eq. 4 / Eq. 6 in §5** (back to the PDF, zero cost)~~ — **completed 2026-09-01, see §5.**
+   Three outputs: β cannot be transferred directly (transfer `L·β`), `|y_i|` must use the sum of `response_mask`, `G=16→5` is 3.2× the variance
+2. ~~**Measure the three terms of `Z_t` separately on `p6/passk`**~~ — **completed 2026-09-01, see `records/P7_STEP23_RESULTS.md` §1.**
+   `tools/p7/p7_zt_offline.py`. What remains, `log π_ref` / `log π_old`, needs one
+   **forward pass, no tools attached, no sglang pool started** — **a much smaller GPU request than training, scheduled separately**
+3. ~~**Synthetic fixed-point test**~~ — **completed 2026-09-01, all PASS, see §2.**
+   `tools/p7/p7_fixedpoint.py` (T1–T6). **It has already taken "is the loss written correctly" out of P7's question**
+3b. ~~**Synthetic half of criterion i-b**~~ — **completed 2026-09-01, see `records/P7_CRITERION_IB.md`.**
+   `tools/p7/p7_estimators.py`. **Headline**: `Eq.4` unnormalized / `Eq.5-6` normalized makes the drift a
+   **common shift** within the group; beyond the clip half-width it clips the whole group's `g̃` to the same value — **the reward contribution is erased**,
+   with a threshold of only **≈5e-4 nat/token**. **To do**: use `p7_fixedpoint.py` to measure the fixed-point cost of the §6 fix
+4. ~~**Wire up `response_mask`**~~ — **completed 2026-09-01, see `records/P7_STEP4_RESULTS.md`.**
+   `|y_i| = response_mask.sum()`, confirmed line by line from the verl source. **Two new findings:**
+   (a) the name `response_mask` has **two opposite semantics** — the agent loop gives "policy tokens",
+   while the fallback `compute_response_mask()` at `ray_trainer.py:157` is `attention_mask[:,-L:]`,
+   **tool tokens are all 1**, and the fallback is **silent** -> a runtime guard must be added (§2 gives how to write it);
+   (b) see the new precondition under step 5 below
+5. **A second independent set of 5 samples** — simultaneously the precondition for criterion (i) and the re-check of §3.2.
+   **⚠ Correction 2026-09-01: the goal "measure the drift distribution with a forward pass" does not hold.**
+   **No training ever happened** in the P4/P6 data, `π_old = π_ref = the same ckpt`,
+   so `log π_ref − log π_old` is **identically 0** on this data, however many forward passes are run.
+   **Change it to measuring the logprob difference between rollout (sglang) and trainer (FSDP)** —
+   which is exactly the reason GFlowRL's IS weight `w_i` exists (the paper cites Yao et al. 2025);
+   **it exists even with zero training**, and is the first real proxy for drift.
+   Good news: `calculate_log_probs` is **one switch that controls both sides**,
+   so the forward pass is **merged into the sampling run**, no separate GPU session needed.
+   The full GPU-side task spec is in **`records/P7_GPU_HANDOFF.md`**.
+   **⚠ New precondition: the dump patch must be applied before the GPU session.**
+   `p4/dumps/` and `p6/passk/` store text only, without token ids or masks,
+   so a forward pass over recorded trajectories would have to **re-derive the mask from text** — exactly what §2① forbids.
+   Following the shape of `patches/rl/0008`, additionally write
+   `response_mask_rle` (run-length encoded) and `n_policy_tokens` in `_dump_generations()`.
+   **Apply the patch before running, otherwise it has to be rerun after.**
+6. Only after all of the above pass, talk about getting on GPUs and downloading the 3.38 GB of training data
 
-> **2026-09-01 · 落地成本已下修,但多一条风险**(依据 `records/P7_PRIOR_ART.md`):
-> · **不需要改 `fsdp_workers.py` 与 `fsdp_vllm.py`** —— FlowRL 改那两个文件只为安置和分片
->   `ProjZModule`,而 GFlowRL 删掉的恰好是它。**我们的改动比 FlowRL 更小。**
-> · 我们的 fork(`SpaceTools-RL @ f0742338`,verl 0.8.0.dev)里 **`register_policy_loss`
->   与 `ref_log_prob` 都已就位**,最小路径约十行:`use_kl_loss=True` + `kl_loss_coef=0`
->   白拿 ref logprob;`select_keys` 加 `token_level_scores`(`advantages` 是组内归一化过的,
->   GFlowRL 要原始 `r`);注册 `"gflowrl"`;在 `dp_actor.py:615` 的调用点多传两个量。
-> · ⚠ **FlowRL 的复现路径是 verl 0.4.0,我们是 0.8.0.dev —— 模式可迁,API 不一定。**
->   **不要假设可以照抄。**
-> · 已注册的 `bypass_mode`(`core_algos.py:2236`)已有 IS 权重与 rejection mask 的处理,
->   与 GFlowRL 的 `w_i = min(π_θ/π_old, 1+ε)` 同类,**自己写之前先读一遍**。
+> **2026-09-01 · Landing cost revised down, but one more risk** (based on `records/P7_PRIOR_ART.md`):
+> · **No need to modify `fsdp_workers.py` and `fsdp_vllm.py`** — FlowRL modifies those two files only to place and shard
+>   `ProjZModule`, and that is exactly what GFlowRL deletes. **Our change is smaller than FlowRL's.**
+> · In our fork (`SpaceTools-RL @ f0742338`, verl 0.8.0.dev) **`register_policy_loss`
+>   and `ref_log_prob` are both already in place**; the minimal path is about ten lines: `use_kl_loss=True` + `kl_loss_coef=0`
+>   gets ref logprob for free; add `token_level_scores` to `select_keys` (`advantages` is group-normalized,
+>   GFlowRL needs raw `r`); register `"gflowrl"`; pass two more quantities at the call site at `dp_actor.py:615`.
+> · ⚠ **FlowRL's reproduction path is verl 0.4.0, ours is 0.8.0.dev — the pattern transfers, the API may not.**
+>   **Do not assume it can be copied as is.**
+> · The already registered `bypass_mode` (`core_algos.py:2236`) already handles IS weights and the rejection mask,
+>   the same kind of thing as GFlowRL's `w_i = min(π_θ/π_old, 1+ε)`; **read it once before writing our own**.
 
-**仍然适用的禁止项**:见 `P7_HANDOFF.md` §4,以及
-`model_dtype=bf16` 绝不可带进训练(偏离 `[20]`)、
-任何引自 80 GB 运行的数字必须注明 `gmu`(偏离 `[23]`)。
+**Prohibitions that still apply**: see `P7_HANDOFF.md` §4, and
+`model_dtype=bf16` must never be carried into training (deviation `[20]`),
+and any number quoted from an 80 GB run must state `gmu` (deviation `[23]`).

@@ -1,14 +1,14 @@
 #!/bin/bash
-# P7 · 第二组 5 次采样 (passk2).  一个 benchmark 一次调用。
+# P7 · second set of 5 samples (passk2).  One call per benchmark.
 #   usage: bash tools/p7/p7_passk2_run.sh <benchmark> <run>
 #
-# 与第一组 (p6/passk/, 80 GB @ gmu=0.25) 的可比性靠 KV 池大小对齐:
-#   80 GB x 0.25 = 20 GB      <- 第一组
-#   40 GB x 0.50 = 20 GB      <- 本机, run_eval.sh 的原值, 不要改
-# 见偏离 [23]。照抄第一组日志里的 0.25 会得到 10 GB 池, 两组不可比。
+# Comparability with the first set (p6/passk/, 80 GB @ gmu=0.25) relies on matching the KV pool size:
+#   80 GB x 0.25 = 20 GB      <- first set
+#   40 GB x 0.50 = 20 GB      <- this machine, run_eval.sh's original value, do not change
+# See deviation [23]. Copying the 0.25 from the first set's logs gives a 10 GB pool, and the two sets are not comparable.
 #
-# 与 run_eval.sh 的差异只有 run_eval_passk2.sh 里那 7 行 (采样 4 行 + rollout.n
-# + calculate_log_probs + dump_token_diagnostics)。
+# The only difference from run_eval.sh is those 7 lines in run_eval_passk2.sh (4 sampling lines + rollout.n
+# + calculate_log_probs + dump_token_diagnostics).
 set -eo pipefail
 # A crashed sglang worker (31 GiB RSS) wrote a 50 GB core into
 # /var/lib/vastai_kaalia/data/ and filled the 50 GB CONTAINER disk mid-run.

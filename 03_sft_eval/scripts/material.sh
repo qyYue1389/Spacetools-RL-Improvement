@@ -18,7 +18,7 @@ def ans(r):
     m = ANS.search(r.get("output") or "")
     return (m.group(1).strip() if m else "")
 
-print("### VQA 混淆矩阵(gt × 预测)")
+print("### VQA confusion matrix (gt × prediction)")
 cm = collections.Counter()
 for r in RS:
     if vac(r): continue
@@ -29,22 +29,22 @@ for r in RS:
     cm[(gt, pd)] += 1
 tot_gt = collections.Counter()
 for (g, p), n in cm.items(): tot_gt[g] += n
-print("        pred_no  pred_yes   |  行准确率")
+print("        pred_no  pred_yes   |  row accuracy")
 for g in ("no", "yes"):
     n_no, n_yes = cm[(g, "no")], cm[(g, "yes")]
     right = n_no if g == "no" else n_yes
     print("  gt_%-4s %6d %8d   |  %5.2f%%  (n=%d)" % (g, n_no, n_yes, 100*right/max(tot_gt[g],1), tot_gt[g]))
-print("  预测分布  yes=%d no=%d   真值分布  yes=%d no=%d" % (
+print("  prediction distribution  yes=%d no=%d   ground-truth distribution  yes=%d no=%d" % (
     cm[("yes","yes")]+cm[("no","yes")], cm[("yes","no")]+cm[("no","no")],
     tot_gt["yes"], tot_gt["no"]))
 
 print()
-print("### 每样本工具调用次数分布")
+print("### Per-sample tool-call count distribution")
 for b in ["robospatial","reflocation","refplacement","refunseen"]:
     rows = load(f"/workspace/eval_out/{b}/0.jsonl")
     c = collections.Counter((r.get("output") or "").count("<tool_call>") for r in rows)
     tot = sum(k*v for k,v in c.items())
-    print("  %-13s %s   平均 %.3f 次/样本" % (b, dict(sorted(c.items())), tot/len(rows)))
+    print("  %-13s %s   mean %.3f calls/sample" % (b, dict(sorted(c.items())), tot/len(rows)))
 
 def dump(tag, r, limit=1500):
     print()
@@ -56,20 +56,20 @@ def dump(tag, r, limit=1500):
     print(o[:limit])
 
 print()
-print("### 代表性轨迹")
+print("### Representative trajectories")
 RL_ = load("/workspace/eval_out/reflocation/0.jsonl")
-dump("RefSpatial-Location 答对(单工具单轮)", RL_[0])
+dump("RefSpatial-Location correct (single tool, single turn)", RL_[0])
 for r in RS:
     if not vac(r) and (r.get("acc") or 0) >= 1 and (r.get("output") or "").count("<tool_call>") == 2:
-        dump("RoboSpatial-VQA 答对(两次 roborefer)", r); break
+        dump("RoboSpatial-VQA correct (two roborefer calls)", r); break
 for r in RS:
     if not vac(r) and (r.get("acc") or 0) < 1:
-        dump("RoboSpatial-VQA 答错", r); break
+        dump("RoboSpatial-VQA wrong", r); break
 for r in RS:
     if vac(r) and (r.get("acc") or 0) < 1:
-        dump("RoboSpatial-Vacant 答错", r); break
+        dump("RoboSpatial-Vacant wrong", r); break
 for r in RS:
     if (r.get("output") or "").count("<tool_call>") >= 5:
-        dump("RoboSpatial 最长链(5 次调用,跨三个 conda 环境)", r, 2000); break
+        dump("RoboSpatial longest chain (5 calls, across three conda environments)", r, 2000); break
 PY
 echo "=== DONE $(date -Is)"

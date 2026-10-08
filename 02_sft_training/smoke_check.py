@@ -1,47 +1,47 @@
 #!/usr/bin/env python3
 # =============================================================================
-# smoke_check.py —— SFT ckpt 的两个便宜检查。不需要起工具栈。
+# smoke_check.py — two cheap checks on an SFT ckpt. No need to bring up the tool stack.
 #
-#   ① 格式冒烟:ckpt 生成的东西是否长成训练数据里 assistant 的样子
-#      (合法的 tool call / <answer> 标签 / 工具名在这 11 个 schema 里)
-#   ② 对照 base:同样的 prompt 喂 Qwen2.5-VL-3B-Instruct
+#   ① format smoke test: does what the ckpt generates look like the assistant turns in the training data
+#      (valid tool call / <answer> tag / tool name among these 11 schemas)
+#   ② compare against base: feed the same prompts to Qwen2.5-VL-3B-Instruct
 #
-# ⚠️ 这**不是**能力度量。样本取自训练集,只能判断"SFT 有没有生效",
-#    不能判断"效果好不好"。真实分数只有 SpaceTools-RL 的 run_eval.sh 能给。
+# ⚠️ This is **not** a capability measure. Samples come from the training set, so it can only tell "whether SFT took effect",
+#    not "whether the result is good". Only SpaceTools-RL's run_eval.sh can give the real score.
 #
-# 它抓的是这一类静默失败:loss 曲线完全正常,但模型根本没学会发工具调用。
+# What it catches is this class of silent failure: the loss curve is perfectly normal, but the model never learned to emit tool calls.
 #
-#   python smoke_check.py <ckpt目录> <train.json> [--n 12] [--base <模型>] [--no-base]
+#   python smoke_check.py <ckpt dir> <train.json> [--n 12] [--base <model>] [--no-base]
 # =============================================================================
 import argparse, json, os, random, re, sys
 
 MARKERS = {
-    "<think> 标签":   re.compile(r"<think>"),
-    "</think> 闭合":  re.compile(r"</think>"),
-    "tool_call 标签": re.compile(r"<tool_call>"),
-    '"name" 字段':   re.compile(r'"name"\s*:'),
-    "<answer> 标签":  re.compile(r"<answer>"),
+    "<think> tag":   re.compile(r"<think>"),
+    "</think> closed":  re.compile(r"</think>"),
+    "tool_call tag": re.compile(r"<tool_call>"),
+    '"name" field':   re.compile(r'"name"\s*:'),
+    "<answer> tag":  re.compile(r"<answer>"),
 }
 
-# 与 base 对照时用哪个标记最有判别力。<think> 在第一个 assistant 轮里真值 100%,
-# 而 base(未见过这个格式)几乎不会自发产出 —— 差距是「近 0% vs 近 100%」。
-# 用「JSON 合法」做对照则很脆:base 是 instruct 模型且 system prompt 里给全了
-# 11 个 schema,它本来就可能产出结构合法的 JSON,差值容易落在阈值附近而误判。
-DISCRIMINATIVE = "<think> 标签"
+# Which marker discriminates best when comparing against base. <think> is 100% in the ground truth of the first assistant turn,
+# while base (never saw this format) almost never produces it spontaneously — the gap is "near 0% vs near 100%".
+# Using "JSON valid" for the comparison is fragile: base is an instruct model and the system prompt gives all
+# 11 schemas, so it may well produce structurally valid JSON anyway; the difference easily lands near the threshold and gets misjudged.
+DISCRIMINATIVE = "<think> tag"
 
 
 def census(texts, label):
-    """先看真值长什么样 —— 不要硬编码格式,从数据里读出来。
+    """First look at what the ground truth looks like — do not hard-code the format, read it from the data.
 
-    ⚠️ 传进来的必须是**第一个 assistant 轮**,因为 smoke_check 只生成这一轮。
-    统计所有轮会得到完全不同的分布(实测:所有轮 tool_call 63.3% / answer 36.7%,
-    第一轮 tool_call 99.8% / answer 0.2%),据此定阈值会把 75% 的坏 ckpt 判成通过。
+    ⚠️ What is passed in must be the **first assistant turn**, because smoke_check only generates that turn.
+    Counting all turns gives a completely different distribution (measured: all turns tool_call 63.3% / answer 36.7%,
+    first turn tool_call 99.8% / answer 0.2%); setting the threshold from that would pass 75% of bad ckpts.
     """
     n = len(texts)
     if n == 0:
-        print(f"\n  ✗ {label}: 一条都没取到 —— conversations 的 schema 可能变了")
+        print(f"\n  ✗ {label}: got nothing at all — the conversations schema may have changed")
         return [], {}
-    print(f"\n  {label}({n} 条):")
+    print(f"\n  {label} ({n} entries):")
     present, rates = [], {}
     for name, rx in MARKERS.items():
         c = sum(1 for t in texts if rx.search(t))
@@ -53,10 +53,10 @@ def census(texts, label):
 
 
 def _objects(text):
-    """按花括号配对(且不被字符串里的括号骗到)扫出所有顶层 JSON 对象候选。
+    """Scan out all top-level JSON object candidates by matching braces (without being fooled by braces inside strings).
 
-    不能用正则 —— `{"name": "t", "arguments": {}}` 里非贪婪的 .*?\\} 会停在内层
-    的 } 上,切出不平衡的片段,把合法调用误判成非法。
+    Cannot use a regex — on `{"name": "t", "arguments": {}}` a non-greedy .*?\\} stops at the inner
+    }, cuts out an unbalanced fragment, and misjudges a valid call as invalid.
     """
     for i, ch in enumerate(text):
         if ch != "{":
@@ -79,10 +79,10 @@ def _objects(text):
 
 
 def check(text, allowed_tools):
-    """对单条生成做和真值同样的标记检查。"""
+    """Run the same marker checks on a single generation as on the ground truth."""
     r = {name: bool(rx.search(text)) for name, rx in MARKERS.items()}
-    r["JSON 合法"] = False
-    r["工具名合法"] = False
+    r["JSON valid"] = False
+    r["tool name valid"] = False
     m = re.search(r"<tool_call>\s*(\{.*)</tool_call>", text, re.S)
     cands = list(_objects(m.group(1))) if m else list(_objects(text))
     for c in cands:
@@ -92,26 +92,26 @@ def check(text, allowed_tools):
             continue
         if not isinstance(obj, dict) or "name" not in obj:
             continue
-        r["JSON 合法"] = True
+        r["JSON valid"] = True
         nm = obj.get("name")
-        r["工具名合法"] = nm in allowed_tools if allowed_tools else bool(nm)
+        r["tool name valid"] = nm in allowed_tools if allowed_tools else bool(nm)
         r["_tool"] = nm
         break
     return r
 
 
 def resolve_model(path):
-    """把 Hub id 解析成本地 snapshot —— 本机匿名 IP 已被 HF 限速,走 Hub 会失败。
+    """Resolve a Hub id to a local snapshot — this machine's anonymous IP is rate-limited by HF, going through the Hub will fail.
 
-    调用方(FINALIZE.sh 第 7 节)会显式传 Hub id,所以解析必须在这里做,
-    不能只改 argparse 的默认值。
+    The caller (FINALIZE.sh section 7) explicitly passes a Hub id, so the resolution must happen here,
+    not just by changing the argparse default.
     """
     import glob
     if os.path.isdir(path):
         return path
-    # ⚠️ 不能用 os.environ.setdefault("HF_HOME", ...) —— Vast 实例已经把 HF_HOME
-    # 设成 /workspace/.hf_home,setdefault 不会覆盖它,于是 glob 到空目录、
-    # 回落到 Hub 重下 7.1 GB。必须把训练实际用的 /workspace/hf 也纳入候选。
+    # ⚠️ Cannot use os.environ.setdefault("HF_HOME", ...) — the Vast instance already sets HF_HOME
+    # to /workspace/.hf_home, setdefault does not override it, so the glob hits an empty directory and
+    # falls back to re-downloading 7.1 GB from the Hub. The /workspace/hf actually used by training must be among the candidates too.
     roots = [r for r in (os.environ.get("HF_HOME"), "/workspace/hf",
                          os.path.expanduser("~/.cache/huggingface")) if r]
     sub = "models--" + path.replace("/", "--")
@@ -119,13 +119,13 @@ def resolve_model(path):
         cands = sorted(glob.glob(os.path.join(root, "hub", sub, "snapshots", "*")))
         cands = [c for c in cands if glob.glob(os.path.join(c, "*.safetensors"))]
         if cands:
-            print(f"  (用本地 snapshot 替代 Hub: {path} → {cands[-1]})")
+            print(f"  (using local snapshot instead of Hub: {path} → {cands[-1]})")
             return cands[-1]
     return path
 
 
 def build_msgs(item, sysprompt):
-    """取第一个 user 轮,连同它的图。"""
+    """Take the first user turn, together with its image."""
     user = None
     for c in item.get("conversations", []):
         if c.get("role") == "user":
@@ -145,7 +145,7 @@ def load_image(path, max_pixels=262144):
     from PIL import Image
     im = Image.open(path).convert("RGB")
     w, h = im.size
-    if w * h > max_pixels:                       # 与训练的 image_max_pixels 对齐
+    if w * h > max_pixels:                       # match the training image_max_pixels
         s = (max_pixels / (w * h)) ** 0.5
         im = im.resize((max(28, int(w * s)), max(28, int(h * s))))
     return im
@@ -154,7 +154,7 @@ def load_image(path, max_pixels=262144):
 def run_model(model_path, samples, sysprompt, max_new_tokens=256):
     import torch
     from transformers import AutoProcessor, AutoModelForImageTextToText
-    print(f"\n  加载 {model_path} ...", flush=True)
+    print(f"\n  loading {model_path} ...", flush=True)
     model_path = resolve_model(model_path)
     proc = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
     model = AutoModelForImageTextToText.from_pretrained(
@@ -184,7 +184,7 @@ def summarize(outs, allowed, label):
     res = [check(o, allowed) for o in outs]
     n = len(res)
     print(f"\n  === {label} ===")
-    keys = list(MARKERS) + ["JSON 合法", "工具名合法"]
+    keys = list(MARKERS) + ["JSON valid", "tool name valid"]
     rates = {}
     for k in keys:
         c = sum(1 for r in res if r.get(k))
@@ -193,10 +193,10 @@ def summarize(outs, allowed, label):
     tools = [r.get("_tool") for r in res if r.get("_tool")]
     if tools:
         from collections import Counter
-        print(f"    调用到的工具: {dict(Counter(tools))}")
+        print(f"    tools called: {dict(Counter(tools))}")
     empty = sum(1 for o in outs if not o.strip())
     if empty:
-        print(f"    ⚠ {empty} 条生成为空")
+        print(f"    ⚠ {empty} generations are empty")
     return rates
 
 
@@ -209,9 +209,9 @@ def main():
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
 
-    # ⚠️ 训练期间不能跑:本脚本要在 cuda:0 上加载 ckpt(3B bf16 ≈ 6.2 GiB)再加载 base,
-    # 而训练每卡已占 35–36 / 48 GiB。撞 OOM 会杀掉训练,而 save_only_model=true
-    # 意味着不能续训 —— 只能从头再来。
+    # ⚠️ Cannot run during training: this script loads the ckpt on cuda:0 (3B bf16 ≈ 6.2 GiB) and then base,
+    # while training already uses 35–36 / 48 GiB per GPU. Hitting OOM kills training, and save_only_model=true
+    # means training cannot be resumed — it can only start over.
     pidfile = os.environ.get("TRAIN_PIDFILE", "/workspace/experiments/train.pid")
     if os.path.exists(pidfile) and not os.environ.get("ALLOW_DURING_TRAINING"):
         try:
@@ -220,34 +220,34 @@ def main():
         except (ValueError, ProcessLookupError, PermissionError, OSError):
             pass
         else:
-            print(f"✗ 训练仍在运行(pid={pid},{pidfile})。本脚本会占显存,可能把训练撞 OOM。")
-            print("  等训练结束再跑。确实要现在跑就设 ALLOW_DURING_TRAINING=1。")
+            print(f"✗ training is still running (pid={pid}, {pidfile}). This script uses GPU memory and may push training into OOM.")
+            print("  Wait until training finishes. If you really must run now, set ALLOW_DURING_TRAINING=1.")
             sys.exit(2)
 
     data = json.load(open(a.train_json))
     sysprompt = data[0].get("system", "")
     allowed = set(re.findall(r'"name"\s*:\s*"([\w.]+)"', sysprompt))
-    print(f"数据 {len(data)} 条 · system prompt {len(sysprompt)} 字符 · "
-          f"工具 schema {len(allowed)} 个")
+    print(f"data {len(data)} entries · system prompt {len(sysprompt)} chars · "
+          f"tool schemas {len(allowed)}")
     if allowed:
         print(f"  {sorted(allowed)}")
 
-    # 先看真值:期望的格式从数据里读,不硬编码。
-    # 只取**第一个** assistant 轮 —— build_msgs 只喂第一个 user 轮,
-    # 模型生成的就是这一轮,拿多轮统计定阈值会系统性偏低。
+    # Look at the ground truth first: the expected format is read from the data, not hard-coded.
+    # Take only the **first** assistant turn — build_msgs only feeds the first user turn,
+    # so that turn is what the model generates; setting thresholds from multi-turn stats is systematically too low.
     gts = []
     for it in data:
         for c in it.get("conversations", []):
             if c.get("role") == "assistant":
                 gts.append(c.get("content", ""))
                 break
-    expected, gt = census(gts, "训练数据里【第一个 assistant 轮】的标记分布")
+    expected, gt = census(gts, "marker distribution of the [first assistant turn] in the training data")
     if not gt:
         sys.exit(1)
-    print(f"  → 期望 ckpt 的生成里出现: {expected}")
+    print(f"  → expected to appear in ckpt generations: {expected}")
 
     samples = random.Random(0).sample(data, min(a.n, len(data)))
-    print(f"\n抽 {len(samples)} 条(seed=0,greedy 解码)")
+    print(f"\nsampled {len(samples)} entries (seed=0, greedy decoding)")
 
     ck = run_model(a.ckpt, samples, sysprompt)
     rc = summarize(ck, allowed, "SFT ckpt")
@@ -258,37 +258,37 @@ def main():
             bs = run_model(a.base, samples, sysprompt)
             rb = summarize(bs, allowed, f"base ({a.base})")
         except Exception as e:
-            print(f"\n  ⚠ base 对照跑不了({type(e).__name__}: {str(e)[:80]})—— 跳过")
+            print(f"\n  ⚠ base comparison cannot run ({type(e).__name__}: {str(e)[:80]}) — skipped")
 
     print("\n" + "=" * 60)
-    # 阈值不写死,从真值率推导:样本抽自训练集(模型见过),所以合格线应贴近真值。
-    key = "JSON 合法" if "tool_call 标签" in expected or '"name" 字段' in expected else "<answer> 标签"
-    ref = gt.get("tool_call 标签", 1.0) if key == "JSON 合法" else gt.get("<answer> 标签", 1.0)
+    # Thresholds are not hard-coded but derived from the ground-truth rate: samples come from the training set (the model has seen them), so the pass line should be close to the ground truth.
+    key = "JSON valid" if "tool_call tag" in expected or '"name" field' in expected else "<answer> tag"
+    ref = gt.get("tool_call tag", 1.0) if key == "JSON valid" else gt.get("<answer> tag", 1.0)
     pass_at, warn_at = 0.90 * ref, 0.50 * ref
     verdict = 0
-    print(f"真值率 {ref*100:.1f}% → 合格线 {pass_at*100:.0f}% · 警戒线 {warn_at*100:.0f}%")
+    print(f"ground-truth rate {ref*100:.1f}% → pass line {pass_at*100:.0f}% · warning line {warn_at*100:.0f}%")
     if rc[key] >= pass_at:
-        print(f"✓ ckpt 在 {rc[key]*100:.0f}% 的样本上产出了结构合法的工具调用")
+        print(f"✓ ckpt produced structurally valid tool calls on {rc[key]*100:.0f}% of samples")
     elif rc[key] >= warn_at:
-        print(f"⚠ 只有 {rc[key]*100:.0f}%(真值 {ref*100:.0f}%)—— 偏低。"
-              f"看下面的原始输出判断是模型没学会还是解析太严")
+        print(f"⚠ only {rc[key]*100:.0f}% (ground truth {ref*100:.0f}%) — on the low side. "
+              f"Look at the raw output below to judge whether the model did not learn or the parsing is too strict")
         verdict = 1
     else:
-        print(f"✗ 只有 {rc[key]*100:.0f}%(真值 {ref*100:.0f}%)—— SFT 很可能没生效")
+        print(f"✗ only {rc[key]*100:.0f}% (ground truth {ref*100:.0f}%) — SFT very likely did not take effect")
         verdict = 1
     if rb is not None:
-        # 用判别力最强的格式标记做对照,而不是「JSON 合法」(base 本来就可能会)
+        # compare using the most discriminative format marker, not "JSON valid" (base may manage that anyway)
         dk = DISCRIMINATIVE if DISCRIMINATIVE in rc and DISCRIMINATIVE in rb else key
         d = rc[dk] - rb[dk]
-        print(f"  对照项「{dk}」: ckpt {rc[dk]*100:.0f}% vs base {rb[dk]*100:.0f}%,差 {d*100:+.0f} 个百分点")
-        print(f"  (结构项「{key}」: ckpt {rc[key]*100:.0f}% vs base {rb[key]*100:.0f}%)")
+        print(f"  comparison item \"{dk}\": ckpt {rc[dk]*100:.0f}% vs base {rb[dk]*100:.0f}%, difference {d*100:+.0f} percentage points")
+        print(f"  (structural item \"{key}\": ckpt {rc[key]*100:.0f}% vs base {rb[key]*100:.0f}%)")
         if d < 0.2:
-            print("  ✗ 与 base 拉不开差距 —— 这正是「loss 正常但没学到东西」的样子")
+            print("  ✗ no clear gap from base — this is exactly what \"loss normal but nothing learned\" looks like")
             verdict = 1
         else:
-            print("  ✓ 相对 base 有明显差距,SFT 确实改变了行为")
+            print("  ✓ clear gap relative to base, SFT really changed the behavior")
 
-    print("\n--- 前 2 条原始输出(人工看一眼)---")
+    print("\n--- first 2 raw outputs (for a human to glance at) ---")
     for i, o in enumerate(ck[:2]):
         print(f"\n[{i+1}] {o[:600]}")
 
@@ -296,9 +296,9 @@ def main():
         json.dump({"ckpt_rates": rc, "base_rates": rb, "expected_markers": expected,
                    "n": len(samples), "generations": ck},
                   open(a.out, "w"), ensure_ascii=False, indent=2)
-        print(f"\n明细写入 {a.out}")
+        print(f"\ndetails written to {a.out}")
 
-    print("\n提醒:这只判断「SFT 有没有生效」。真实分数要跑 SpaceTools-RL 的 run_eval.sh。")
+    print("\nReminder: this only tells \"whether SFT took effect\". For real scores run SpaceTools-RL's run_eval.sh.")
     sys.exit(verdict)
 
 

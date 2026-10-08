@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# 重跑被 OOM 污染的四个 benchmark。
-# 病因: vlm(Molmo,实测 30.2 GiB,上游 vlm.py 按 fp32 加载)只声明 num_gpus=0.6,
-# 被 Ray 和 depth_estimator/sam2 挤在同一张卡 -> 47.3/47.4 GiB -> 工具再要 576 MiB
-# 就 OOM -> Toolshed 静默返回错误 -> 掉分。已把 vlm 声明改成 1.0(独占一张卡)。
-# 工具需求 2.7 + 策略整卡 1.0 = 3.7 <= 4.0。gmu 仍是 0.545,对照口径不变。
+# Rerun the four benchmarks contaminated by OOM.
+# Cause: vlm (Molmo, measured 30.2 GiB, upstream vlm.py loads in fp32) only declares num_gpus=0.6,
+# so Ray squeezes it onto the same GPU as depth_estimator/sam2 -> 47.3/47.4 GiB -> a tool asking for another 576 MiB
+# OOMs -> Toolshed silently returns an error -> points lost. The vlm declaration has been changed to 1.0 (a GPU to itself).
+# Tool demand 2.7 + policy whole GPU 1.0 = 3.7 <= 4.0. gmu is still 0.545; comparison definition unchanged.
 #
-# mkdir 是原子的:重复启动(比如调用侧超时重试)会直接退出,不会出现两个实例
-# 互相 ray stop --force 把对方的 toolshed 打死。
+# mkdir is atomic: a duplicate launch (e.g. a timeout retry on the caller side) exits immediately, so two instances never
+# ray stop --force each other and kill each other's toolshed.
 set -u
-mkdir /root/.eval_fix.lock || { echo "已有实例在跑(锁 /root/.eval_fix.lock),退出"; exit 0; }
+mkdir /root/.eval_fix.lock || { echo "an instance is already running (lock /root/.eval_fix.lock), exiting"; exit 0; }
 mkdir -p /root/logs
 exec >>/root/logs/eval_fix2.log 2>&1
 echo "==== start $(date -u +'%F %T') UTC  pid $$"
 export HF_TOKEN="$(tr -d '\r\n' </root/.hf_token)"
-[ -n "$HF_TOKEN" ] || { echo "token 空,停"; exit 1; }
+[ -n "$HF_TOKEN" ] || { echo "token empty, stopping"; exit 1; }
 set -x
 export HF_HOME=/workspace/hf
 export CONDA_ROOT=/opt/conda-st
@@ -39,12 +39,12 @@ cd /opt/spacetools/SpaceTools-RL || exit 1
 bash "$RUN_EVAL" "$MODEL" blinkdepth cvb3ddepth boppose bopgrasp
 RC=$?
 set +x
-echo "run_eval.sh 退出码 = $RC"
-# 判据不是退出码: run_eval.sh 的 cleanup 陷阱杀后台 toolshed 会把 SIGTERM(15) 带出来,
-# 那是正常收尾。真正的判据是「跑完标记 + 样本数 + OOM 数 + 没有 router 失联」。
+echo "run_eval.sh exit code = $RC"
+# The criterion is not the exit code: run_eval.sh's cleanup trap killing the background toolshed carries out SIGTERM (15),
+# which is a normal wrap-up. The real criterion is "completion marker + sample count + OOM count + no lost router".
 MARK=$(grep -c 'EVALUATION COMPLETE' /root/logs/eval_fix2.log)
 NOROUTER=$(grep -c 'Could not find ToolRouterActor' /root/logs/eval_fix2.log)
-echo "EVALUATION COMPLETE = $MARK 次 · router 失联 = $NOROUTER 次"
+echo "EVALUATION COMPLETE = $MARK times · router lost = $NOROUTER times"
 wc -l "$OUTPUT_DIR"/*/0.jsonl
 OOM=0
 for B in blinkdepth cvb3ddepth boppose bopgrasp; do
@@ -52,7 +52,7 @@ for B in blinkdepth cvb3ddepth boppose bopgrasp; do
     echo "OOM $B = $N"
     OOM=$((OOM + N))
 done
-echo "OOM 合计 = $OOM"
+echo "OOM total = $OOM"
 if [ "$MARK" -ge 1 ] && [ "$OOM" -eq 0 ] && [ "$NOROUTER" -eq 0 ]; then
     echo "EVAL_FIX2_PASS" >/root/logs/status_eval_fix
 else

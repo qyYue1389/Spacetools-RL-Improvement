@@ -1,6 +1,6 @@
 #!/bin/bash
-# 判定实验:fp32 (去掉 model_dtype=bf16) + gmu 0.25
-# 除该参数外与 tools/p4_run.sh 完全相同。
+# Decisive experiment: fp32 (drop model_dtype=bf16) + gmu 0.25
+# Identical to tools/p4_run.sh except for this parameter.
 set -eo pipefail
 # A crashed sglang worker (31 GiB RSS) wrote a 50 GB core into
 # /var/lib/vastai_kaalia/data/ and filled the 50 GB CONTAINER disk mid-run.

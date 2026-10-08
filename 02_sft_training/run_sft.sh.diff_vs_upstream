@@ -5,15 +5,15 @@
  BASE_MODEL="${BASE_MODEL:-Qwen/Qwen2.5-VL-3B-Instruct}"
  MAX_STEPS="${MAX_STEPS:-3000}"
 -NUM_GPUS="${NUM_GPUS:-8}"
-+NUM_GPUS="${NUM_GPUS:-8}"        # 上游遗留:声明了但从未被使用(见下)
++NUM_GPUS="${NUM_GPUS:-8}"        # upstream leftover: declared but never used (see below)
 +
 +# =============================================================================
-+# 全局 batch 必须 = 8(= per_device x ga x 卡数),论文口径,不可变。
-+# 这里按实际可见的 GPU 数推导,而不是写死 —— 写死会在换机器时静默偏离。
++# Global batch must = 8 (= per_device x ga x number of GPUs), the paper's definition, not changeable.
++# Derived here from the number of actually visible GPUs instead of hard-coded — hard-coding would silently deviate when switching machines.
 +#
-+# ⚠️ 上游的 NUM_GPUS 是空操作:第 42 行声明,但配置和启动命令里都没引用它。
-+# FORCE_TORCHRUN=1 会用**全部可见 GPU**,所以真正决定卡数的是 CUDA_VISIBLE_DEVICES。
-+# 想跑 2 卡就 `CUDA_VISIBLE_DEVICES=0,1`,别指望 NUM_GPUS。
++# ⚠️ Upstream's NUM_GPUS is a no-op: declared on line 42, but never referenced in the config or the launch command.
++# FORCE_TORCHRUN=1 uses **all visible GPUs**, so what actually decides the GPU count is CUDA_VISIBLE_DEVICES.
++# To run on 2 GPUs use `CUDA_VISIBLE_DEVICES=0,1`; don't count on NUM_GPUS.
 +# =============================================================================
 +if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
 +    GPU_COUNT=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | grep -c '[0-9]')
@@ -23,27 +23,27 @@
 +
 +GLOBAL_BATCH=8
 +if [ $(( GLOBAL_BATCH % GPU_COUNT )) -ne 0 ]; then
-+    echo "✗ $GPU_COUNT 卡:全局 batch $GLOBAL_BATCH 不能被卡数整除,无整数解。"
-+    echo "  可用卡数:1 / 2 / 4 / 8。3 卡做不到 —— 8÷3 不是整数,"
-+    echo "  只能得到 6 或 9,那就偏离了论文口径,而本 checkpoint 是 RL 两臂的共同起点。"
++    echo "✗ $GPU_COUNT GPUs: global batch $GLOBAL_BATCH is not divisible by the GPU count, no integer solution."
++    echo "  Usable GPU counts: 1 / 2 / 4 / 8. 3 GPUs cannot work — 8÷3 is not an integer,"
++    echo "  you can only get 6 or 9, which deviates from the paper's definition, and this checkpoint is the shared starting point of both RL arms."
 +    exit 1
 +fi
-+# per_device 上限 2:实测 per_device=4 在 A6000(48 GB)上 OOM ——
-+# 稳态 39.8 GiB + logits 瞬时尖峰 8.4 GiB ≈ 48 GiB,两卡皆炸,不是 GPU1 少 3 GiB 的问题。
++# per_device capped at 2: per_device=4 was observed to OOM on A6000 (48 GB) —
++# steady state 39.8 GiB + transient logits spike 8.4 GiB ≈ 48 GiB, both GPUs blew up; it's not a matter of GPU1 having 3 GiB less.
 +PER_DEVICE=$(( GLOBAL_BATCH / GPU_COUNT ))
 +[ "$PER_DEVICE" -gt 2 ] && PER_DEVICE=2
 +GRAD_ACCUM=$(( GLOBAL_BATCH / (GPU_COUNT * PER_DEVICE) ))
 +
-+# 收尾断言:算错了就停,不要静默产出口径不同的 checkpoint
++# Final assertion: stop if the math is wrong; do not silently produce a checkpoint with a different definition
 +ACTUAL=$(( PER_DEVICE * GRAD_ACCUM * GPU_COUNT ))
 +[ "$ACTUAL" -eq "$GLOBAL_BATCH" ] || {
-+    echo "✗ 全局 batch 算成了 $ACTUAL,应为 $GLOBAL_BATCH"; exit 1; }
++    echo "✗ global batch computed as $ACTUAL, should be $GLOBAL_BATCH"; exit 1; }
 +
-+echo "GPU 数 $GPU_COUNT · per_device=$PER_DEVICE · ga=$GRAD_ACCUM · 全局 batch $ACTUAL ✓"
-+# 数据集只有 4 个分片(streaming 模式)。超过 4 卡会有 rank 分不到数据分片。
-+# 写成显式 if 而不是 `[ ] && echo`:后者在条件为假时整体返回 1,会污染退出码。
++echo "GPUs $GPU_COUNT · per_device=$PER_DEVICE · ga=$GRAD_ACCUM · global batch $ACTUAL ✓"
++# The dataset has only 4 shards (streaming mode). With more than 4 GPUs some ranks get no data shard.
++# Written as an explicit if rather than `[ ] && echo`: the latter returns 1 overall when the condition is false, polluting the exit code.
 +if [ "$GPU_COUNT" -gt 4 ]; then
-+    echo "⚠️ $GPU_COUNT 卡 > 数据集分片数 4,部分 rank 可能拿不到数据分片"
++    echo "⚠️ $GPU_COUNT GPUs > 4 dataset shards, some ranks may get no data shard"
 +fi
  
  EXPERIMENT_DIR="${OUTPUT_DIR:-$REPO_DIR/experiments/sft_${VERSION}_$(date +%Y%m%d_%H%M%S)}"
@@ -54,8 +54,8 @@
      "siyich/spacetools-sft", repo_type="dataset",
 -    cache_dir=cache_dir, local_dir=os.path.join(sft_data_dir, "hf_download")
 +    cache_dir=cache_dir, local_dir=os.path.join(sft_data_dir, "hf_download"),
-+    # 默认 max_workers=8 实测只有 0.8 MB/s(7463 个文件,卡在每文件延迟上)。
-+    # 实测 32 worker 写网络卷 30 MB/s、22.6 文件/s。纯下载并发,内容由哈希校验,零影响。
++    # Default max_workers=8 was observed at only 0.8 MB/s (7463 files, bottlenecked on per-file latency).
++    # Observed: 32 workers write to the network volume at 30 MB/s, 22.6 files/s. Purely download concurrency; content is hash-verified, zero impact.
 +    max_workers=32,
  )
  for subdir in ["data", "images"]:
@@ -88,8 +88,8 @@
  ### train
 -per_device_train_batch_size: 1
 -gradient_accumulation_steps: 1
-+# 这两个值由上面按可见 GPU 数推导,保证 per_device x ga x 卡数 = 8(论文口径)。
-+# per_device 上限锁在 2:实测 4 在 A6000(48 GB)上 OOM。
++# These two values are derived above from the number of visible GPUs, guaranteeing per_device x ga x number of GPUs = 8 (paper's definition).
++# per_device is capped at 2: 4 was observed to OOM on A6000 (48 GB).
 +per_device_train_batch_size: $PER_DEVICE
 +gradient_accumulation_steps: $GRAD_ACCUM
  learning_rate: 2e-5

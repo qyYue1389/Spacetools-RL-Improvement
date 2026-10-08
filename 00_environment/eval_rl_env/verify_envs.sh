@@ -1,10 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# 五个环境的真实验收 + 版本冻结
+# Real acceptance check of the five environments + version freeze
 #
-# ⚠️ 重做架构自检:第一版用 `cuobjdump` 但它不在那个 shell 的 PATH 里,
-#    所有调用都失败被跳过,于是"扫了 0 个 .so,0 个问题" —— 一个验证了空集的绿灯。
-#    这一版:用每个环境自己的 cuobjdump,扫 *.so 和 *.so.*,并打印实际扫了多少个。
+# ⚠️ Redo of the architecture self-check: the first version used `cuobjdump`, but it was not on that shell's PATH,
+#    so every call failed and was skipped, giving "scanned 0 .so, 0 problems" — a green light that verified the empty set.
+#    This version: use each environment's own cuobjdump, scan *.so and *.so.*, and print how many were actually scanned.
 # =============================================================================
 set -uo pipefail
 CONDA_DIR=/opt/conda-st
@@ -12,7 +12,7 @@ FREEZE=/workspace/freeze
 ENVS="spacetools-rl spacetools-tool-vlm spacetools-tool-roborefer spacetools-tool-bbox spacetools-tool-graspgen"
 mkdir -p "$FREEZE"
 
-echo "############ 1. 每个环境的关键 import ############"
+echo "############ 1. Key imports in each environment ############"
 declare -A NEED=(
   [spacetools-rl]="torch verl toolshed flash_attn sglang ray transformers"
   [spacetools-tool-vlm]="torch ray toolshed transformers sam2 depth_pro"
@@ -23,7 +23,7 @@ declare -A NEED=(
 FAIL=0
 for e in $ENVS; do
     P="$CONDA_DIR/envs/$e/bin/python"
-    [ -x "$P" ] || { echo "  ✗ $e 不存在"; FAIL=$((FAIL+1)); continue; }
+    [ -x "$P" ] || { echo "  ✗ $e does not exist"; FAIL=$((FAIL+1)); continue; }
     line="  $e:"
     for m in ${NEED[$e]}; do
         if "$P" -c "import $m" >/dev/null 2>&1; then line="$line $m✓"; else line="$line $m✗"; FAIL=$((FAIL+1)); fi
@@ -32,36 +32,36 @@ for e in $ENVS; do
 done
 
 echo
-echo "############ 2. 架构自检(实扫,不是空集)############"
+echo "############ 2. Architecture self-check (real scan, not the empty set) ############"
 TOTAL_SO=0; TOTAL_BAD=0
 for e in $ENVS; do
     d="$CONDA_DIR/envs/$e"
     CUOBJ="$d/bin/cuobjdump"
     [ -x "$CUOBJ" ] || CUOBJ="$CONDA_DIR/envs/spacetools-rl/bin/cuobjdump"
-    [ -x "$CUOBJ" ] || { echo "  $e: 找不到 cuobjdump —— 跳过(这一项没有结论)"; continue; }
+    [ -x "$CUOBJ" ] || { echo "  $e: cannot find cuobjdump — skipping (no conclusion for this item)"; continue; }
     n=0; bad=0; withcubin=0
     while IFS= read -r so; do
         n=$((n+1))
         out=$("$CUOBJ" --list-elf "$so" 2>/dev/null) || continue
         [ -z "$out" ] && continue
         withcubin=$((withcubin+1))
-        echo "$out" | grep -qE "sm_8[0-9]" || { echo "    ✗ 无 sm_8x: ${so#$d/}"; bad=$((bad+1)); }
+        echo "$out" | grep -qE "sm_8[0-9]" || { echo "    ✗ no sm_8x: ${so#$d/}"; bad=$((bad+1)); }
     done < <(find "$d" \( -name "*.so" -o -name "*.so.*" \) -type f 2>/dev/null)
-    echo "  $e: 扫了 $n 个 .so,其中 $withcubin 个含 cubin,$bad 个缺 sm_8x"
+    echo "  $e: scanned $n .so, of which $withcubin contain cubin, $bad missing sm_8x"
     TOTAL_SO=$((TOTAL_SO+n)); TOTAL_BAD=$((TOTAL_BAD+bad))
 done
-echo "  合计:扫了 $TOTAL_SO 个 .so,$TOTAL_BAD 个有问题"
-[ "$TOTAL_SO" -gt 0 ] || { echo "  ⚠️ 扫到 0 个文件 —— 这一项没有结论,不要当成通过"; FAIL=$((FAIL+1)); }
+echo "  total: scanned $TOTAL_SO .so, $TOTAL_BAD with problems"
+[ "$TOTAL_SO" -gt 0 ] || { echo "  ⚠️ scanned 0 files — no conclusion for this item, do not treat it as a pass"; FAIL=$((FAIL+1)); }
 
 echo
-echo "############ 3. 冻结版本 ############"
+echo "############ 3. Freeze versions ############"
 for e in $ENVS; do
     "$CONDA_DIR/envs/$e/bin/pip" freeze > "$FREEZE/$e.txt" 2>/dev/null
-    echo "  $e: $(wc -l < "$FREEZE/$e.txt") 个包"
+    echo "  $e: $(wc -l < "$FREEZE/$e.txt") packages"
 done
 {
-  echo "# 关键版本  $(date -u +%FT%TZ)"
-  echo "# 驱动 $(nvidia-smi --query-gpu=driver_version --format=csv,noheader|head -1) · GPU $(nvidia-smi --query-gpu=name --format=csv,noheader|head -1)"
+  echo "# key versions  $(date -u +%FT%TZ)"
+  echo "# driver $(nvidia-smi --query-gpu=driver_version --format=csv,noheader|head -1) · GPU $(nvidia-smi --query-gpu=name --format=csv,noheader|head -1)"
   for e in $ENVS; do
     echo "## $e"
     grep -iE "^(torch|torchvision|torchaudio|transformers|ray|sglang|flash-attn|flashinfer-python|numpy|nvidia-cudnn-cu12|accelerate|timm|sam-2|depth-pro|pointnet2-ops|grasp-gen)==" \
@@ -73,6 +73,6 @@ done
 cat "$FREEZE/KEY_VERSIONS.txt"
 
 echo
-echo "############ 结果 ############"
-[ "$FAIL" -eq 0 ] && echo "✓ 五个环境全部通过" || echo "✗ $FAIL 项不过"
+echo "############ Result ############"
+[ "$FAIL" -eq 0 ] && echo "✓ all five environments pass" || echo "✗ $FAIL item(s) failed"
 exit "$FAIL"

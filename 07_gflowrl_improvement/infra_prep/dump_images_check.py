@@ -1,8 +1,8 @@
 """
-Infra 自检:+trainer.dump_images=false 时 rollout / eval dump 只写 JSONL,不存 PNG;不设时行为不变。
+Infra self-check: with +trainer.dump_images=false, the rollout / eval dump writes only JSONL and saves no PNG; behavior is unchanged when it is not set.
 
-与其它自检同样的纪律:_dump_generations 从打了补丁的 ray_trainer.py 抽源码 exec,不另抄一份。
-用法: python dump_images_check.py PATCHED_RAY_TRAINER
+Same discipline as the other self-checks: _dump_generations is extracted from the patched ray_trainer.py source and exec'd, not copied separately.
+Usage: python dump_images_check.py PATCHED_RAY_TRAINER
 """
 import ast, json, os, sys, tempfile, textwrap, types
 import numpy as np

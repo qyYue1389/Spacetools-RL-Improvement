@@ -1,372 +1,372 @@
-# SpaceTools 复现:Accuracy 报告
+# SpaceTools reproduction: Accuracy report
 
-> **范围**:论文 Table 2 的复现结果、偏差归因、可复现性说明。
-> 错误归因(哪一类错、哪个工具的责任)是 P6 的内容,另行成文——本文只在
-> 解释缺口时引用其结论。
+> **Scope**: reproduction results for the paper's Table 2, attribution of the deviations, reproducibility notes.
+> Error attribution (which kind of error, which tool is responsible) is P6 material and is written up separately — this report only
+> cites its conclusions when explaining the gaps.
 >
-> **对象**:SpaceTools(CVPR 2026,arXiv:2512.04069),官方 checkpoint
-> `siyich/spacetools-ckpt`,**不重新训练**。
-> **执笔** 2026-08-30 · 记录见 `records/P5_RESULTS.md` · 原始数据见 `p4/`
+> **Subject**: SpaceTools (CVPR 2026, arXiv:2512.04069), official checkpoint
+> `siyich/spacetools-ckpt`, **no retraining**.
+> **Written** 2026-08-30 · records in `records/P5_RESULTS.md` · raw data in `p4/`
 
 ---
 
-## 摘要
+## Summary
 
-用官方发布的 checkpoint 与评测集,在自建环境上跑完论文 Table 2 的九个评测
-key、2121 个样本,重组出十个数字(其中**九个独立**)。
+Using the officially released checkpoint and eval sets, we ran all nine eval
+keys of the paper's Table 2 on a self-built environment, 2121 samples, and reassembled ten numbers (of which **nine are independent**).
 
-把每一项的偏差换算成**样本数**(不同 benchmark 的 n 相差十倍,pp 不可直接比较):
-**十项里八项的偏差都在 4 个样本以内,多数只有 1–3 个,方向有高有低,没有系统性偏差。**
-两项远超这个量级,而且方向相反:
+Converting each item's deviation into **number of samples** (n differs tenfold across benchmarks, so pp are not directly comparable):
+**eight of the ten items deviate by at most 4 samples, most by only 1–3, in both directions, with no systematic bias.**
+Two items are far beyond that magnitude, and in opposite directions:
 
-| | 差值 | 状态 |
+| | Difference | Status |
 |---|--:|---|
-| RoboSpatial · VQA | **−6.13 pp** | 未解释。已排除两个候选 |
-| BOP-ASK · Pose | **+18.99 pp** | 未解释。已排除一个候选 |
+| RoboSpatial · VQA | **−6.13 pp** | Unexplained. Two candidates ruled out |
+| BOP-ASK · Pose | **+18.99 pp** | Unexplained. One candidate ruled out |
 
-运行侧没有留下任何可疑之处:**2121 个样本的五项健康指标全部为零**
-(OOM、响应截断、轮数耗尽、缺 `<answer>`、畸形 tool call),
-轮数对账 2121/2121 逐样本通过。**所以两个缺口是真问题,不是运行事故。**
+The run side left nothing suspicious: **all five health metrics are zero across the 2121 samples**
+(OOM, truncated responses, turns exhausted, missing `<answer>`, malformed tool call),
+and the turn-count reconciliation passes per-sample for 2121/2121. **So the two gaps are real problems, not run accidents.**
 
-偏差归因逐条过了 `PROVENANCE.txt` 里的 23 处偏离,复核后只有两条无法排除
-(cudnn 9.16、numpy 2.x),而这两条都是硬约束、无法避免。更强的一条证据是
-**跨三代硬件的一致性**:A6000 / A100-40GB / A100-80GB 上,blinkdepth 的
-稳定核心与 bopgrasp 的成功/失败切分都不移动。
+The deviation attribution went item by item through the 23 deviations in `PROVENANCE.txt`; after review only two cannot be ruled out
+(cudnn 9.16, numpy 2.x), and both are hard constraints that cannot be avoided. Stronger evidence is
+**consistency across three hardware generations**: on A6000 / A100-40GB / A100-80GB, the
+stable core of blinkdepth and the success/failure split of bopgrasp do not move.
 
-**结论:复现成立,口径可比,两个缺口已量化并有界。**
+**Conclusion: the reproduction holds, the definitions are comparable, and the two gaps are quantified and bounded.**
 
 ---
 
-## 1. 复现的口径
+## 1. Definitions used in the reproduction
 
-在报任何数字之前,先把「我们测的到底是什么」写清楚。以下每一条都影响读法。
+Before reporting any number, first write down clearly "what exactly we measured". Each of the following affects how to read the numbers.
 
-### 1.1 解码是 greedy,而且是有依据的
+### 1.1 Decoding is greedy, and that is grounded
 
-verl 的 `val_kwargs` 默认 `temperature 0 / top_p 1.0 / n 1 / do_sample False`,
-而发布仓库的 `run_eval.sh` **没有覆盖它**。脚本里那个 `rollout.n=5` 是
-**训练用的 group size**,不作用于评测。
+verl's `val_kwargs` defaults to `temperature 0 / top_p 1.0 / n 1 / do_sample False`,
+and the released repo's `run_eval.sh` **does not override it**. The `rollout.n=5` in the script is the
+**training group size** and does not apply to eval.
 
-**所以策略侧是确定性的,采样随机性可以从偏差归因里直接排除。**
-论文用什么解码未知,但「照发布仓库的默认跑」是唯一有依据的口径。
+**So the policy side is deterministic, and sampling randomness can be ruled out of the deviation attribution directly.**
+What decoding the paper used is unknown, but "run with the released repo's defaults" is the only grounded definition.
 
-> 后续做过的采样实验(`n=5, T=1.0`)属于**另一种推理策略**,不是同一次测量,
-> 其结果不进 Table 2。见 §3.2 与 P6 报告。
+> The later sampling experiments (`n=5, T=1.0`) are **a different inference strategy**, not the same measurement,
+> and their results do not go into Table 2. See §3.2 and the P6 report.
 
-### 1.2 十个数字里只有九个独立
+### 1.2 Only nine of the ten numbers are independent
 
-`RoboSpatial · Overall` 是 VQA 与 Vacant 的**样本加权平均**,不是一次独立测量。
-用论文自己的数字反算:
+`RoboSpatial · Overall` is the **sample-weighted average** of VQA and Vacant, not an independent measurement.
+Back-computing from the paper's own numbers:
 
-    (228 × 79.38 + 122 × 52.46) / 350 = 69.996      论文报 70.00
+    (228 × 79.38 + 122 × 52.46) / 350 = 69.996      paper reports 70.00
 
-差 0.004。VQA / Vacant 的切分由 GT 形态天然给出(`Yes`/`No` 是 VQA,
-`[(x, y), …]` 点列表是 Vacant),得到 228 / 122。
+Off by 0.004. The VQA / Vacant split is given naturally by the GT shape (`Yes`/`No` is VQA,
+a `[(x, y), …]` point list is Vacant), giving 228 / 122.
 
-**读者不应把十个数字当成十份独立证据。**
+**Readers should not treat the ten numbers as ten independent pieces of evidence.**
 
-### 1.3 三种报法,以及为什么
+### 1.3 Three ways of reporting, and why
 
-| 情形 | 报法 | 理由 |
+| Case | How reported | Reason |
 |---|---|---|
-| 小 benchmark(n ≤ 124) | **报区间,不报单次点值** | 流水线有两个非确定性来源(见 §4.3),单次点值会诱导出错误读法 |
-| `blinkdepth` | **报稳定上界 112/124 + 单次带 106–109** | 单次落在带内任何位置都会让人读成「比论文低 3 分」,而多次运行已证伪这个读法 |
-| RefSpatial | **两种平均都给** | 论文只给一个数、不说聚合方式;两种约定差 0.44 pp |
+| Small benchmarks (n ≤ 124) | **Report an interval, not a single-run point value** | The pipeline has two sources of non-determinism (see §4.3); a single-run point value invites a wrong reading |
+| `blinkdepth` | **Report the stable upper bound 112/124 + single-run band 106–109** | A single run anywhere in the band would be read as "3 points below the paper", and multiple runs have already falsified that reading |
+| RefSpatial | **Give both averages** | The paper gives only one number and does not state the aggregation; the two conventions differ by 0.44 pp |
 
-> **⚠ 关于「稳定上界」的一条重要限制。**
-> 报稳定上界作为**报法**是正确的(它比单次点值稳健),
-> **但不能用「上界恰好等于论文数字」去推断「论文报的也是上界」。**
-> 上界是抽样次数的单调增函数,任何目标值早晚都会被达到,
-> 相等只说明我们跑了恰好那么多次。这一点在 §3.1 被实测证伪过一次。
+> **⚠ An important limitation on the "stable upper bound".**
+> Reporting the stable upper bound is correct **as a way of reporting** (it is more robust than a single-run point value),
+> **but you cannot infer "the paper also reported an upper bound" from "the upper bound exactly equals the paper's number".**
+> The upper bound is a monotonically increasing function of the number of samples drawn; any target value will be reached sooner or later,
+> and equality only shows that we happened to run exactly that many times. This was falsified once by measurement in §3.1.
 
 ---
 
-## 2. 结果:Table 2 对照
+## 2. Results: Table 2 comparison
 
-| Table 2 行 | 来源 key | n | 本复现 | 论文 | 差值 | **≈ 样本数** |
+| Table 2 row | Source key | n | This reproduction | Paper | Difference | **≈ samples** |
 |---|---|--:|--:|--:|--:|--:|
-| RoboSpatial · VQA | `robospatial`(按 GT 形态拆) | 228 | 73.25–73.68%(2 次) | 79.38 | **−5.70 ~ −6.13** | **−13 ~ −14** |
-| RoboSpatial · Vacant | 同上 | 122 | 50.82–51.64%(2 次) | 52.46 | −0.82 ~ −1.64 | −1 ~ −2 |
-| RoboSpatial · Overall | **加权平均,非独立** | 350 | 65.43–66.00% | 70.00 | −4.00 ~ −4.57 | (−14 ~ −16)‡ |
-| BLINK · Relative Depth | `blinkdepth` | 124 | 稳定上界 **112/124 = 90.32%**,单次带 106–109 | 90.32 | 上界相等 † | 0 † |
-| RefSpatial(三项平均) | `reflocation`+`refplacement`+`refunseen` | 277 | 53.35 简单 / 53.79 加权 | 53.07 | +0.28 / +0.72 | +1 ~ +2 |
+| RoboSpatial · VQA | `robospatial` (split by GT shape) | 228 | 73.25–73.68% (2 runs) | 79.38 | **−5.70 ~ −6.13** | **−13 ~ −14** |
+| RoboSpatial · Vacant | same as above | 122 | 50.82–51.64% (2 runs) | 52.46 | −0.82 ~ −1.64 | −1 ~ −2 |
+| RoboSpatial · Overall | **weighted average, not independent** | 350 | 65.43–66.00% | 70.00 | −4.00 ~ −4.57 | (−14 ~ −16)‡ |
+| BLINK · Relative Depth | `blinkdepth` | 124 | stable upper bound **112/124 = 90.32%**, single-run band 106–109 | 90.32 | upper bound equal † | 0 † |
+| RefSpatial (average of three) | `reflocation`+`refplacement`+`refunseen` | 277 | 53.35 simple / 53.79 weighted | 53.07 | +0.28 / +0.72 | +1 ~ +2 |
 | CVBench · 2D Relation | `cvb2drelation` | 650 | 94.62% | 94.92 | −0.30 | −2 |
 | CVBench · 3D Depth | `cvb3ddepth` | 600 | 96.50% | 96.00 | +0.50 | +3 |
-| BOP-ASK · Pose | `boppose` | 60 | **53.36 mean IoU**(3 次逐位相同) | 34.37 | **+18.99** | **等效 +18** § |
-| BOP-ASK · Grasp MACE | `bopgrasp` | 60 | 43.07–46.17(3 次) | 43.06 | 论文落在我们的下界 | 0 |
-| BOP-ASK · Grasp SR | 同上 | 60 | 55.00–56.67%(3 次) | 50.00 | +5.00 / +6.67 | +3 ~ +4 |
+| BOP-ASK · Pose | `boppose` | 60 | **53.36 mean IoU** (3 runs bit-for-bit identical) | 34.37 | **+18.99** | **equivalent to +18** § |
+| BOP-ASK · Grasp MACE | `bopgrasp` | 60 | 43.07–46.17 (3 runs) | 43.06 | paper falls on our lower bound | 0 |
+| BOP-ASK · Grasp SR | same as above | 60 | 55.00–56.67% (3 runs) | 50.00 | +5.00 / +6.67 | +3 ~ +4 |
 
-† **上界相等不构成「论文报的是上界」的证据**,见 §1.3 与 §3.1。
-‡ Overall 是加权平均、非独立测量,不计入「八项」。
-§ Pose 是连续 IoU 均值,没有对错之分;这里换算成「相当于额外多少个样本得 0 分」,推导见 §3.2。
+† **An equal upper bound is not evidence that "the paper reported an upper bound"**, see §1.3 and §3.1.
+‡ Overall is a weighted average, not an independent measurement, and is not counted among the "eight items".
+§ Pose is a continuous mean IoU with no right/wrong; here it is converted into "equivalent to how many extra samples scoring 0", derivation in §3.2.
 
-**换算成样本数是必要的**:n 从 60 到 650 相差十倍,同样的 pp 在不同 benchmark 上
-代表的样本数差一个数量级。按样本数看,除 VQA 与 Pose 外,
-**其余八项的最大偏差是 4 个样本**。
+**Converting to number of samples is necessary**: n ranges from 60 to 650, a tenfold difference, so the same pp on different benchmarks
+represents sample counts that differ by an order of magnitude. By sample count, apart from VQA and Pose,
+**the largest deviation among the other eight items is 4 samples**.
 
-### RefSpatial 的两种聚合
+### The two RefSpatial aggregations
 
-| | reflocation | refplacement | refunseen | 平均 |
+| | reflocation | refplacement | refunseen | Average |
 |---|---:|---:|---:|---:|
-| 本复现 | 54.00(54/100) | 58.00(58/100) | 48.05(37/77) | |
-| 三项简单平均 | | | | **53.35**(+0.28) |
-| 样本加权(n=277) | | | | **53.79**(+0.72) |
-| 论文 | | | | 53.07 |
+| This reproduction | 54.00 (54/100) | 58.00 (58/100) | 48.05 (37/77) | |
+| Simple average of three | | | | **53.35** (+0.28) |
+| Sample-weighted (n=277) | | | | **53.79** (+0.72) |
+| Paper | | | | 53.07 |
 
-n=277 时一个样本是 0.36 pp,两种约定的差别不到半个百分点。
-**报告采用简单平均(53.35),并同时给出加权值。**
+At n=277 one sample is 0.36 pp; the two conventions differ by less than half a percentage point.
+**The report uses the simple average (53.35) and also gives the weighted value.**
 
-### BOP-ASK Pose 的指标映射(曾是一个 gate)
+### BOP-ASK Pose metric mapping (once a gate)
 
-`boppose` 的 `score` **不是准确率**。`verl/utils/reward_score/bop_ask_bench.py:172`
-对 `question_type == "pose"` 的定义是:从 GT 与预测各取 8 个点(3D 框角点的 2D
-投影),任一侧不足八个返回 0.0,否则返回**两个凸包的 IoU** —— [0,1] 的连续值。
+The `score` of `boppose` **is not accuracy**. `verl/utils/reward_score/bop_ask_bench.py:172`
+defines it for `question_type == "pose"` as: take 8 points each from GT and prediction (the 2D
+projections of the 3D box corners); if either side has fewer than eight, return 0.0, otherwise return **the IoU of the two convex hulls** — a continuous value in [0,1].
 
-早期曾据「该指标对角点顺序完全不敏感」推断论文用的**不是**这个指标。
-**查论文原文后,该推断被推翻**——附录的 reward 定义写着:
+Early on, based on "the metric is completely insensitive to corner order", we inferred that the paper did **not** use this metric.
+**After checking the paper text, that inference was overturned** — the appendix's reward definition says:
 
-> “Predicted and ground-truth poses are converted to eight 2D projected corners.
+> "Predicted and ground-truth poses are converted to eight 2D projected corners.
 > The reward is the **IoU between convex hulls** of predicted (Ĉ) and ground
 > truth (C) corner sets. R_IoU = IoU(C, Ĉ) when both sets are valid
-> (|Ĉ| = |C| = 8), and 0 otherwise.”
+> (|Ĉ| = |C| = 8), and 0 otherwise."
 
-§5.1 又写 “normalized Intersection-over-Union (IoU) in range [0, 100] (%)”。
-与 `bop_ask_bench.py:172` 逐字对应。**顺序不敏感不是缺陷,是规格。**
+§5.1 also says "normalized Intersection-over-Union (IoU) in range [0, 100] (%)".
+This corresponds verbatim to `bop_ask_bench.py:172`. **Order insensitivity is not a defect, it is the spec.**
 
-用仓库自己的几何函数从 `raw_answer` 重算,与 dump 里的分数 **60/60 逐位吻合**
-(最大绝对差 0.000e+00)。**所以这一格可以填,而且必须填 53.36** —— 指标已
-确认可比,留空反而是隐瞒。
+Recomputing from `raw_answer` with the repo's own geometry functions matches the scores in the dump **60/60 bit-for-bit**
+(max absolute difference 0.000e+00). **So this cell can be filled, and it must be filled with 53.36** — the metric is
+confirmed comparable, and leaving it empty would amount to concealment.
 
 ---
 
-## 3. 两个缺口
+## 3. The two gaps
 
-八项落在噪声内。剩下两项方向相反,各自单独说明。
-两者的共同点是:**能实测的候选都已实测过**,剩下的要么无法从外部检验,
-要么属于 P6 的人工归类。
+Eight items fall within noise. The remaining two go in opposite directions and are explained separately.
+What they share: **every candidate that can be measured has been measured**; what remains either cannot be tested from outside,
+or belongs to P6's manual classification.
 
-### 3.1 RoboSpatial · VQA:−6.13 pp
+### 3.1 RoboSpatial · VQA: −6.13 pp
 
-**缺口是稳定的,不是抽样。** 四次独立运行:
+**The gap is stable, not sampling.** Four independent runs:
 
-    单次   161 / 167 / 168 / 169       均值 166.2/228 = 72.92%
-    论文                                      181/228 = 79.38%
-    差                                   14.8 个样本
+    single runs   161 / 167 / 168 / 169       mean 166.2/228 = 72.92%
+    paper                                           181/228 = 79.38%
+    difference                                 14.8 samples
 
-最好的一次(169)离论文仍差 12 个样本。两次运行合并时 350 个样本里
-218 始终对、108 始终错、24 翻转——**稳定核心本身就低于论文。**
+The best run (169) is still 12 samples short of the paper. Merging two runs, of the 350 samples
+218 are always right, 108 always wrong, 24 flip — **the stable core itself is below the paper.**
 
-#### 已排除的候选
+#### Candidates ruled out
 
-| 候选 | 怎么排除的 |
+| Candidate | How it was ruled out |
 |---|---|
-| **论文报的是多次抽样的上界** | 三次抽样时上界 = VQA 181 / Vacant 64 / Overall 245,与论文**三处精确相等**;补跑第四次后 VQA 上界升到 **188**,越过论文 7 个样本。而且四次里任选三次可得 181/183/186——那个「精确命中」还是组合选择的巧合。**上界不饱和,判据不成立。** |
-| **工具没找到东西所以模型瞎猜** | 全部 228 个样本的 `roborefer` 都返回了非零检测 |
+| **The paper reports the upper bound over multiple samples** | With three runs the upper bound = VQA 181 / Vacant 64 / Overall 245, **exactly equal to the paper in three places**; after a fourth run the VQA upper bound rose to **188**, 7 samples past the paper. And picking any three of the four gives 181/183/186 — that "exact hit" was itself a coincidence of which combination was chosen. **The upper bound is not saturated, so the criterion does not hold.** |
+| **The tool found nothing, so the model guessed** | `roborefer` returned non-zero detections on all 228 samples |
 
-#### 三条仍然有效的线索
+#### Three leads that still stand
 
-1. **`no` 类塌陷至随机水平。** GT 为 `yes` 的 165 条稳定在 83.03%(两次运行
-   **完全相同**),GT 为 `no` 的 63 条只有 47.62% / 49.21%。这不是朴素的
-   yes 偏好——输出的边缘分布(yes 170/169、no 58/59)与 GT(165/63)贴得很近
-   ——但确实有某种系统性的东西在难题上把它推向 yes。
-2. **题目与工具输出的结构性错配。** 228 道里 **105 道是「Can X fit ⟨rel⟩ Y?」**
-   ——问的是「放不放得下」,而工具链给的是两个物体的**点位**,不是自由空间的
-   **范围**。按关系词拆开正确率相当均匀(66.7–77.1%),**缺口不集中在某一种
-   空间关系上**。
-3. **决策层的不稳定(新)。** 五次采样下 VQA 有 100/228(43.9%)的题目在采样
-   之间摇摆,其中 **46 个的五次工具调用逐字相同** —— 同一张图、同一批工具返回,
-   给出相反的 yes/no。这些不是工具错,而且它与线索 2 指向同一处:
-   中间那一步没有任何工具输出能钉住。
+1. **The `no` class collapses to chance level.** The 165 items with GT `yes` are stable at 83.03% (**identical** across the two
+   runs); the 63 items with GT `no` get only 47.62% / 49.21%. This is not a naive
+   yes preference — the marginal distribution of outputs (yes 170/169, no 58/59) is very close to GT (165/63)
+   — but something systematic does push it toward yes on hard questions.
+2. **Structural mismatch between question and tool output.** Of the 228, **105 are "Can X fit ⟨rel⟩ Y?"**
+   — they ask "does it fit", while the tool chain gives the **point positions** of two objects, not the **extent** of free space.
+   Split by relation word, accuracy is fairly uniform (66.7–77.1%); **the gap is not concentrated in one kind of
+   spatial relation**.
+3. **Instability at the decision layer (new).** Under five samples, 100/228 (43.9%) of VQA questions swing
+   between samples, and for **46 of them the five tool-call sequences are verbatim identical** — same image, same tool returns,
+   opposite yes/no answers. These are not tool errors, and this points to the same place as lead 2:
+   the middle step is not pinned down by any tool output.
 
-> **但不要说缺口已被解释掉。** 多数表决@5 得 176/228,虽高过四次 greedy 全部
-> (161–169),但逐样本配对(McNemar)只有对最低的那一次显著(p=0.014),
-> 对其余三次是 p = 0.163 / 0.230 / 0.281,且四次比较共用同一个表决臂。
-> ~~**「自洽性能补掉约六成」这个说法已下调为「方向一致、未达显著」。**~~
-> ~~要定案需要第二组独立的 5 次采样。~~
+> **But do not say the gap has been explained away.** Majority vote@5 gets 176/228, above all four greedy runs
+> (161–169), but per-sample paired tests (McNemar) are significant only against the lowest run (p=0.014),
+> against the other three p = 0.163 / 0.230 / 0.281, and all four comparisons share the same vote arm.
+> ~~**The claim "self-consistency recovers about 60%" has been downgraded to "same direction, not significant".**~~
+> ~~Settling it needs a second independent set of 5 samples.~~
 >
-> **⚠ 2026-09-02 · 第二组采样已完成,再降一级:多数表决@5 无效应。**
-> 组2 的表决臂得 **166/228**(组1 是 176/228)—— **表决臂自己的散布 10 个样本,
-> 与四次 greedy 的散布同量级。** 对同样四次 greedy 重做配对检验:
-> **0/12 次比较显著,而且 VQA 的方向在两组之间翻了号**
-> (组2 · VQA 净 −1 / −2 / +5 / −3,p = 1.000 / 0.868 / 0.500 / 0.720)。
-> 组1 那次 `p=0.014` 正是 §7 表格第 3 行说的那类假象。
-> **线索 3 的现象仍然成立(纯决策翻转 46 / 62),但它不构成可回收的收益。**
-> 依据:`records/P7_GPU_RESULTS.md` §3.4。
+> **⚠ 2026-09-02 · The second sampling set is done; downgraded one more level: majority vote@5 has no effect.**
+> Set 2's vote arm gets **166/228** (set 1 got 176/228) — **the vote arm's own spread is 10 samples,
+> the same magnitude as the spread of the four greedy runs.** Redoing the paired tests against the same four greedy runs:
+> **0/12 comparisons are significant, and the VQA direction flips sign between the two sets**
+> (set 2 · VQA net −1 / −2 / +5 / −3, p = 1.000 / 0.868 / 0.500 / 0.720).
+> Set 1's `p=0.014` is exactly the kind of artifact described in row 3 of the §7 table.
+> **The lead-3 phenomenon still holds (pure decision flips 46 / 62), but it does not amount to a recoverable gain.**
+> Source: `records/P7_GPU_RESULTS.md` §3.4.
 
-**结论:−6.13 pp 是真实缺口,目前整个仍未解释。**
-**(2026-09-02 更新:随着多数表决@5 降为无效应,它比写这份报告时又少了一个候选解释。)**
+**Conclusion: −6.13 pp is a real gap and is, as of now, entirely unexplained.**
+**(2026-09-02 update: with majority vote@5 downgraded to no effect, it has one fewer candidate explanation than when this report was written.)**
 
-### 3.2 BOP-ASK · Pose:+18.99 pp
+### 3.2 BOP-ASK · Pose: +18.99 pp
 
-指标已确认与论文一致(§2),所以这是**真实差异,而且是我们偏高**。
-先把差距量化成可检验的形式:
+The metric is confirmed to match the paper (§2), so this is **a real difference, and we are the higher one**.
+First, quantify the gap in a testable form:
 
-    我们   60 × 0.5336 = 32.02
-    论文   60 × 0.3437 = 20.62
-    缺口                 11.40
+    ours    60 × 0.5336 = 32.02
+    paper   60 × 0.3437 = 20.62
+    gap                   11.40
 
-非零样本 51 个、均值 0.628,所以从我们的分布走到论文的数字,
-**大致相当于额外有 18 个样本得 0 分**。
+There are 51 non-zero samples with mean 0.628, so going from our distribution to the paper's number
+**is roughly equivalent to 18 extra samples scoring 0**.
 
-而论文 Table 2 的表注写着:
+And the caption of the paper's Table 2 says:
 
 > Values of 0 indicate the model either fails to produce valid responses,
 > **outputs answers in wrong formats**, or produces entirely incorrect predictions.
 
-Pose 那一列几乎所有基线都是 0.00(Qwen2.5-VL-3B、Molmo、RoboRefer、RoboBrain、
-SpaceLLaVA、RoboPoint 全部 0.00),说明**产出八个合法坐标本身就很难**。
-而本复现是 **60/60 格式有效,零格式失败**。
+In the Pose column almost every baseline is 0.00 (Qwen2.5-VL-3B, Molmo, RoboRefer, RoboBrain,
+SpaceLLaVA, RoboPoint all 0.00), which shows that **producing eight valid coordinates is itself hard**.
+This reproduction is **60/60 format-valid, zero format failures**.
 
-| 候选 | 状态 |
+| Candidate | Status |
 |---|---|
-| **论文侧有格式失败**(约 18 个样本得 0) | **最自洽**,与表注和整列的 0.00 一致。**无法从外部检验** |
-| ~~解码方式不同~~ | **已实测排除**,见下 |
-| 评测集不同 | 发布的 `boppose.parquet` 是 60 条;论文未给 BOP-ASK 划分大小。需比对 BOP-ASK 原始 benchmark |
-| checkpoint 不同 | 其余八项吻合,削弱了这个候选 |
+| **Format failures on the paper's side** (about 18 samples scoring 0) | **Most self-consistent**, consistent with the caption and the column of 0.00s. **Cannot be tested from outside** |
+| ~~Different decoding~~ | **Ruled out by measurement**, see below |
+| Different eval set | The released `boppose.parquet` has 60 items; the paper does not give the BOP-ASK split size. Needs comparison against the original BOP-ASK benchmark |
+| Different checkpoint | The other eight items match, which weakens this candidate |
 
-#### 「解码方式」候选的排除
+#### Ruling out the "decoding" candidate
 
-若论文用 temperature 1.0 采样报 avg@1,该候选预测分数会更低、且更容易格式出错。
-显式覆盖 `val_kwargs.do_sample=True / n=5 / temperature=1.0` 重跑,**两条都不成立**:
+If the paper reported avg@1 with temperature 1.0 sampling, this candidate predicts a lower score and more format errors.
+Rerunning with an explicit override `val_kwargs.do_sample=True / n=5 / temperature=1.0`, **neither holds**:
 
-    采样 avg@1   53.60         对 greedy 53.36(高 0.24)      论文 34.37
-    零分率       42/300 = 14%  对 greedy  9/60 = 15%(低 1 pp)
+    sampled avg@1   53.60         vs greedy 53.36 (0.24 higher)      paper 34.37
+    zero-score rate 42/300 = 14%  vs greedy  9/60 = 15% (1 pp lower)
 
-300 次采样的均值标准误约 2 个点,论文值在 19 个点之外。
+The standard error of the mean over 300 samples is about 2 points; the paper's value is 19 points away.
 
-> **这一项只能用 `avg@1`,不能用 `best@5`。** 取 5 次最大值有选择偏倚——
-> 即使分数纯为噪声,max 也高于均值(实测 `best@5 = 57.23`)。那不是收益。
+> **Only `avg@1` can be used here, not `best@5`.** Taking the max of 5 has selection bias —
+> even if the scores were pure noise, the max would be above the mean (measured `best@5 = 57.23`). That is not a gain.
 
-**结论:候选剩三个,最自洽的那个无法从外部检验。**
+**Conclusion: three candidates remain, and the most self-consistent one cannot be tested from outside.**
 
 ---
 
-## 4. 偏差归因
+## 4. Deviation attribution
 
-`PROVENANCE.txt` 记录了 23 处相对上游的偏离。逐条过一遍之后:
+`PROVENANCE.txt` records 23 deviations from upstream. After going through them one by one:
 
-### 4.1 已排除
+### 4.1 Ruled out
 
-| 偏离 | 排除依据 |
+| Deviation | Grounds for ruling out |
 |---|---|
-| `preprocessor_config.json` 替换 | 与 Hub 逐字节相同(sha256 `f2058c71…`),且 Qwen 自 2025-02 起未改动过该文件,论文必然取到同一份 |
-| 采样随机性 | eval 是 greedy(§1.1) |
-| sm_80 重编 `pointnet2_ops` | 架构不匹配会 `exit(-1)` 直接杀进程、不会静默出错,而全量零崩溃 |
-| 其余 18 处 | 硬阻塞、已验证 no-op、或纯调度 |
+| `preprocessor_config.json` replaced | Byte-for-byte identical to the Hub (sha256 `f2058c71…`), and Qwen has not changed that file since 2025-02, so the paper necessarily got the same copy |
+| Sampling randomness | eval is greedy (§1.1) |
+| sm_80 rebuild of `pointnet2_ops` | An architecture mismatch would `exit(-1)` and kill the process outright rather than fail silently, and the full run had zero crashes |
+| The other 18 | Hard blockers, verified no-ops, or pure scheduling |
 
-### 4.2 仍可能移动数字
+### 4.2 Could still move the numbers
 
-| 偏离 | 为什么可能 | 为什么无法避免 |
+| Deviation | Why it might | Why it cannot be avoided |
 |---|---|---|
-| **cudnn 9.16.0.29** | 不同的卷积结果正是 pytorch#168167 讨论的东西 | sglang 启动时读 `torch.backends.cudnn.version()`,低于 9.15 拒绝运行 |
-| **numpy 2.x**(`spacetools-rl`) | 无已知影响,pin 是陈旧元数据 | Ray 无法把工具环境的 numpy-2 数组反序列化进 numpy-1 driver |
-| **`model_dtype=bf16`**(待定) | 见 §4.4 | 若成立则是显存占用的后果,不是可选项 |
+| **cudnn 9.16.0.29** | Differing convolution results are exactly what pytorch#168167 discusses | sglang reads `torch.backends.cudnn.version()` at startup and refuses to run below 9.15 |
+| **numpy 2.x** (`spacetools-rl`) | No known effect; the pin is stale metadata | Ray cannot deserialize numpy-2 arrays from the tool environment into a numpy-1 driver |
+| **`model_dtype=bf16`** (pending) | See §4.4 | If it holds, it is a consequence of GPU memory footprint, not optional |
 
-### 4.3 非确定性有两个来源,都已分离
+### 4.3 Non-determinism has two sources, both isolated
 
-| 来源 | 表现 | 影响范围 |
+| Source | Symptom | Scope |
 |---|---|---|
-| sglang 的浮点归约顺序 | 接近平局的样本在运行间翻转 | 所有 benchmark;blinkdepth 六次运行 13 个翻转 |
-| GraspGen 的 diffusion 采样 | 工具自己在采样 | 仅 `bopgrasp`:两次运行只有 3/60 输出文本相同,但 60 个里 55 个的结果由场景几何决定,只有 5 个在翻转 |
+| sglang floating-point reduction order | Near-tie samples flip between runs | All benchmarks; blinkdepth had 13 flips over six runs |
+| GraspGen diffusion sampling | The tool itself samples | Only `bopgrasp`: across two runs only 3/60 output texts are identical, but for 55 of the 60 the outcome is determined by scene geometry, and only 5 flip |
 
-**小 benchmark 报区间即可。**
+**For small benchmarks, reporting an interval is enough.**
 
-### 4.4 一次被收回的排除
+### 4.4 A retracted ruling-out
 
-`model_dtype=bf16` 是为在 40 GB 卡上装下策略而设的(verl 的 FSDP 默认 fp32
-master,4.066 B 参数是 16.3 GB;bf16 只要 8.1 GB)。
+`model_dtype=bf16` was set to fit the policy on a 40 GB GPU (verl's FSDP defaults to fp32
+master; 4.066 B parameters is 16.3 GB; bf16 needs only 8.1 GB).
 
-**权重路径的论证仍然确凿**:checkpoint 的 825 个张量全部以 BF16 存储,
-`bf16 → fp32 → bf16` 是恒等变换,逐位比对差异元素 0、最大绝对差 0.000e+00;
-且 `val_only` 下 FSDP 模型根本不做前向。
+**The argument on the weight path is still conclusive**: all 825 tensors in the checkpoint are stored as BF16,
+`bf16 → fp32 → bf16` is the identity, a bit-for-bit comparison gives 0 differing elements and max absolute difference 0.000e+00;
+and under `val_only` the FSDP model does no forward pass at all.
 
-**但「端到端已排除」这个结论已被收回。** 曾据单次 fp32 运行(107/124,
-「落在 107–109 带内」)宣布排除,当天补跑两次即被推翻:
+**But the conclusion "ruled out end to end" has been retracted.** It was declared ruled out on the basis of a single fp32 run (107/124,
+"falls in the 107–109 band"), and two more runs the same day overturned it:
 
-    fp32 @ gmu=.25   107 · 105 · 105     范围 105–107
-    bf16 @ gmu=.25   108 · 109           范围 108–109      两个范围不重叠
+    fp32 @ gmu=.25   107 · 105 · 105     range 105–107
+    bf16 @ gmu=.25   108 · 109           range 108–109      the two ranges do not overlap
 
-那个 107 是 **fp32 自己范围的上沿**,被读成了「落在带内」。
+That 107 is **the top edge of fp32's own range**, and was read as "falls in the band".
 
-**反方向的结论同样不成立**:五个值若同分布,两个 bf16 恰好占最高两名的概率是
-`1/C(5,2)` = 0.1(提示性强,不显著);结构上只有 **1 个样本**(#49)是
-「bf16 始终对、fp32 始终错」,反向 0 个;fp32 自己三次之间也相差 4–6 个样本。
+**The conclusion in the opposite direction does not hold either**: if the five values were identically distributed, the probability that the two bf16 runs happen to take the top two places is
+`1/C(5,2)` = 0.1 (strongly suggestive, not significant); structurally only **1 sample** (#49) is
+"bf16 always right, fp32 always wrong", and 0 the other way; fp32's own three runs also differ by 4–6 samples.
 
-**正确表述是「排除证据不足、已收回」,不是任何方向的结论。**
+**The correct statement is "evidence for ruling out is insufficient, retracted", not a conclusion in either direction.**
 
-> 动摇的其实是权重论证的**隐含前提**——「`model_dtype` 影响数字的唯一路径是
-> 权重」。实测提示存在第二条路径(**未验证**):fp32 master 多占约 8 GB
-> (峰值 33.8 vs 30.4 GB),显存分配不同 → sglang batch 组成不同 → 近平局翻转。
-> **与 §4.5 是同类机制,不是权重级效应。**
+> What was actually shaken is the **implicit premise** of the weight argument — "the only path by which `model_dtype` affects the numbers is
+> the weights". Measurement hints at a second path (**unverified**): fp32 master takes about 8 GB more
+> (peak 33.8 vs 30.4 GB), different GPU memory allocation → different sglang batch composition → near-tie flips.
+> **This is the same kind of mechanism as §4.5, not a weight-level effect.**
 
-### 4.5 新增偏离:`gpu_memory_utilization` 是整卡比例
+### 4.5 New deviation: `gpu_memory_utilization` is a fraction of the whole GPU
 
-迁到 A100-80GB 后,三张工具卡的显存峰值与旧机**逐字节相同**
-(Molmo 34.6、DepthPro 25.7 GB),只有策略卡从 25.6 变成 46.8 GB。
-原因:该旋钮是占**整卡**的静态比例——同样的 0.5,在 40 GB 上是 20 GB KV 池,
-在 80 GB 上是 40 GB 池。
+After moving to A100-80GB, the GPU memory peaks of the three tool GPUs are **byte-for-byte identical** to the old machine
+(Molmo 34.6, DepthPro 25.7 GB); only the policy GPU went from 25.6 to 46.8 GB.
+Reason: this knob is a static fraction of the **whole GPU** — the same 0.5 is a 20 GB KV pool on 40 GB
+and a 40 GB pool on 80 GB.
 
-池子大小改变 batch 组成 → 浮点归约顺序 → 近平局样本翻转,
-**正是 §4.3 认定的那个机制**。所以 **80 GB 对策略侧不是数值中性的替换。**
+Pool size changes batch composition → floating-point reduction order → near-tie samples flip,
+**exactly the mechanism identified in §4.3**. So **80 GB is not a numerically neutral substitution on the policy side.**
 
-**处理:80 GB 上的 policy 运行一律用 `gpu_memory_utilization=0.25`**
-(复现 P4 的池子大小),且**任何引自 80 GB policy 运行的数字都注明它的取值**。
-本报告 §2 的全部数字来自 40 GB / 0.5 的原始运行,不受此影响。
+**Handling: policy runs on 80 GB always use `gpu_memory_utilization=0.25`**
+(reproducing P4's pool size), and **every number quoted from an 80 GB policy run notes its value**.
+All numbers in §2 of this report come from the original 40 GB / 0.5 runs and are not affected.
 
-### 4.6 跨硬件一致性:比逐条排查更强的证据
+### 4.6 Cross-hardware consistency: stronger evidence than item-by-item checking
 
-| 观察 | A6000(sm_86) | A100-40GB | A100-80GB |
+| Observation | A6000 (sm_86) | A100-40GB | A100-80GB |
 |---|---|---|---|
-| blinkdepth 稳定上界 | 112/124 | 112/124 | 111/124(4 次)· 六次合并 112 |
-| blinkdepth 始终答错 | 12 | 12 | 13(与 40GB 的交集 12) |
-| bopgrasp 成功/失败 | 19 / 41 | 20 / 40 | — |
+| blinkdepth stable upper bound | 112/124 | 112/124 | 111/124 (4 runs) · six runs merged 112 |
+| blinkdepth always wrong | 12 | 12 | 13 (intersection with 40GB: 12) |
+| bopgrasp success/failure | 19 / 41 | 20 / 40 | — |
 | bopgrasp MACE / SR | 44.46 / 55.00 | 43.07–46.17 / 55.00–56.67 | — |
 
-两平台的「始终答对」交集 99 个、「始终答错」交集 12 个。
+Across the two platforms the "always right" intersection is 99 and the "always wrong" intersection is 12.
 
-**整套累积偏离——bf16、sm_80、cudnn 9.16、numpy 2.x、重编的 CUDA 扩展——
-合起来没有移动任何 benchmark 的稳定核心。** 这比任何单条偏离的逐一论证都强,
-因为它是端到端的。
+**The whole accumulated set of deviations — bf16, sm_80, cudnn 9.16, numpy 2.x, rebuilt CUDA extensions —
+taken together did not move the stable core of any benchmark.** This is stronger than any item-by-item argument about single deviations,
+because it is end to end.
 
-> **但要按抽样次数读,不要按平台读。** 上表的 112/124 是六次合并才达到的;
-> 80 GB 单独四次是 111/124,40 GB 现存两次也是 111/124。
-> 这与 §1.3 的限制是同一件事。
+> **But read it by number of runs, not by platform.** The 112/124 in the table above was only reached by merging six runs;
+> 80 GB alone over four runs is 111/124, and the two existing 40 GB runs are also 111/124.
+> This is the same thing as the limitation in §1.3.
 
 ---
 
-## 5. 运行健康:为什么可以相信上面的数字
+## 5. Run health: why the numbers above can be trusted
 
-这一节不产出结论,它决定前面几节能不能被相信。
+This section draws no conclusions; it determines whether the preceding sections can be trusted.
 
-### 5.1 五项健康指标全部为零
+### 5.1 All five health metrics are zero
 
-九个 benchmark、2121 个样本:
+Nine benchmarks, 2121 samples:
 
-| 指标 | 命中 |
+| Metric | Hits |
 |---|--:|
 | OOM | **0** |
-| 工具响应被截断 | **0** |
-| 轮数耗尽(8 轮上限) | **0** |
-| 缺失 `<answer>` | **0** |
-| 畸形 tool call | **0** |
+| Tool response truncated | **0** |
+| Turns exhausted (8-turn limit) | **0** |
+| Missing `<answer>` | **0** |
+| Malformed tool call | **0** |
 
-三处非零的「工具错」都已逐条查明不是污染:`blinkdepth` 1 个与 `boppose` 1 个
-是模型向工具索要从未产生过的变量(工具拒绝、模型自行恢复);
-`bopgrasp` 40 个是 grasp 工具在那些场景上真的失败,设计使然。
+The three non-zero "tool error" counts have each been traced and are not contamination: the 1 in `blinkdepth` and the 1 in `boppose`
+are the model asking a tool for a variable that was never produced (the tool refuses, the model recovers on its own);
+the 40 in `bopgrasp` are the grasp tool genuinely failing on those scenes, by design.
 
-### 5.2 轮数对账 2121/2121
+### 5.2 Turn-count reconciliation 2121/2121
 
-解析器自己的 transcript 分解与 verl 落盘的 `num_turns` 在**每一个样本上**都一致。
-**这是整份报告可信度的地基**——链路签名、工具直方图、轮数统计全部建立在那个
-分解之上。
+The parser's own transcript decomposition agrees with the `num_turns` that verl writes to disk **on every single sample**.
+**This is the foundation of the whole report's credibility** — chain signatures, tool histograms and turn statistics are all built on that
+decomposition.
 
-> 这条守卫不是装饰。它抓出过一个真实的解析 bug:切分器曾静默丢掉 assistant
-> 的第一轮,使 `depth_estimator` 从深度 benchmark 的工具直方图里完全消失
-> (实际 122 次),平均轮数报 2.13 而真值是 3.13。
+> This guard is not decoration. It caught a real parsing bug: the splitter used to silently drop the assistant's
+> first turn, which made `depth_estimator` disappear entirely from the tool histogram of the depth benchmark
+> (actually 122 calls), and reported the mean turn count as 2.13 when the true value is 3.13.
 
-### 5.3 轮数与工具使用
+### 5.3 Turn counts and tool usage
 
-| benchmark | n | assistant 轮 | 工具调用/样本 | 主导链路 | 覆盖 |
+| benchmark | n | assistant turns | tool calls/sample | dominant chain | coverage |
 |---|--:|--:|--:|---|--:|
 | `blinkdepth` | 124 | 3.13 | 5.16 | `depth_estimator×1+roborefer×2+vision_ops×2@3t` | 82.3% |
 | `cvb2drelation` | 650 | 2.06 | 2.03 | `roborefer×2@2t` | 94.6% |
@@ -378,55 +378,55 @@ master,4.066 B 参数是 16.3 GB;bf16 只要 8.1 GB)。
 | `boppose` | 60 | 5.03 | 4.03 | `bounding_box+depth_estimator+roborefer+sam2@5t` | 96.7% |
 | `bopgrasp` | 60 | 4.95 | 4.00 | `depth_estimator+grasp_generator+roborefer+sam2@5t` | 95.0% |
 
-**三个 RefSpatial benchmark 各只有一种链路,277/277 零变化。**
-这对读分数很关键:在这些 benchmark 上策略是 RoboRefer 的一层薄包装。
-论文 Table 2 里 RoboRefer-8B-SFT 单跑 RefSpatial 是 48.37,SpaceTools-3B 是 53.07。
+**The three RefSpatial benchmarks each have only one chain, 277/277 with zero variation.**
+This matters for reading the scores: on these benchmarks the policy is a thin wrapper around RoboRefer.
+In the paper's Table 2, RoboRefer-8B-SFT alone gets 48.37 on RefSpatial, and SpaceTools-3B gets 53.07.
 
-> `vars_unused` 在 `cvb3ddepth` 上是 600/600,看起来像大面积的重复劳动,
-> **其实是常量背景**:`estimate_depth` 同时发布 `$depth_map` 与
-> `$focal_length_px`,而这些任务确实不需要焦距。作为信号使用时必须先扣掉它。
+> `vars_unused` is 600/600 on `cvb3ddepth`, which looks like widespread wasted work,
+> **but is actually a constant background**: `estimate_depth` publishes both `$depth_map` and
+> `$focal_length_px`, and these tasks really do not need the focal length. It must be subtracted out before being used as a signal.
 
 ---
 
-## 6. 方法学:三次同型错误
+## 6. Methodology: three errors of the same type
 
-这份复现过程中出现过三次**同一个错误**,都被后续检验推翻。写在这里是因为
-它们影响的是**怎么读本报告里的每一个区间**。
+Over the course of this reproduction **the same error** occurred three times, and each was overturned by later checks. It is written here because
+it affects **how to read every interval in this report**.
 
-> **共同形状:拿一个没有重复过的数,去和一个有散布的参照比,然后当成结论。**
+> **Common shape: take a number that has not been repeated, compare it against a reference that has spread, then treat it as a conclusion.**
 
-| # | 事发 | 推翻方式 |
+| # | What happened | How it was overturned |
 |---|---|---|
-| 1 | 「多次抽样的上界恰好等于论文数字 ⇒ 论文报的是上界」 | 上界是抽样次数的单调增函数,**不要求饱和就不成立**。第四次抽样即越过论文 7 个样本 |
-| 2 | 「单次 fp32 落在期望带内 ⇒ 偏离 `[20]` 已排除」 | 那是 fp32 自己范围的**上沿**;补跑两次即推翻 |
-| 3 | 「多数表决@5 高过 greedy 区间 ⇒ 增益是实的」 | 表决只跑了一组、只有**一个值**;改做逐样本配对检验后四次只有一次显著。**2026-09-02 补完第二组后:0/12 显著、方向翻号,降为「无效应」——这一行是本表三条里唯一被后续数据彻底清零的** |
+| 1 | "The upper bound over multiple samples exactly equals the paper's number ⇒ the paper reported an upper bound" | The upper bound is a monotonically increasing function of the number of samples; **without requiring saturation it does not hold**. The fourth run went 7 samples past the paper |
+| 2 | "A single fp32 run falls in the expected band ⇒ deviation `[20]` is ruled out" | That was the **top edge** of fp32's own range; two more runs overturned it |
+| 3 | "Majority vote@5 is above the greedy interval ⇒ the gain is real" | The vote was run as only one set, giving **one value**; switching to per-sample paired tests, only one of four was significant. **After the second set was completed on 2026-09-02: 0/12 significant, direction flipped sign, downgraded to "no effect" — of the three rows in this table, this is the only one that later data zeroed out completely** |
 
-**处方(已写进流程):宣布之前先问——这个数我跑过几次?参照跑过几次?
-两侧的散布都测过吗?**
+**Prescription (now written into the process): before announcing, first ask — how many times have I run this number? How many times was the reference run?
+Has the spread on both sides been measured?**
 
-三次里有两次是被追问才补的检验,说明这一步不能靠临场想起来。
+Two of the three checks were only added after someone pressed for them, which shows this step cannot rely on remembering it on the spot.
 
 ---
 
-## 7. 可复现性附录
+## 7. Reproducibility appendix
 
-### 7.1 模型权重(按 commit 钉版本)
+### 7.1 Model weights (pinned by commit)
 
-| 权重 | 版本 |
+| Weights | Version |
 |---|---|
 | `siyich/spacetools-ckpt` | `f953b1a130a74d5fca78d779dc1a686c892b239f` |
 | `Zhoues/RoboRefer-8B-SFT` | `bd04070786084c624156194d89333c375b274b28` |
 | `allenai/Molmo-7B-D-0924` | `cab33fb7f1a40091911f81165f8481920621948f` |
 | `facebook/sam2.1-hiera-small` | `ee5bba1d82bb8749febdf90f45e84b687142ba03` |
 | `GraspGenModels` | `ec1ccbb5eec0680db669246ac312a3636f16ee43` |
-| `depth_pro.pt` | sha256 `3eb35ca68168ad3d14cb150f8947a4edf85589941661fdb2686259c80685c0ce`(plain wget,校验和是唯一标识) |
+| `depth_pro.pt` | sha256 `3eb35ca68168ad3d14cb150f8947a4edf85589941661fdb2686259c80685c0ce` (plain wget, the checksum is the only identifier) |
 
-**重下时必须带 `--revision <commit>`**,否则权重漂移会成为新的偏差来源
-——而那正是本报告要排除的头号嫌疑。
+**Re-downloads must use `--revision <commit>`**, otherwise weight drift becomes a new source of deviation
+— and that is exactly the prime suspect this report sets out to rule out.
 
-### 7.2 环境矩阵(五个 conda 环境,互不兼容)
+### 7.2 Environment matrix (five conda environments, mutually incompatible)
 
-| 环境 | torch | numpy | transformers |
+| Environment | torch | numpy | transformers |
 |---|---|---|---|
 | `spacetools-rl` | 2.9.1 | 2.4.6 | 4.57.1 |
 | `spacetools-tool-roborefer` | 2.5.1 | 1.26.4 | 4.49.0 |
@@ -434,95 +434,95 @@ master,4.066 B 参数是 16.3 GB;bf16 只要 8.1 GB)。
 | `spacetools-tool-bbox` | — | 2.4.6 | — |
 | `spacetools-tool-graspgen` | 2.3.1 | 2.4.6 | 4.48.3 |
 
-**五个环境是必需的,不是偷懒。** 工具之间的依赖真实冲突
-(RoboRefer 被 VILA 降级后的 ABI、GraspGen 的三层依赖),
-它们通过 Ray 跨环境通信,这也正是 numpy 2.x 那条偏离的来源。
+**Five environments are required, not laziness.** The dependencies between tools genuinely conflict
+(RoboRefer's ABI after VILA downgrades it, GraspGen's three layers of dependencies);
+they communicate across environments via Ray, which is also exactly where the numpy 2.x deviation comes from.
 
-### 7.3 硬件
+### 7.3 Hardware
 
-| | 本报告的数字 | 其它出现过的平台 |
+| | Numbers in this report | Other platforms used |
 |---|---|---|
 | GPU | **4× A100-SXM4-40GB**, cc 8.0, driver 580.159.03 | A6000 (cc 8.6) · A100-SXM4-80GB (cc 8.0) |
-| CUDA | 12.8 (V12.8.93) | 同 |
-| gcc | 13.3.0 | 同 |
+| CUDA | 12.8 (V12.8.93) | same |
+| gcc | 13.3.0 | same |
 
-**GPU 必须是 sm_80 / 8.6 / 8.9 之一**:`pointnet2_ops` 只带这三种 cubin
-且**没有 PTX 回退**,换成 H100(sm_90)或 sm_120 会直接
-`no kernel image is available for execution on the device`。
+**The GPU must be one of sm_80 / 8.6 / 8.9**: `pointnet2_ops` ships cubins only for these three
+and **has no PTX fallback**; switching to H100 (sm_90) or sm_120 fails directly with
+`no kernel image is available for execution on the device`.
 
-### 7.4 代码版本与我们的补丁
+### 7.4 Code versions and our patches
 
-| 仓库 | commit |
+| Repo | commit |
 |---|---|
-| SpaceTools-RL | `8d193ec3`(分支 `repro-4xa6000`) |
+| SpaceTools-RL | `8d193ec3` (branch `repro-4xa6000`) |
 | SpaceTools-SFT | `b7ebbf32` |
 | SpaceTools-Toolshed | `712e557a` |
 
-我们对上游的改动全部记在 `records/CHANGES.md`,并逐条列进 `PROVENANCE.txt`
-的 23 处偏离。其中与本报告数字直接相关的是:
+All of our changes to upstream are recorded in `records/CHANGES.md` and listed one by one among the 23 deviations in `PROVENANCE.txt`.
+The ones directly relevant to the numbers in this report are:
 
-- `8d193ec3` —— 在 dump 里额外落盘 `uid` 与 `num_turns`。**这是纯增量的埋点**,
-  不改变生成,但它使 §5.2 的轮数对账成为可能。
-- `model_dtype=bf16` —— 见 §4.4。**EVAL ONLY,绝不可带进训练。**
-- 数据集路径补丁 `f7560170` —— 九个 parquet 实测全部命中。
+- `8d193ec3` — additionally writes `uid` and `num_turns` into the dump. **This is purely additive instrumentation**;
+  it does not change generation, but it makes the turn-count reconciliation in §5.2 possible.
+- `model_dtype=bf16` — see §4.4. **EVAL ONLY, must never be carried into training.**
+- Dataset path patch `f7560170` — all nine parquets verified to resolve.
 
-### 7.5 怎么重跑
+### 7.5 How to rerun
 
     source /workspace/env.sh
-    bash tools/p4_run.sh <benchmark> <run 标签>      # 标签必须是 run<N>
-    python3 tools/parse_dump.py --strict <dump 目录>  # 守门:健康指标必须全零
-    python3 tools/parse_dump.py --compare  ...        # 多次运行报区间
+    bash tools/p4_run.sh <benchmark> <run label>      # the label must be run<N>
+    python3 tools/parse_dump.py --strict <dump dir>  # gatekeeper: health metrics must all be zero
+    python3 tools/parse_dump.py --compare  ...        # report intervals over multiple runs
 
-`p4_run.sh` 有两条守卫,都是被真实事故换来的:**拒绝覆盖已有 dump**、
-**拒绝非 `run<N>` 的标签**(一次粘连的命令行曾把标签变成 `run2bash`,
-悄悄创建了一整棵平行结果树)。
+`p4_run.sh` has two guards, both paid for by real incidents: **refuse to overwrite an existing dump**,
+**refuse labels that are not `run<N>`** (a run-together command line once turned the label into `run2bash`,
+quietly creating an entire parallel results tree).
 
-### 7.6 原始数据
+### 7.6 Raw data
 
-| 内容 | 路径 |
+| Content | Path |
 |---|---|
-| 13 份原始 dump | `p4/dumps/` |
-| 9 份富化后的逐样本记录 | `p4/parsed/`(本报告 §5 的全部统计来自这里) |
-| eval 日志与 1 Hz 显存轨迹 | `p4/logs/` |
-| 采样实验(§3.2)的 dump | `p6/passk/` |
-| fp32 对照(§4.4)三次 | `p6/fp32/`(**附 README:只看 run7 会得到已收回的结论**) |
-| 偏离 `[23]` 的对照(§4.5) | `p6/gmu025/`(**附 README:可比性看 KV 池大小,不看旋钮取值**) |
-| 全部偏离、权重、环境、硬件 | `records/PROVENANCE.txt` |
+| 13 raw dumps | `p4/dumps/` |
+| 9 enriched per-sample records | `p4/parsed/` (all statistics in §5 of this report come from here) |
+| eval logs and 1 Hz GPU memory traces | `p4/logs/` |
+| dumps of the sampling experiment (§3.2) | `p6/passk/` |
+| fp32 control (§4.4), three runs | `p6/fp32/` (**with README: looking only at run7 gives the retracted conclusion**) |
+| control for deviation `[23]` (§4.5) | `p6/gmu025/` (**with README: comparability depends on KV pool size, not the knob value**) |
+| all deviations, weights, environments, hardware | `records/PROVENANCE.txt` |
 
-**每一个数字都可以从仓库副本直接重算**,不需要 GPU,也不需要重跑评测。
-
----
-
-## 8. 结论与局限
-
-### 结论
-
-1. **复现成立。** 十项里八项的偏差都在 4 个样本以内(多数 1–3 个),
-   方向有高有低,没有系统性偏差。
-2. **口径可比。** BOP-ASK Pose 的指标映射已用论文原文确认,
-   与仓库实现逐字对应;十个数字里九个独立这一点已写明。
-3. **运行侧干净。** 2121 个样本五项健康指标全零,轮数对账逐样本通过。
-   **两个缺口是真问题,不是运行事故。**
-4. **偏差已归因。** 23 处偏离里只剩两条无法排除,且都是硬约束;
-   更强的证据是跨三代硬件的一致性。
-
-### 局限
-
-- **两个缺口未解释。** RoboSpatial VQA −6.13 pp、BOP-ASK Pose +18.99 pp。
-  能实测的候选都已实测,剩下的最自洽解释(论文侧格式失败)**无法从外部检验**。
-- **「稳定上界」未被证明饱和。** 它作为报法稳健,但不能当作关于论文方法学的证据。
-- **`model_dtype=bf16` 的端到端排除已收回。** 权重路径确凿,整体证据不足,
-  两个方向都不能下结论。
-- **本报告只覆盖 accuracy 与偏差归因。** 错误归因(哪一类错、哪个工具的责任、
-  换工具能涨多少)是 P6 的内容。
-
-### 一条留给后续的判断
-
-复现的价值不只在数字对上了。**对不上的那两项,以及被收回的那三条结论,
-是这份工作里信息量最大的部分**——它们各自都附着一个可检验的判据和一次
-明确的推翻。把它们作为**有界的开放问题**记录下来,比把它们抹平更有用。
+**Every number can be recomputed directly from the repo copy**, with no GPU and no rerun of the eval.
 
 ---
 
-*记录:`records/P5_RESULTS.md`(过程与更细的数据)· `records/P6_NOTES.md`(错误归因)
-· `records/P6_GPU_RESULTS.md`(GPU 实验)· `records/PROVENANCE.txt`(偏离与版本)*
+## 8. Conclusions and limitations
+
+### Conclusions
+
+1. **The reproduction holds.** Eight of the ten items deviate by at most 4 samples (most by 1–3),
+   in both directions, with no systematic bias.
+2. **The definitions are comparable.** The BOP-ASK Pose metric mapping has been confirmed against the paper text,
+   and corresponds verbatim to the repo implementation; the fact that only nine of the ten numbers are independent is stated explicitly.
+3. **The run side is clean.** All five health metrics are zero across 2121 samples, and the turn-count reconciliation passes per-sample.
+   **The two gaps are real problems, not run accidents.**
+4. **The deviations are attributed.** Of the 23 deviations only two cannot be ruled out, and both are hard constraints;
+   stronger evidence is the consistency across three hardware generations.
+
+### Limitations
+
+- **The two gaps are unexplained.** RoboSpatial VQA −6.13 pp, BOP-ASK Pose +18.99 pp.
+  Every measurable candidate has been measured; the most self-consistent remaining explanation (format failures on the paper's side) **cannot be tested from outside**.
+- **The "stable upper bound" has not been shown to be saturated.** It is robust as a way of reporting, but cannot be used as evidence about the paper's methodology.
+- **The end-to-end ruling-out of `model_dtype=bf16` has been retracted.** The weight path is conclusive, the overall evidence is insufficient,
+  and no conclusion can be drawn in either direction.
+- **This report covers only accuracy and deviation attribution.** Error attribution (which kind of error, which tool is responsible,
+  how much swapping a tool would gain) is P6 material.
+
+### One judgment left for later work
+
+The value of a reproduction is not only in the numbers that match. **The two items that do not match, and the three retracted conclusions,
+are the most informative part of this work** — each comes with a testable criterion and an
+explicit overturning. Recording them as **bounded open questions** is more useful than smoothing them over.
+
+---
+
+*Records: `records/P5_RESULTS.md` (process and finer-grained data) · `records/P6_NOTES.md` (error attribution)
+· `records/P6_GPU_RESULTS.md` (GPU experiments) · `records/PROVENANCE.txt` (deviations and versions)*

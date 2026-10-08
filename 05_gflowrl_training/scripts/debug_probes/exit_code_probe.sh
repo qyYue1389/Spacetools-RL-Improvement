@@ -1,6 +1,6 @@
-# 最小复现:run_rl.sh 的收尾结构
-#   set -e + trap cleanup EXIT + cleanup 里 kill 一个后台 job 再 wait 它
-# 问题:训练成功退出之后,整个脚本的退出码是多少?
+# Minimal reproduction: the wrap-up structure of run_rl.sh
+#   set -e + trap cleanup EXIT + cleanup kills a background job and then waits on it
+# Question: after training exits successfully, what is the exit code of the whole script?
 set -euxo pipefail
 cleanup(){
   echo CLEANUP_START

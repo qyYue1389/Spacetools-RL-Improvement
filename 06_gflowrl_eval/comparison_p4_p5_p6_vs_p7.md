@@ -1,33 +1,33 @@
-# P4 / P5 / P6 ↔ P7 逐样本对比分析
+# P4 / P5 / P6 ↔ P7 per-sample comparison analysis
 
-对象:`p4/parsed/`(官方 checkpoint,GRPO 之后,run1)与 P7 的 `parsed/`
-(自训 SFT + GFlowRL **C′** step85,零 OOM 的有效运行),按 `sample_id` 配对。
-方法:全部只吃 parsed 记录,零 GPU。脚本在 `analysis/`,输出在 `analysis/compare_p4_p7.txt`。
+Subjects: `p4/parsed/` (official checkpoint, after GRPO, run1) and P7's `parsed/`
+(self-trained SFT + GFlowRL **C′** step85, the valid run with zero OOM), paired by `sample_id`.
+Method: everything uses only the parsed records, zero GPU. Scripts are in `analysis/`, output in `analysis/compare_p4_p7.txt`.
 
-依据:`records/P4_RESULTS.md`、`records/P5_REPORT.md`、`records/P6_REPORT.md`、
-`records/P6_NOTES.md`、`06_gflowrl_eval/gflowrl_eval_report.md`、`03_sft_eval/sft_eval_report.md`。
-
----
-
-## 0. 先说这份对比能回答什么、不能回答什么
-
-**能回答:** 「官方那个 RL 之后的 checkpoint,和我们用 C′ 训出来的 checkpoint,在同一批
-2121 个样本上,**逐样本**的行为差在哪」。工具链路、变量复用、错题归因、透传率这些都是
-可验证的痕迹,不依赖任何人的解读。
-
-**不能回答:** 「C′ 比 GRPO 好还是差」。两个 checkpoint **base 不同**——官方那个是论文
-自己的 SFT 起点,我们这个是自训的 SFT ckpt。这不是一次受控的 A/B。
-
-**真正受控的对比是 SFT 起点 ↔ C′**,而那一边**只有汇总数字,没有 dump**
-(SFT eval 是在一台已经释放的机器上跑的,轨迹没有留下来)。所以凡是涉及
-「C′ 相对自己的起点改变了什么」的结论,下面都会标明它依据的是 SFT 报告里记下的汇总量,
-证据强度低一档。**这是这份分析最大的一条局限,下次评 checkpoint 必须把 dump 一起存。**
+Sources: `records/P4_RESULTS.md`, `records/P5_REPORT.md`, `records/P6_REPORT.md`,
+`records/P6_NOTES.md`, `06_gflowrl_eval/gflowrl_eval_report.md`, `03_sft_eval/sft_eval_report.md`.
 
 ---
 
-## 1. 总表:逐样本配对
+## 0. First: what this comparison can and cannot answer
 
-| benchmark | n | P4 对 | P7 对 | 只有 P4 对 | 只有 P7 对 | 主链路 P4 | 主链路 P7 | 调用/样本 P4 | P7 |
+**Can answer:** "the official post-RL checkpoint and the checkpoint we trained with C′, on the same
+2121 samples, where do they differ **per-sample** in behavior". Tool chains, variable reuse, error attribution, pass-through rate are all
+verifiable traces that do not depend on anyone's interpretation.
+
+**Cannot answer:** "is C′ better or worse than GRPO". The two checkpoints have **different bases** — the official one is the paper's
+own SFT starting point, ours is a self-trained SFT ckpt. This is not a controlled A/B.
+
+**The truly controlled comparison is SFT starting point ↔ C′**, and on that side **there are only summary numbers, no dump**
+(the SFT eval ran on a machine that has since been released, and the trajectories were not kept). So any conclusion about
+"what C′ changed relative to its own starting point" below will be marked as relying on summary quantities recorded in the SFT report,
+one notch lower in evidence strength. **This is the biggest limitation of this analysis; next time a checkpoint is evaluated, the dump must be saved too.**
+
+---
+
+## 1. Summary table: per-sample pairing
+
+| benchmark | n | P4 correct | P7 correct | Only P4 correct | Only P7 correct | Main chain P4 | Main chain P7 | Calls/sample P4 | P7 |
 |---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
 | robospatial | 350 | 229 | 215 | **37** | **23** | 62.3% | 64.9% | 1.629 | 1.646 |
 | reflocation | 100 | 54 | 52 | 3 | 1 | 100.0% | 98.0% | 1.000 | 1.020 |
@@ -39,79 +39,79 @@
 | boppose | 60 | 38 | 39 | 1 | 2 | 96.7% | 98.3% | 4.033 | 4.017 |
 | bopgrasp | 60 | 54 | 56 | 0 | 2 | 95.0% | 90.0% | 4.000 | 4.000 |
 
-P4 用 run1(单次);P4 报告本身对 robospatial / blinkdepth / bopgrasp 是跑多次报区间的,
-所以 P4 这一列是区间的一端,不是"P4 的真值"。
+P4 uses run1 (single run); the P4 report itself ran robospatial / blinkdepth / bopgrasp multiple times and reported intervals,
+so the P4 column is one end of the interval, not "P4's true value".
 
-### 1.1 第一个结构性发现:三个 benchmark 上两个 checkpoint 逐样本完全一致
+### 1.1 First structural finding: on three benchmarks the two checkpoints are identical per-sample
 
-`refplacement`(100)、`refunseen`(77)、`cvb3ddepth`(600)——**777 个样本,没有一个分歧**。
-不是分数相同,是**每一道题的对错都相同**。
+`refplacement` (100), `refunseen` (77), `cvb3ddepth` (600) — **777 samples, not a single divergence**.
+Not the same score — **the same right/wrong on every single question**.
 
-这不是巧合,`p6` 早就给出了机制:在这些 benchmark 上「推理」是一条能写成代码的规则,
-模型逐字执行它。规则的输入是工具的输出,工具是确定性的,于是**策略模型换成谁,
-结果都一样**。
+This is not a coincidence; `p6` already gave the mechanism: on these benchmarks "reasoning" is a rule that can be written as code,
+and the model executes it verbatim. The rule's input is the tool output, and the tools are deterministic, so **no matter which policy model is swapped in,
+the result is the same**.
 
-> **含义:这三个 benchmark 测不出任何 RL 算法的差别。** 它们测的是 RoboRefer 和
-> DepthPro,不是策略。把它们放进"RL 有没有效"的对照表里,只会稀释信号。
+> **Implication: these three benchmarks cannot detect any difference between RL algorithms.** What they measure is RoboRefer and
+> DepthPro, not the policy. Putting them in a "does RL work" comparison table only dilutes the signal.
 
-`reflocation` 分歧 4 个、`cvb2drelation` 分歧 12 个(6/6 对称)、`boppose` 3 个——
-同样接近零。**九个 benchmark 里真正有策略自由度的只有 `robospatial`
-(分歧 60 个)和 `blinkdepth`(10 个)。**
+`reflocation` has 4 divergences, `cvb2drelation` 12 (symmetric 6/6), `boppose` 3 —
+likewise close to zero. **Of the nine benchmarks, the only ones with real policy freedom are `robospatial`
+(60 divergences) and `blinkdepth` (10).**
 
-### 1.2 第二个结构性发现:九个 benchmark 无一显著,两个方向都不显著
+### 1.2 Second structural finding: none of the nine benchmarks is significant, in either direction
 
-对每个 benchmark 的不一致对做 McNemar 精确检验(双侧二项):
+McNemar exact test (two-sided binomial) on the discordant pairs of each benchmark:
 
-| benchmark | n | P4 对 | P7 对 | 差 | 仅 P4 | 仅 P7 | McNemar p | |
+| benchmark | n | P4 correct | P7 correct | Diff | Only P4 | Only P7 | McNemar p | |
 |---|--:|--:|--:|--:|--:|--:|--:|---|
-| robospatial | 350 | 229 | 215 | −14 | 37 | 23 | 0.092 | 不显著 |
-| reflocation | 100 | 54 | 52 | −2 | 3 | 1 | 0.625 | 不显著 |
-| refplacement | 100 | 58 | 58 | 0 | 0 | 0 | 1.000 | **逐样本相同** |
-| refunseen | 77 | 37 | 37 | 0 | 0 | 0 | 1.000 | **逐样本相同** |
-| blinkdepth | 124 | 107 | 109 | +2 | 4 | 6 | 0.754 | 不显著 |
-| cvb2drelation | 650 | 615 | 615 | 0 | 6 | 6 | 1.000 | 不显著 |
-| cvb3ddepth | 600 | 579 | 579 | 0 | 0 | 0 | 1.000 | **逐样本相同** |
-| boppose | 60 | 38 | 39 | +1 | 1 | 2 | 1.000 | 不显著 |
-| bopgrasp | 60 | 54 | 56 | +2 | 0 | 2 | 0.500 | 不显著 |
+| robospatial | 350 | 229 | 215 | −14 | 37 | 23 | 0.092 | Not significant |
+| reflocation | 100 | 54 | 52 | −2 | 3 | 1 | 0.625 | Not significant |
+| refplacement | 100 | 58 | 58 | 0 | 0 | 0 | 1.000 | **Identical per-sample** |
+| refunseen | 77 | 37 | 37 | 0 | 0 | 0 | 1.000 | **Identical per-sample** |
+| blinkdepth | 124 | 107 | 109 | +2 | 4 | 6 | 0.754 | Not significant |
+| cvb2drelation | 650 | 615 | 615 | 0 | 6 | 6 | 1.000 | Not significant |
+| cvb3ddepth | 600 | 579 | 579 | 0 | 0 | 0 | 1.000 | **Identical per-sample** |
+| boppose | 60 | 38 | 39 | +1 | 1 | 2 | 1.000 | Not significant |
+| bopgrasp | 60 | 54 | 56 | +2 | 0 | 2 | 0.500 | Not significant |
 
-用 P7 两次运行压掉单次噪声之后,robospatial 仍然不显著:
-P4 对而 P7 两次都错 29、P4 错而 P7 两次都对 17,**p = 0.104**。
+After using P7's two runs to suppress single-run noise, robospatial is still not significant:
+P4 correct while P7 wrong both times 29, P4 wrong while P7 correct both times 17, **p = 0.104**.
 
-连续判分的两个用配对符号检验,结论同样是零,而且**均值和逐样本方向互相矛盾**:
+For the two continuously scored ones, a paired sign test gives the same conclusion of zero, and moreover **the mean and the per-sample direction contradict each other**:
 
 ```
-boppose    P4 均值 0.5336   P7 均值 0.5573   差 +0.0237
-           但逐样本 P7 更高 19 · P4 更高 26 · 逐位相同 15    符号检验 p = 0.371
-bopgrasp   P4 均值 1.9354   P7 均值 1.8576   差 −0.0778
-           但逐样本 P7 更高 25 · P4 更高 31 · 逐位相同  4    符号检验 p = 0.504
+boppose    P4 mean 0.5336   P7 mean 0.5573   diff +0.0237
+           but per-sample P7 higher 19 · P4 higher 26 · bit-for-bit identical 15    sign test p = 0.371
+bopgrasp   P4 mean 1.9354   P7 mean 1.8576   diff −0.0778
+           but per-sample P7 higher 25 · P4 higher 31 · bit-for-bit identical  4    sign test p = 0.504
 ```
 
-`boppose` 的均值涨了 0.0237,而**多数样本其实是降的**——均值被少数几个 IoU 大幅变化的
-样本拉上去了。`bopgrasp` 的阈值计数(+2)与均值(−0.078)方向相反。**这两个数都不能
-当成"变好"。**
+`boppose`'s mean rose by 0.0237, while **most samples actually went down** — the mean was pulled up by a few samples whose IoU changed by a lot.
+`bopgrasp`'s threshold count (+2) and mean (−0.078) go in opposite directions. **Neither of these numbers can
+be taken as "got better".**
 
-> **所以对"有没有哪个 benchmark 变好"这个问题,答案是:名义上高一点的有三个
-> (blinkdepth +2、boppose +1、bopgrasp +2),但没有一个能通过检验;
-> 名义上低的两个(robospatial −14、reflocation −2)也一样不显著。**
+> **So to the question "did any benchmark get better", the answer is: three are nominally a bit higher
+> (blinkdepth +2, boppose +1, bopgrasp +2), but none passes the test;
+> the two nominally lower (robospatial −14, reflocation −2) are equally not significant.**
 >
-> 注意这不等于"两个 checkpoint 一样"——777 个样本上它们**字面相同**,
-> 而 robospatial 上的行为差异是**能定位到机制的**(§6)。
-> 准确的说法是:**这次测量的分辨率,不足以在任何单个 benchmark 上判定任一方向。**
-> 要判定 robospatial 那 4 pp,需要两边都跑多次。
+> Note this does not mean "the two checkpoints are the same" — on 777 samples they are **literally identical**,
+> while the behavioral difference on robospatial **can be traced to a mechanism** (§6).
+> The accurate statement is: **the resolution of this measurement is insufficient to decide either direction on any single benchmark.**
+> To decide robospatial's 4 pp, both sides need multiple runs.
 
 ---
 
-## 2. 直接回答 P6 留给 P7 的那个动机
+## 2. Directly answering the motivation P6 left for P7
 
-P6 报告 §7 第 1 条:
+P6 report §7 item 1:
 
-> 现有策略的工具编排已经高度坍塌:三个 RefSpatial 上 277/277 用完全相同的链路,
-> `cvb2drelation` 650 里 615 相同。**这正是 GRPO 会做的事,也正是分布匹配目标声称能
-> 避免的。** P7 的动机从「理论上应该」变成了「已经观察到」。
+> The existing policy's tool orchestration has already heavily collapsed: on the three RefSpatial, 277/277 use exactly the same chain,
+> `cvb2drelation` 615 of 650 the same. **This is exactly what GRPO would do, and exactly what a distribution-matching objective claims to
+> avoid.** P7's motivation went from "should in theory" to "already observed".
 
-C′ 是 GFlowRL 的分布匹配目标。**它没有减轻坍塌,在九个 benchmark 里有七个反而更坍塌了。**
+C′ is GFlowRL's distribution-matching objective. **It did not reduce collapse; on seven of the nine benchmarks it is actually more collapsed.**
 
-| benchmark | n | 主链路覆盖率 P4 → P7 | 链路签名种类 P4 → P7 |
+| benchmark | n | Main chain coverage P4 → P7 | Chain signature kinds P4 → P7 |
 |---|--:|---|---|
 | cvb2drelation | 650 | 94.6% → **98.3%** | 10 → **6** |
 | cvb3ddepth | 600 | 96.2% → **99.7%** | 4 → **3** |
@@ -123,26 +123,26 @@ C′ 是 GFlowRL 的分布匹配目标。**它没有减轻坍塌,在九个 bench
 | refplacement | 100 | 100.0% → 99.0% | 1 → **2** |
 | bopgrasp | 60 | 95.0% → **90.0%** | 2 → 2 |
 
-三个 RefSpatial 上 C′ 确实多出了几条链路(277 里有 3 个样本走了别的路),`bopgrasp`
-的主链路也松了 5 pp。但在**样本量大的四个**(cvb2d 650、cvb3d 600、blink 124、
-robospatial 350)上,方向一致地更集中,签名种类还少了。
+On the three RefSpatial C′ did add a few chains (3 of 277 samples took a different path), and `bopgrasp`'s
+main chain also loosened by 5 pp. But on **the four with large sample sizes** (cvb2d 650, cvb3d 600, blink 124,
+robospatial 350), the direction is consistently more concentrated, with fewer signature kinds.
 
-> **结论:「分布匹配目标能避免工具编排坍塌」这个假设,在本次实测中没有得到支持。**
+> **Conclusion: the hypothesis "a distribution-matching objective can avoid tool-orchestration collapse" was not supported in this measurement.**
 >
-> 必须带的限定:(a) 这是跨 base 的对比,不是受控 A/B;(b) C′ 只训了 85 步、1 epoch;
-> (c) 训练侧本来就测到 **63–80% 的组是奖励退化的**,那些组上梯度全部来自漂移项,
-> 做的是向 `π_ref·exp(βr)/Z` 的 flow matching 而不是学奖励——**一个几乎没收到奖励信号
-> 的目标函数,没有理由让编排变多样。** 三条放在一起,这更像是"训练量不足以让目标函数
-> 表达自己",而不是"C′ 的性质被证伪"。
+> Caveats that must go with it: (a) this is a cross-base comparison, not a controlled A/B; (b) C′ trained only 85 steps, 1 epoch;
+> (c) the training side already measured **63–80% of groups as reward-degenerate**; on those groups the gradient comes entirely from the drift term,
+> doing flow matching toward `π_ref·exp(βr)/Z` rather than learning the reward — **an objective that receives almost no reward signal
+> has no reason to make orchestration more diverse.** Taken together, this looks more like "not enough training for the objective
+> to express itself" than "C′'s properties have been falsified".
 
-P6 §7 第 2 条还写过:推理侧可挖空间**已测、结果为零**(多数表决@5 在 12 个格子上
-0 个显著)。所以 P7 的动机本来就只剩「编排多样性」这一条,而这一条现在也是负的读数。
+P6 §7 item 2 also wrote: the inference-side room to exploit **has been measured, and the result is zero** (majority vote@5 significant in 0 of 12
+cells). So P7's motivation was already down to just "orchestration diversity", and that one is now also a negative reading.
 
 ---
 
-## 3. 变量复用:P6 taxonomy 2d,两个 checkpoint 逐位相同
+## 3. Variable reuse: P6 taxonomy 2d, the two checkpoints are bit-for-bit identical
 
-| benchmark | | 暴露 | 使用 | **未用** | 幻觉 |
+| benchmark | | Exposed | Used | **Unused** | Phantom |
 |---|---|--:|--:|--:|--:|
 | blinkdepth | P4 | 269 | 125 | **146** | 2 |
 | | P7 | 275 | 122 | **154** | 1 |
@@ -153,232 +153,232 @@ P6 §7 第 2 条还写过:推理侧可挖空间**已测、结果为零**(多数�
 | bopgrasp | P4 | 240 | 180 | **60** | 0 |
 | | P7 | 240 | 180 | **60** | 0 |
 
-`cvb3ddepth` 上 **1200 个变量暴露、正好用掉 600 个、正好剩 600 个**——每个样本
-`estimate_depth` 暴露 `$depth_map` 与 `$focal_length_px` 两个变量,模型每次都只用前者。
-`boppose`/`bopgrasp` 上 240/180/60 两边逐位相同。
+On `cvb3ddepth`, **1200 variables exposed, exactly 600 used, exactly 600 left** — on every sample
+`estimate_depth` exposes two variables, `$depth_map` and `$focal_length_px`, and the model always uses only the former.
+On `boppose`/`bopgrasp`, 240/180/60 is bit-for-bit identical on both sides.
 
-> P6 提醒过 `vars_unused` 要先扣掉常量背景(`$focal_length_px` 这种本来就没人用的)。
-> 扣掉之后**真正的"拿到了却不用"几乎为零**,两个 checkpoint 也没有区别。
-> **C′ 在变量复用这一维上什么都没改变。**
-
----
-
-## 4. 错题归因:322 个错题 100% clean 的结论,在 P7 上同样成立
-
-P6 最重要的一条结构发现是「322 个错题 100% 是 clean——没有一个错题有基础设施上的借口」。
-P7 这边重跑同一套归因:
-
-```
-                    P4 错题归因              P7 错题归因
-robospatial         干净 121                 干净 134 · 未调用工具 1
-reflocation         干净 46                  干净 48
-refplacement        干净 42                  干净 42
-refunseen           干净 40                  干净 40
-blinkdepth          干净 17                  干净 15
-cvb2drelation       干净 35                  干净 35
-cvb3ddepth          干净 21                  干净 21
-boppose             干净 22                  干净 21
-bopgrasp            工具失败 5 · 干净 1      工具失败 4
-```
-
-OOM、生成截断、工具响应截断、顶轮数、畸形 tool_call、答案解析失败——**两边全部为 0**。
-唯一的非 clean 是 `bopgrasp` 的 `grasp_generator` 领域失败(P4 5、P7 4),以及 P7
-`robospatial` 上一个样本一次工具都没调就作答。
-
-> 这条很重要,因为它把"C′ 分数低"这个问题**关死在策略行为上**:不是环境、不是显存、
-> 不是截断。P7 eval 报告里三个独立口径的 OOM=0 是同一件事的另一半证据。
+> P6 warned that `vars_unused` must first subtract the constant background (things like `$focal_length_px` that nobody uses anyway).
+> After subtracting it, **real "got it but didn't use it" is nearly zero**, and there is no difference between the two checkpoints.
+> **C′ changed nothing on the variable-reuse dimension.**
 
 ---
 
-## 5. P6 的三条判据重新跑一遍
+## 4. Error attribution: the conclusion that 322 wrong answers are 100% clean holds equally on P7
 
-### 5.1 判据 A —— 深度题是否逐字遵守「选测得更近的那个」
+P6's most important structural finding was "322 wrong answers are 100% clean — not a single wrong answer has an infrastructure excuse".
+On the P7 side, rerunning the same attribution:
 
 ```
-blinkdepth    P4 遵守 109 违反 5 无法判定 10   遵守率 95.6%
-              P7 遵守 109 违反 5 无法判定 10   遵守率 95.6%     <- 逐位相同
-cvb3ddepth    P4 遵守 598 违反 1 无法判定 1    遵守率 99.8%
-              P7 遵守 598 违反 2 无法判定 0    遵守率 99.7%
+                    P4 error attribution     P7 error attribution
+robospatial         clean 121                clean 134 · no tool called 1
+reflocation         clean 46                 clean 48
+refplacement        clean 42                 clean 42
+refunseen           clean 40                 clean 40
+blinkdepth          clean 17                 clean 15
+cvb2drelation       clean 35                 clean 35
+cvb3ddepth          clean 21                 clean 21
+boppose             clean 22                 clean 21
+bopgrasp            tool failure 5 · clean 1 tool failure 4
 ```
 
-**P6 的核心洞察在 P7 上原封不动地成立**:在深度题上,"推理"是一条规则,模型逐字执行它,
-错只能错在工具给的数上。C′ 一个百分点都没动。
+OOM, generation truncation, tool-response truncation, hitting the turn limit, malformed tool_call, answer-parse failure — **all 0 on both sides**.
+The only non-clean ones are `bopgrasp`'s `grasp_generator` domain failures (P4 5, P7 4), and one sample on P7's
+`robospatial` that answered without calling any tool at all.
 
-### 5.2 判据 B —— pointing 题是不是工具输出的原样透传
+> This one matters, because it **pins** the question "why is C′'s score low" **to policy behavior**: not the environment, not GPU memory,
+> not truncation. The OOM=0 under three independent definitions in the P7 eval report is the other half of the evidence for the same thing.
+
+---
+
+## 5. Rerunning P6's three criteria
+
+### 5.1 Criterion A — do depth questions verbatim follow "pick the one measured closer"
+
+```
+blinkdepth    P4 follows 109 violates 5 undecidable 10   compliance 95.6%
+              P7 follows 109 violates 5 undecidable 10   compliance 95.6%     <- bit-for-bit identical
+cvb3ddepth    P4 follows 598 violates 1 undecidable 1    compliance 99.8%
+              P7 follows 598 violates 2 undecidable 0    compliance 99.7%
+```
+
+**P6's core insight holds unchanged on P7**: on depth questions, "reasoning" is a rule the model executes verbatim,
+and errors can only come from the numbers the tools give. C′ did not move it by one percentage point.
+
+### 5.2 Criterion B — are pointing questions verbatim pass-through of tool output
 
 ```
               P4               P7
 reflocation   99/99            94/99
 refplacement  100/100          98/100
 refunseen     77/77            76/77
-合计          276/276 = 100%   268/276 = 97.1%
+total         276/276 = 100%   268/276 = 97.1%
 ```
 
-P6 记的「276/276 原样透传」在 P4 上复现了。**C′ 让模型在 8 个样本上不再原样透传。**
-这看上去像是"策略开始参与了",但下一节会说明,在这个任务上参与就是变差。
+The "276/276 verbatim pass-through" recorded in P6 reproduced on P4. **C′ made the model stop passing through verbatim on 8 samples.**
+This looks like "the policy started participating", but the next section shows that on this task, participating means getting worse.
 
-### 5.3 判据 C 与题型分解 —— robospatial VQA
+### 5.3 Criterion C and question-type breakdown — robospatial VQA
 
 ```
-题型                       n     P4 正确率   P7 正确率    P4 答 yes   P7 答 yes   GT=yes
-fit(要自由空间)           105     69.5%      69.5%      83/105     77/105      87
-relation(2D 可判定)        94     77.7%      77.7%      69/94      73/94       60
-front/behind(要深度序)     29     72.4%      62.1%      18/29      13/29       18
+question type                      n     P4 accuracy   P7 accuracy    P4 answers yes   P7 answers yes   GT=yes
+fit (needs free space)             105     69.5%      69.5%      83/105     77/105      87
+relation (2D-decidable)             94     77.7%      77.7%      69/94      73/94       60
+front/behind (needs depth order)    29     72.4%      62.1%      18/29      13/29       18
 ```
 
-- **`fit` 和 `relation` 上两个 checkpoint 的正确率逐位相同。** P6 定位的那块最大缺口
-  ——「`fit` 题几乎总是答 yes,105 题答了 83 次」——C′ 把 yes 从 83 降到 77,
-  **正确率纹丝不动(69.5% → 69.5%)**。少答的 6 次 yes 没有换来任何一题。
-- **唯一移动的是 `front/behind`:72.4% → 62.1%,n=29 上少答对 3 题。** 这一类 P6 判定为
-  **干净的 2a(该调没调)**——问的就是深度序、工具直接给,而 29/29 全程没调
-  `depth_estimator`。C′ 没有让它去调,只是让它在这一类上多答了几次 no。
+- **On `fit` and `relation` the two checkpoints' accuracy is bit-for-bit identical.** The biggest gap P6 located
+  — "`fit` questions almost always answered yes, 83 times out of 105" — C′ lowered yes from 83 to 77,
+  **accuracy did not budge (69.5% → 69.5%)**. The 6 fewer yes answers did not win a single question.
+- **The only thing that moved is `front/behind`: 72.4% → 62.1%, 3 fewer correct on n=29.** P6 judged this category as
+  **clean 2a (should have called, didn't)** — the question is exactly depth order, which the tool gives directly, yet 29/29 never called
+  `depth_estimator`. C′ did not make it call it; it just made it answer no a few more times in this category.
 
-**`robospatial` 全部 350 个样本,`depth_estimator` 调用 0 次——P4 和 P7 都是 0。**
-(SFT 起点是 1 次。)P6 §6.4 记的这个结构性缺口,**GRPO 没修掉,C′ 也没修掉。**
+**Across all 350 `robospatial` samples, `depth_estimator` is called 0 times — 0 for both P4 and P7.**
+(The SFT starting point is 1.) This structural gap recorded in P6 §6.4 **was not fixed by GRPO, and not by C′ either.**
 
 ---
 
-## 6. RoboSpatial 的缺口到底在哪:一条能算清的因果链
+## 6. Where exactly the RoboSpatial gap is: a causal chain that can be fully accounted for
 
-`robospatial` 是九个里唯一有真实策略自由度的 benchmark,P4 ↔ P7 差 14 题。拆开看:
+`robospatial` is the only one of the nine with real policy freedom; P4 ↔ P7 differ by 14 questions. Broken down:
 
-### 6.1 差距全部在 Vacant,VQA 是噪声
+### 6.1 The whole gap is in Vacant; VQA is noise
 
 ```
-           n     P4          P7 第一次      P7 第二次
+           n     P4          P7 1st run     P7 2nd run
 VQA       228   167 73.25%   164 71.93%    166 72.81%
 Vacant    122    62 50.82%    51 41.80%     54 44.26%
 ```
 
-分歧样本的方向(P7 两次都错 vs P4 对 = 丢;P7 两次都对 vs P4 错 = 捡):
+Direction of divergent samples (P7 wrong both times vs P4 correct = lost; P7 correct both times vs P4 wrong = gained):
 
 ```
-丢掉 29 个:VQA 16 · Vacant 13
-捡到 17 个:VQA 14 · Vacant  3
-净        :VQA −2 · Vacant −10
+lost 29:   VQA 16 · Vacant 13
+gained 17: VQA 14 · Vacant  3
+net:       VQA −2 · Vacant −10
 ```
 
-VQA 那 30 个分歧样本的答案方向是**对称的**:丢掉的 16 个里 12 个是 `gt=Yes` 从 yes 翻成
-no、4 个是 `gt=No` 从 no 翻成 yes;捡到的 14 个里 10 个是 `gt=Yes` 从 no 翻成 yes、
-4 个是 `gt=No` 从 yes 翻成 no。**没有系统性方向,就是翻转噪声。**
+The answer directions of those 30 divergent VQA samples are **symmetric**: of the 16 lost, 12 are `gt=Yes` flipped from yes to
+no, 4 are `gt=No` flipped from no to yes; of the 14 gained, 10 are `gt=Yes` flipped from no to yes,
+4 are `gt=No` flipped from yes to no. **No systematic direction; it is just flip noise.**
 
-### 6.2 Vacant 的 −10 题,可以算到底
+### 6.2 Vacant's −10 questions can be accounted for completely
 
-P6 记过一条:`robospatial` Vacant **不是纯透传,而且模型一改就变差**。把这条判据同时
-跑在两边:
+P6 recorded one thing: `robospatial` Vacant **is not pure pass-through, and whenever the model changes the point it gets worse**. Running this criterion
+on both sides:
 
 ```
-              透传               改点                 改好/改坏    原点中位距 -> 改后
-P4       101 个(正确率 55.4%)   21 个(正确率 28.6%)   10 / 11     0.0716 -> 0.0483
-P7        79 个(正确率 57.0%)   42 个(正确率 14.3%)   23 / 19     0.0942 -> 0.0855
+              pass-through                point override                fixed/broken   median orig-point dist -> after
+P4       101 (accuracy 55.4%)   21 (accuracy 28.6%)   10 / 11     0.0716 -> 0.0483
+P7        79 (accuracy 57.0%)   42 (accuracy 14.3%)   23 / 19     0.0942 -> 0.0855
 ```
 
-**C′ 把"改动 roborefer 给的点"的样本从 21 个翻倍到 42 个,而改点的正确率只有 14.3%
-——透传是 57.0%。**
+**C′ doubled the samples that "modify the point roborefer gave" from 21 to 42, and the accuracy of point overrides is only 14.3%
+— pass-through is 57.0%.**
 
-验算(两边各自的分类正确率 × 各自的分类样本数):
+Check (each side's per-category accuracy × each side's per-category sample count):
 
 ```
 P4  101×0.554 + 21×0.286 = 56 + 6 = 62 = 50.82%   ✓
 P7   79×0.570 + 42×0.143 = 45 + 6 = 51 = 41.80%   ✓
 ```
 
-反事实:**如果 P7 保持 P4 的透传/改点比例(101/21),按它自己的分类正确率算,
-是 101×0.570 + 21×0.143 = 57.6 + 3.0 ≈ 61 题 = 50.0%——正好回到 P4 的水平。**
+Counterfactual: **if P7 kept P4's pass-through/point-override ratio (101/21), computed with its own per-category accuracy,
+it would be 101×0.570 + 21×0.143 = 57.6 + 3.0 ≈ 61 questions = 50.0% — right back at P4's level.**
 
-> **所以 RoboSpatial 的全部缺口,可以一步不剩地归给一个行为变化:C′ 让策略更频繁地
-> 去"改进"工具给的点,而这个行为 P6 已经量化过是有害的。**
+> **So the entire RoboSpatial gap can be attributed, with nothing left over, to one behavioral change: C′ makes the policy more often
+> "improve" the point the tool gave, and P6 already quantified this behavior as harmful.**
 >
-> 这条和 §5.2 的透传率下降(276/276 → 268/276)是同一件事在两个 benchmark 上的表现:
-> **C′ 确实让策略"更主动"了,但在这套工具链上,主动等于变差**——因为任务的信息
-> 瓶颈在工具,策略手上没有任何工具没给的信息。
+> This and the drop in pass-through rate in §5.2 (276/276 → 268/276) are the same thing showing up on two benchmarks:
+> **C′ did make the policy "more proactive", but on this tool chain, proactive means worse** — because the task's information
+> bottleneck is in the tools, and the policy has no information the tools did not give it.
 
 ---
 
-## 7. 与 P5 结论的关系
+## 7. Relation to P5's conclusions
 
-P5 报告的几条口径结论,在 P7 上全部照旧成立,不需要重新论证:
+The several definition conclusions in the P5 report all still hold on P7 and do not need to be argued again:
 
-- **十个 Table 2 数字里只有九个独立**(Overall 是 VQA/Vacant 的样本加权)。
-- **解码是 greedy**,`rollout.n=5` 是训练用的 group size,不作用于评测。
-- **`gpu_memory_utilization` 是整卡比例**——P5 §4.5 把它列为"新增偏离",P7 这次是按
-  卡容量反算成 0.545 把 KV 池对齐回 24 GB 的,口径一致。
-- **blinkdepth 要报稳定上限并附区间**(P4 三跑 86.29–87.90,上限 112/124 = 90.32)。
-  P7 单次 87.90 **正好是 P4 区间的上端**,不是"比 P4 高"。
-- **BOP-ASK Pose 的指标映射仍未解决**(论文 34.37 在 n=60 下不是比例)。P7 的 55.73
-  平均 IoU 与 P4 的 53.36 之间的差,**不能当成能力差**。
+- **Of the ten Table 2 numbers only nine are independent** (Overall is the sample-weighted VQA/Vacant).
+- **Decoding is greedy**; `rollout.n=5` is the group size used for training and does not apply to evaluation.
+- **`gpu_memory_utilization` is a fraction of the whole GPU** — P5 §4.5 listed it as a "new deviation"; this time P7 back-computed it from
+  GPU capacity as 0.545 to align the KV pool back to 24 GB, consistent definition.
+- **blinkdepth should be reported with its stable upper bound plus an interval** (P4 three runs 86.29–87.90, upper bound 112/124 = 90.32).
+  P7's single run 87.90 **is exactly the top end of P4's interval**, not "higher than P4".
+- **The BOP-ASK Pose metric mapping is still unresolved** (the paper's 34.37 is not a proportion at n=60). The difference between P7's 55.73
+  mean IoU and P4's 53.36 **cannot be taken as a capability difference**.
 
-P5 §3.1 记的「RoboSpatial VQA −6.13 pp 是唯一超噪声的缺口」——P7 在 VQA 上与 P4
-只差 1–3 题(见 §6.1),**这个缺口 P7 既没有扩大也没有缩小,它是继承下来的。**
-
----
-
-## 8. 结论
-
-**0. 九个 benchmark 无一显著,两个方向都不显著。** McNemar 精确检验最小的 p 是
-robospatial 的 0.092(用 P7 两次运行压噪声后 0.104)。名义上高一点的三个
-(blinkdepth +2、boppose +1、bopgrasp +2)都不显著,而且 `boppose` 的均值与逐样本
-方向相反、`bopgrasp` 的阈值计数与均值方向相反。**"P7 在某个 benchmark 上比 P4 好"
-这句话,目前没有一条证据支持。**
-
-**1. 九个 benchmark 里,只有两个能测出策略差别。** 777 个样本(refplacement /
-refunseen / cvb3ddepth)上两个 checkpoint 逐样本完全一致;reflocation、cvb2drelation、
-boppose、bopgrasp 的分歧也都在个位数。**真正的测量面是 robospatial(350)和
-blinkdepth(124)。** 以后设计 RL 对照实验,应该只在这两个上分配算力。
-
-**2. P6 留给 P7 的那个动机——「分布匹配目标能避免 GRPO 造成的工具编排坍塌」——
-本次实测是负的读数。** 样本量大的四个 benchmark 上 C′ 一致地更集中,签名种类更少。
-但这个读数被三件事削弱:跨 base、85 步、以及 63–80% 的组奖励退化。**它证伪的是
-"C′ 在这个训练量下能做到",不是"C′ 的理论性质不成立"。**
-
-**3. C′ 唯一可测到的行为改变,是让策略更频繁地改动工具输出——而这个改变是有害的。**
-pointing 透传 276/276 → 268/276;Vacant 改点 21 → 42,改点正确率 14.3% vs 透传 57.0%。
-RoboSpatial 的 14 题缺口可以一步不剩地算到这个行为上。
-
-**4. P6 定位的三块结构性缺口,C′ 一块也没动。**
-- `fit` 题(105 道,要自由空间范围)正确率 69.5% → 69.5%,逐位相同;
-- `robospatial` 全程 0 次 `depth_estimator`,P4、P7 都是 0;
-- 深度题的规则遵守率 95.6% / 99.8% → 95.6% / 99.7%,逐位相同。
-
-这三块 P6 都判定为**工具集缺口或该调没调**,而不是奖励塑形能解决的问题。
-**换目标函数动不了它们,是符合 P6 预期的。**
-
-**5. 错题归因两边都是 100% clean。** 没有一个错题有基础设施上的借口——这条让上面
-四条的因果解释是干净的。
+P5 §3.1 recorded "RoboSpatial VQA −6.13 pp is the only gap beyond noise" — P7 differs from P4 on VQA
+by only 1–3 questions (see §6.1), **so P7 neither widened nor narrowed this gap; it is inherited.**
 
 ---
 
-## 9. 局限
+## 8. Conclusion
 
-1. **跨 base,不是受控 A/B。** P4 是论文自己的 base + GRPO,P7 是自训 SFT + C′。
-   所有"C′ 造成了 X"的说法,严格讲只能说成"P7 这个 checkpoint 表现为 X"。
-2. **SFT 起点没有 dump。** 真正受控的 SFT ↔ C′ 逐样本对比做不了,只能比汇总数
-   (robospatial 主链路 SFT 64.3% → C′ 64.9%、调用 1.649 → 1.646——**这两个数说明
-   坍塌在 SFT 起点就已经是这样,C′ 没有改变它**;但这是汇总量,不是逐样本证据)。
-   **下次评 checkpoint 必须把 dump 一起存档。**
-3. **P4 用的是 run1 单次。** P4 对 robospatial / blinkdepth / bopgrasp 是多跑报区间的,
-   本文的 P4 列是区间一端。P7 只有 robospatial 有两次。逐样本配对的"丢/捡"计数
-   因此含单次噪声——§6.1 用的是"P7 两次都错 / 两次都对"来压这个噪声,VQA 上剩下的
-   仍然是对称翻转。
-4. **bopgrasp 的"正确"是 score ≥ 0.5 的阈值计数**,与平均分方向相反(P7 正确数 56 > P4 54,
-   但平均分 1.8576 < 1.9354)。这个 benchmark 的两个读数互相矛盾,**不要单独解读**。
-5. **归因判据沿用 P6 的实现**,包括 P6 自己记下的边界(3b 的归属有争议、人工那 31 条
-   只有一轮标注、无标注一致性度量)。
+**0. None of the nine benchmarks is significant, in either direction.** The smallest McNemar exact-test p is
+robospatial's 0.092 (0.104 after using P7's two runs to suppress noise). The three nominally a bit higher
+(blinkdepth +2, boppose +1, bopgrasp +2) are all not significant, and `boppose`'s mean is opposite to its per-sample
+direction, `bopgrasp`'s threshold count is opposite to its mean. **The statement "P7 is better than P4 on some benchmark"
+currently has no evidence supporting it.**
+
+**1. Of the nine benchmarks, only two can detect policy differences.** On 777 samples (refplacement /
+refunseen / cvb3ddepth) the two checkpoints are identical per-sample; reflocation, cvb2drelation,
+boppose, bopgrasp also have single-digit divergences. **The real measurement surface is robospatial (350) and
+blinkdepth (124).** Future RL comparison experiments should allocate compute only to these two.
+
+**2. The motivation P6 left for P7 — "a distribution-matching objective can avoid the tool-orchestration collapse caused by GRPO" —
+is a negative reading in this measurement.** On the four benchmarks with large sample sizes C′ is consistently more concentrated, with fewer signature kinds.
+But this reading is weakened by three things: cross-base, 85 steps, and 63–80% of groups reward-degenerate. **What it falsifies is
+"C′ can achieve it at this amount of training", not "C′'s theoretical properties do not hold".**
+
+**3. The only measurable behavioral change from C′ is making the policy modify tool output more often — and this change is harmful.**
+pointing pass-through 276/276 → 268/276; Vacant point overrides 21 → 42, point-override accuracy 14.3% vs pass-through 57.0%.
+RoboSpatial's 14-question gap can be attributed to this behavior with nothing left over.
+
+**4. Of the three structural gaps P6 located, C′ moved not one.**
+- `fit` questions (105, need free-space extent) accuracy 69.5% → 69.5%, bit-for-bit identical;
+- `robospatial` has 0 `depth_estimator` calls throughout, 0 for both P4 and P7;
+- rule compliance on depth questions 95.6% / 99.8% → 95.6% / 99.7%, bit-for-bit identical.
+
+P6 judged all three as **tool-set gaps or should-have-called-but-didn't**, not problems reward shaping can solve.
+**That changing the objective cannot move them is consistent with P6's expectation.**
+
+**5. Error attribution is 100% clean on both sides.** Not a single wrong answer has an infrastructure excuse — this makes the causal explanations
+of the four items above clean.
 
 ---
 
-## 附:本文用到的脚本与产物
+## 9. Limitations
+
+1. **Cross-base, not a controlled A/B.** P4 is the paper's own base + GRPO, P7 is self-trained SFT + C′.
+   Every statement "C′ caused X" can strictly only be stated as "this P7 checkpoint exhibits X".
+2. **No dump for the SFT starting point.** The truly controlled SFT ↔ C′ per-sample comparison cannot be done; only summary numbers can be compared
+   (robospatial main chain SFT 64.3% → C′ 64.9%, calls 1.649 → 1.646 — **these two numbers show
+   the collapse was already like this at the SFT starting point, and C′ did not change it**; but these are summary quantities, not per-sample evidence).
+   **Next time a checkpoint is evaluated, the dump must be archived too.**
+3. **P4 uses the single run1.** P4 ran robospatial / blinkdepth / bopgrasp multiple times and reported intervals;
+   the P4 column in this document is one end of the interval. P7 has two runs only for robospatial. The "lost/gained" counts from per-sample pairing
+   therefore include single-run noise — §6.1 uses "P7 wrong both times / correct both times" to suppress this noise, and what remains on VQA
+   is still symmetric flips.
+4. **bopgrasp's "correct" is a threshold count of score ≥ 0.5**, opposite in direction to the mean score (P7 correct count 56 > P4 54,
+   but mean score 1.8576 < 1.9354). The two readings of this benchmark contradict each other; **do not interpret it in isolation**.
+5. **The attribution criteria reuse P6's implementation**, including the boundaries P6 itself recorded (attribution of 3b is disputed, the 31 manual ones
+   have only one round of labeling, no inter-annotator agreement measure).
+
+---
+
+## Appendix: scripts and artifacts used in this document
 
 ```
-analysis/compare_p4_p7.py            逐样本配对:正确率、链路签名、工具调用、变量、错题归因
-analysis/compare_p4_p7.txt           上面那份的完整输出
-analysis/robospatial_divergence.py   robospatial 分歧样本的方向与题型
-analysis/p6_criteria_p4_vs_p7.py     P6 判据 A/B、VQA 题型三分、Vacant 透传-vs-改点、坍塌度
-analysis/significance_p4_p7.py       McNemar 精确检验 + 连续判分的配对符号检验
-parsed/<benchmark>.jsonl             P7 九个 benchmark 的结构化记录(与 p4/parsed 同构)
-parsed_runC/robospatial.jsonl        robospatial 第二次运行
+analysis/compare_p4_p7.py            per-sample pairing: accuracy, chain signatures, tool calls, variables, error attribution
+analysis/compare_p4_p7.txt           full output of the above
+analysis/robospatial_divergence.py   direction and question type of robospatial divergent samples
+analysis/p6_criteria_p4_vs_p7.py     P6 criteria A/B, VQA three-way question-type split, Vacant pass-through vs point override, collapse degree
+analysis/significance_p4_p7.py       McNemar exact test + paired sign test for continuous scores
+parsed/<benchmark>.jsonl             structured records of P7's nine benchmarks (same structure as p4/parsed)
+parsed_runC/robospatial.jsonl        robospatial second run
 ```
 
-`parsed/` 由 `spacetools-repro/tools/parse_dump.py --emit` 从 `dumps/` 生成,
-字段与 `p4/parsed/` 逐个相同(含 `chain_signature`、`vars_exposed/used/unused/phantom`、
-`trajectory`、`num_turns_verl_convention`),**不需要 GPU,可随时重算。**
+`parsed/` is generated from `dumps/` by `spacetools-repro/tools/parse_dump.py --emit`;
+fields are identical one-for-one with `p4/parsed/` (incl. `chain_signature`, `vars_exposed/used/unused/phantom`,
+`trajectory`, `num_turns_verl_convention`), **needs no GPU, can be recomputed at any time.**

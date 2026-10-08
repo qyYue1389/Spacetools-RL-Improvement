@@ -1,152 +1,152 @@
-# 环境包修订 2026-09-12:POSTRESTORE.sh + VERIFY 前置检查
+# Environment package revision 2026-09-12: POSTRESTORE.sh + VERIFY pre-check
 
-写于 2026-09-12 · 依据 `03_sft_eval/sft_eval_results.md` 里 2026-09-11 那次 eval 的发现
-· 已推到 `qzpm55555/spacetools-eval-env`
+Written 2026-09-12 · based on the findings of the 2026-09-11 eval in `03_sft_eval/sft_eval_results.md`
+· already pushed to `qzpm55555/spacetools-eval-env`
 
 ---
 
-## 0. 一句话
+## 0. In one sentence
 
-那次 eval 暴露的三个「包里缺东西」和两个「假绿灯」,已经以**小文件**的形式修进 HF repo,
-**22 GB 的 envs tar 没动**。新机器的还原顺序多一步:
+The three "things missing from the package" and two "false green lights" exposed by that eval have been fixed into the HF repo as **small files**;
+**the 22 GB envs tar was not touched**. The restore order on a new machine gains one step:
 
 ```
 4. bash FETCH_WEIGHTS.sh
 5. bash RESTORE.sh
-5b. bash POSTRESTORE.sh     ← 新增
-6. bash VERIFY.sh           ← 现在是四项
+5b. bash POSTRESTORE.sh     ← new
+6. bash VERIFY.sh           ← now four items
 ```
 
-## 1. 为什么是传文件而不是重新打包
+## 1. Why upload files instead of repackaging
 
-真实 delta 只有三行:两个 `node.py` 各改 1 行、一个 1 行的 `activate.d`。
-重打 22 GB 换来的只是「自包含」,而代价有三项:
+The real delta is only three lines: 1 line changed in each of two `node.py` files, and a 1-line `activate.d`.
+Repackaging 22 GB would only buy "self-contained", at three costs:
 
-| | 重新打包 | 传小文件 |
+| | Repackage | Upload small files |
 |---|---|---|
-| 上传/下载量 | 压缩后约 26–28 GB(`/opt/conda-st` 现在 52G,原包解开约 40G,多出来的是 eval 跑出的 `__pycache__` 和 conda 缓存) | 几 KB |
-| 每次换机器的下载增量 | **+5 GB** | 0 |
-| 能否验证 | **不能**。`RESTORE.sh` 第 0 步 `[ -e /opt/conda-st ] && die`,明确拒绝覆盖,所以打完包只能确认「压缩上传成功」,不能确认「还原出来是对的」 | 能,脚本自带回读断言 |
-| 根因可见性 | 把 workaround 焊进 tar,Python 版本不一致这个根因彻底隐形 | 补丁显式、可审、将来可删 |
+| Upload/download volume | about 26–28 GB compressed (`/opt/conda-st` is now 52G, the original package unpacks to about 40G; the extra is `__pycache__` produced by eval runs and the conda cache) | a few KB |
+| Download increment per machine switch | **+5 GB** | 0 |
+| Can it be verified | **No**. Step 0 of `RESTORE.sh` is `[ -e /opt/conda-st ] && die`, which explicitly refuses to overwrite, so after packaging we could only confirm "compressed and uploaded successfully", not "the restore comes out right" | Yes, the script has built-in read-back assertions |
+| Root-cause visibility | welding the workaround into the tar makes the root cause (Python version mismatch) completely invisible | the patch is explicit, reviewable, and can be deleted later |
 
-A100(sm_80)和 A6000(sm_86)用**同一个包**,架构实扫确认自编扩展缺 sm_8x 为 0,
-所以频繁换这两种卡不需要按架构分包 —— 变的只有 `NUM_GPUS` / `EVAL_GPUS` 和 GPU 预算。
+A100 (sm_80) and A6000 (sm_86) use **the same package**; the architecture scan confirmed that self-built extensions missing sm_8x is 0,
+so switching frequently between these two GPU types does not require per-architecture packages — the only things that change are `NUM_GPUS` / `EVAL_GPUS` and the GPU budget.
 
-## 2. `POSTRESTORE.sh` 补的三件事
+## 2. The three things `POSTRESTORE.sh` patches
 
-幂等、可重复跑、每一处补完立刻回读断言。
+Idempotent, safe to re-run, and every patch is immediately read back and asserted.
 
-**① Ray 的 Python 版本档位。** 本包 `spacetools-tool-vlm` / `spacetools-tool-bbox`
-是 Python 3.11.0,其余三个是 3.11.16。Ray 的 `check_version_info` 默认比完整版本串,
-这两个环境的 actor **全部入不了集群**。
+**① Ray's Python version match level.** In this package `spacetools-tool-vlm` / `spacetools-tool-bbox`
+are Python 3.11.0, and the other three are 3.11.16. Ray's `check_version_info` compares the full version string by default,
+so **none of the actors** from these two environments can join the cluster.
 
-脚本改用 Ray 自带的 `minor` 档(`node.py:454` 的调用点补
-`python_version_match_level="minor"`,原文件备份为 `node.py.orig`)。
+The script switches to Ray's built-in `minor` level (adding
+`python_version_match_level="minor"` at the call site in `node.py:454`, with the original file backed up as `node.py.orig`).
 
-安全性依据:两侧 bytecode magic 都是 3495、pickle 默认协议都是 4,code object 与
-pickle 互通 —— 这正是 minor 档的设计场景;该改动只放宽一个版本检查,不改变任何数值。
+Safety rationale: both sides have bytecode magic 3495 and default pickle protocol 4, so code objects and
+pickles are interchangeable — exactly the scenario the minor level is designed for; the change only relaxes one version check and does not change any numerical value.
 
-**脚本是版本感知的**:它先读五个环境的 Python,只对与头节点(`spacetools-rl`)
-不一致的环境打补丁。将来重建包统一到 3.11.16,这一项自动跳过。
+**The script is version-aware**: it first reads the Python of all five environments and only patches environments that differ from the head node (`spacetools-rl`).
+If the package is rebuilt in the future with everything unified on 3.11.16, this item is skipped automatically.
 
-**② roborefer 环境的 `CUDA_HOME`。** llava 推理路径模块级硬依赖 deepspeed(环境
-README 洞 #17),deepspeed import 时读 `CUDA_HOME`。打包机有系统
-`/usr/local/cuda-12.8` 命中 torch 的第三条 fallback,只装驱动的机器没有。
+**② `CUDA_HOME` for the roborefer environment.** The llava inference path hard-depends on deepspeed at module level (environment
+README hole #17), and deepspeed reads `CUDA_HOME` at import. The packaging machine had the system
+`/usr/local/cuda-12.8`, which hit torch's third fallback; a machine with only the driver installed does not have it.
 
-**③ `/workspace/logs` 和 `/workspace/smoke`。** `28_chain.sh` / `04_smoke.sh` 往这
-两个目录写,MANIFEST 只提了 `checkpoints` 和 `hf`。
+**③ `/workspace/logs` and `/workspace/smoke`.** `28_chain.sh` / `04_smoke.sh` write to these
+two directories, while MANIFEST only mentioned `checkpoints` and `hf`.
 
-## 3. `VERIFY.sh` 的两处修订 —— 这一条比上面三件更重要
+## 3. Two revisions to `VERIFY.sh` — this matters more than the three things above
 
-**原来的三项抓不到 ①。** 补丁之前 `28_chain.sh` 是**通过**的(实测四环全 STEP_OK),
-Python 版本不一致只在 eval / RL 规模下暴露。也就是说:忘了跑 POSTRESTORE,
-三项全绿,然后 RL 静默少 23 个 actor。
+**The original three items cannot catch ①.** Before the patch `28_chain.sh` **passed** (measured: all four chains STEP_OK);
+the Python version mismatch only surfaces at eval / RL scale. In other words: forget to run POSTRESTORE,
+all three items are green, and then RL silently runs with 23 fewer actors.
 
-所以加了**第 0 项前置检查**,不过就 `exit 1` 且不打印后面三项:
+So a **pre-check item 0** was added; if it fails, it does `exit 1` and does not print the three items after it:
 
 ```
-五环境 Python 版本 + 不一致时补丁是否在位
-roborefer 的 CUDA_HOME(未设时自动指向该环境)
-/workspace/{logs,smoke,checkpoints,hf} 是否存在
-有没有活着的 Ray 集群 / 残留的集群地址文件
+Python versions of the five envs + whether the patch is in place when they differ
+CUDA_HOME for roborefer (automatically pointed at that env when unset)
+whether /workspace/{logs,smoke,checkpoints,hf} exist
+whether there is a live Ray cluster / leftover cluster address file
 ```
 
-**第 3 项不再相信 `28_chain.sh` 的退出码**,改为在输出里找成功标记。实测它
-打印「✗ 链没通」的同时 `exit 0`,而汇总据此打了「✓ 三项全过」。
+**Item 3 no longer trusts the exit code of `28_chain.sh`**; it now looks for a success marker in the output. Measured: it
+prints "✗ chain not connected" while doing `exit 0`, and the summary printed "✓ all three passed" based on that.
 
-### 残留 Ray 集群这个坑值得单独记
+### The leftover Ray cluster pitfall deserves its own note
 
-`/root/tmp/ray/ray_current_cluster`(上一次 eval 留下的 19 字节地址文件)足以让
-`28_chain.sh` 的 `ray.init(num_cpus=8, num_gpus=1, ...)` 以为集群还在:
+`/root/tmp/ray/ray_current_cluster` (a 19-byte address file left by the previous eval) is enough to make
+`28_chain.sh`'s `ray.init(num_cpus=8, num_gpus=1, ...)` think the cluster is still there:
 
 ```
 Connecting to existing Ray cluster at address: ...:6379
 ValueError: When connecting to an existing cluster, num_cpus and num_gpus must not be provided.
 ```
 
-python 块第 1 秒就死,脚本仍然 `exit 0`。**上一次 eval 不清理,下一次 VERIFY 的
-第 3 项就会失败并给假绿灯。** 第 0 项现在会拦住。
+The python block dies within 1 second, and the script still does `exit 0`. **If the previous eval is not cleaned up, item 3 of the next VERIFY
+fails and gives a false green light.** Item 0 now blocks this.
 
-另外 `ray stop --force` 报「57/58 停掉」不必担心:剩下那个是 zombie,已 defunct。
+Also, `ray stop --force` reporting "57/58 stopped" is nothing to worry about: the remaining one is a zombie, already defunct.
 
-### 检测活集群要用 `pgrep -x` 而不是 `pgrep -f`
+### Detect a live cluster with `pgrep -x`, not `pgrep -f`
 
-第 0 项判断「有没有活着的 Ray 集群」时,**必须按进程名精确匹配**:
+When item 0 decides "is there a live Ray cluster", it **must match the process name exactly**:
 
 ```bash
-pgrep -x gcs_server || pgrep -x raylet        # 对
-pgrep -f "gcs_server|raylet"                  # 错,会匹配调用方自己的命令行
+pgrep -x gcs_server || pgrep -x raylet        # correct
+pgrep -f "gcs_server|raylet"                  # wrong, matches the caller's own command line
 ```
 
-`pgrep -f` 匹配整条命令行,所以 `ray stop --force && bash VERIFY.sh` 这类调用会
-把自己算成「有 Ray 在跑」而误报。Ray 的 core 二进制名就叫 `gcs_server` 和 `raylet`,
-`-x` 按 comm 精确匹配,不受调用方命令行影响。
+`pgrep -f` matches the whole command line, so a call like `ray stop --force && bash VERIFY.sh` would
+count itself as "Ray is running" and give a false alarm. Ray's core binaries are named exactly `gcs_server` and `raylet`;
+`-x` matches comm exactly and is not affected by the caller's command line.
 
-## 4. 顺手修掉的源头问题
+## 4. Upstream issue fixed along the way
 
-`RESTORE.sh` 第 1 步执行 `sha256sum -c SHA256SUMS`,而 repo 原来只有
-`SHA256SUMS.remote`,照文档跑必然 die 在「包损坏了」。现在两个同名文件都在 repo 里
-(内容相同),不用再手动 `cp`。
+Step 1 of `RESTORE.sh` runs `sha256sum -c SHA256SUMS`, but the repo originally only had
+`SHA256SUMS.remote`, so following the docs was bound to die with "package is corrupted". Now both files are in the repo
+(identical content), and no manual `cp` is needed.
 
-## 5. 验证过程
-
-```
-POSTRESTORE.sh  幂等性:补丁已在位时正确报「已打过,跳过」并回读确认,exit 0
-VERIFY.sh 第 0 项:
-    有残留 Ray 集群时  → 正确 BAD 并 exit 1(在真实残留条件下测到)
-    清理之后          → 8 项全 OK,正确进入第 1 项
-SHA256SUMS:     13/13 自校验通过(6 个小文件重算,7 个大文件沿用原哈希)
-两个脚本:        bash -n 语法检查通过
-```
-
-## 6. repo 里改动了什么
+## 5. Verification
 
 ```
-POSTRESTORE.sh      新增   5535 字节
-VERIFY.sh           改写   5117 字节(三项 → 四项)
-README.md           追加   还原顺序 + 三件事的说明 + SHA256SUMS 那条
-MANIFEST.txt        追加   五环境 Python 版本表 + GPU 预算实测
-SHA256SUMS.remote   重算
-SHA256SUMS          新增   与 .remote 内容相同
-spacetools-envs-*.tar.zst        未动
-spacetools-scripts-*.tar.zst     未动
+POSTRESTORE.sh  idempotency: with the patch already in place, correctly reports "already applied, skipping" and reads back to confirm, exit 0
+VERIFY.sh item 0:
+    with a leftover Ray cluster  → correctly BAD and exit 1 (tested under real leftover conditions)
+    after cleanup                → all 8 checks OK, correctly proceeds to item 1
+SHA256SUMS:     13/13 self-check passed (6 small files recomputed, 7 large files keep their original hashes)
+both scripts:   bash -n syntax check passed
 ```
 
-## 7. 还没做的
+## 6. What changed in the repo
 
-**根治 Python 版本不一致** —— 重建环境包时把五个环境统一到 3.11.16,之后
-`POSTRESTORE.sh` 的第 ① 项自动跳过,整个脚本可以删。
+```
+POSTRESTORE.sh      new         5535 bytes
+VERIFY.sh           rewritten   5117 bytes (three items → four items)
+README.md           appended    restore order + explanation of the three things + the SHA256SUMS note
+MANIFEST.txt        appended    Python version table of the five envs + measured GPU budget
+SHA256SUMS.remote   recomputed
+SHA256SUMS          new         same content as .remote
+spacetools-envs-*.tar.zst        untouched
+spacetools-scripts-*.tar.zst     untouched
+```
 
-本机上没法就地升级:
+## 7. Not done yet
+
+**Fix the Python version mismatch at the root** — when rebuilding the environment package, unify all five environments on 3.11.16; after that
+item ① of `POSTRESTORE.sh` is skipped automatically and the whole script can be deleted.
+
+It cannot be upgraded in place on this machine:
 
 ```
 CondaToSNonInteractiveError: Terms of Service have not been accepted for:
     https://repo.anaconda.com/pkgs/main   https://repo.anaconda.com/pkgs/r
 ```
 
-接受 Anaconda 商业条款是组织的法务决定;而且重新求解有动到 numpy 1.26.4 /
-transformers 4.53.2 等钉死版本的风险,那是本项目最怕的静默改口径。
+Accepting Anaconda's commercial terms is a legal decision for the organization; and re-solving risks moving pinned versions such as numpy 1.26.4 /
+transformers 4.53.2, which is the silent definition change this project fears most.
 
-**GPU 预算**(见 `03_sft_eval/sft_eval_results.md` §4、§6):全工具存活时工具占 2.3 张、
-策略要一整张,4 卡机器上偏紧;RL 的 actor 数量约需 7 张以上,必须重新算。
-这一条不是包能解决的,是选机器时要算的。
+**GPU budget** (see `03_sft_eval/sft_eval_results.md` §4, §6): with all tools alive the tools take 2.3 GPUs and
+the policy needs a whole GPU, which is tight on a 4-GPU machine; RL's actor count needs roughly 7+ GPUs and must be recomputed.
+This is not something the package can solve; it has to be computed when choosing machines.

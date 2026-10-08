@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""把训练日志里每一步的关键指标抽成一张表 + CSV。
-按需运行,不是守护进程:每次重新解析整个日志,幂等,不会掉队也没有进程要看管。
-    python3 /root/p7tab.py [日志路径]
+"""Extract the key metrics of every step in the training log into a table + CSV.
+Run on demand, not a daemon: re-parses the whole log every time, idempotent, never falls behind, and no process to babysit.
+    python3 /root/p7tab.py [log path]
 """
 import re, sys
 LOG = sys.argv[1] if len(sys.argv) > 1 else "/root/logs/full_train.log"
@@ -41,7 +41,7 @@ for line in open(LOG, errors="replace"):
     rows[int(m.group(1))] = d
 
 if not rows:
-    print("还没有完成的步。日志:", LOG)
+    print("No completed steps yet. Log:", LOG)
     raise SystemExit(0)
 
 hdr = [h for _, h, _ in COLS]
@@ -58,5 +58,5 @@ with open(CSV, "w") as f:
             raw.append("" if v is None else repr(v))
         print("  ".join(c.rjust(x) for c, x in zip(cells, w)))
         f.write(",".join(raw) + "\n")
-print(f"\n{len(rows)} 步 -> {CSV}")
-print("盯这三样:sat 贴 1.0 = 幅度信息没了 · rew/drift 掉到 <1 = 奖励被漂移淹没 · mem_gb 逼近 46 = 要 OOM")
+print(f"\n{len(rows)} steps -> {CSV}")
+print("Watch these three: sat pinned at 1.0 = magnitude information is gone · rew/drift drops below <1 = reward drowned by drift · mem_gb approaching 46 = about to OOM")

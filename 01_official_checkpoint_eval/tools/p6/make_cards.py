@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""为 P6 待人工归类的错题渲染审阅卡:原图 + 工具返回的点 + 题面/GT/模型答案/判据。
+"""Render review cards for the P6 wrong answers awaiting manual classification: original image + points returned by tools + question/GT/model answer/criterion.
 
-一张卡回答的问题固定是三选一:
-  1 工具错     —— 某个点落在了错的物体上
-  3b 坐标系/语义 —— 点都对,但 GT 用的不是图像平面的语义
-  6 标注问题   —— 点都对、语义也对,GT 本身可疑
+The question a card answers is always one of three:
+  1 tool error       — some point landed on the wrong object
+  3b frame/semantics — the points are all correct, but the GT does not use image-plane semantics
+  6 label problem    — points correct, semantics correct too; the GT itself is questionable
 """
 import base64, io, json, re, os, sys
 import pandas as pd
@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 import argparse
 _ap = argparse.ArgumentParser()
-_ap.add_argument("--data", default="../eval-benchmarks/data", help="eval-benchmarks 的 data/ 目录")
+_ap.add_argument("--data", default="../eval-benchmarks/data", help="data/ directory of eval-benchmarks")
 _ap.add_argument("--parsed", default="p4/parsed")
 _ap.add_argument("--out", default="p6/manual/cards")
 _ap.add_argument("--pending", default="p6/manual/pending31.json")
@@ -20,7 +20,7 @@ _A = _ap.parse_args()
 DATA, PARSED, OUT = _A.data, _A.parsed, _A.out
 PT = re.compile(r"\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)")
 
-# 必须用带 CJK 的字体,否则说明文字全是方块
+# must use a font with CJK glyphs, otherwise the caption text is all boxes
 CJK = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 CJKB = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
 DJ = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
@@ -105,14 +105,14 @@ def card(case, rec, row, path):
     lines.append(("B", f"[{case['bench']}] #{case['sid']}   —— {case['why']}"))
     for L in wrap(d, case["q"].replace("\n", " "), W-24, font):
         lines.append(("", L))
-    m = f"  间距 {case['margin']:.3f}" if case.get("margin") is not None else ""
-    lines.append(("B", f"GT = {case['gt']}    模型 = {case['ans']}    规则 = {case.get('rule')}{m}"))
-    lines.append(("", "工具返回:"))
+    m = f"  margin {case['margin']:.3f}" if case.get("margin") is not None else ""
+    lines.append(("B", f"GT = {case['gt']}    model = {case['ans']}    rule = {case.get('rule')}{m}"))
+    lines.append(("", "tool returned:"))
     for i, (name, p, t) in enumerate(pts[:4]):
         lines.append(("S", f"  [{i+1}] {name} -> ({p[0]}, {p[1]})"))
     for name, p, t in dets:
         if p is None:
-            lines.append(("S", f"  (无点) {name} -> {t}"))
+            lines.append(("S", f"  (no point) {name} -> {t}"))
 
     lh = 22
     H = im.height + 16 + lh * len(lines) + 14
@@ -130,7 +130,7 @@ def card(case, rec, row, path):
 def main():
     os.makedirs(OUT, exist_ok=True)
     cases = json.load(open(_A.pending))
-    cases += [dict(bench="blinkdepth", sid=s, why="判据 A 不可判定(3 次 index_at)",
+    cases += [dict(bench="blinkdepth", sid=s, why="criterion A undecidable (3 index_at calls)",
                    margin=None, rule=None, ans="?", gt="?", q="") for s in (69, 86)]
     parsed, dfs = {}, {}
     made = []
@@ -148,7 +148,7 @@ def main():
         card(c, rec, dfs[b].iloc[c["sid"]], p)
         made.append(p)
     json.dump(cases, open(os.path.join(OUT, "pending_all.json"), "w"), ensure_ascii=False, indent=1)
-    print(f"{len(made)} 张卡 -> {OUT}/")
+    print(f"{len(made)} cards -> {OUT}/")
     for p in made:
         print(" ", p)
 

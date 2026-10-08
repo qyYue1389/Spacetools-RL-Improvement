@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# 在一台裸 GPU 机器上,从零把 P7 的 RL checkpoint 评完九个 benchmark。
+# On a bare GPU machine, evaluate P7's RL checkpoint on all nine benchmarks from scratch.
 #
-#   export HF_TOKEN=hf_xxx          # 私有 repo 要
+#   export HF_TOKEN=hf_xxx          # needed for the private repos
 #   P7_STEP=86 bash EVAL_FROM_SCRATCH.sh
 #
-# 每一步幂等,中断后重跑会跳过已完成的。每一步的判据是"看到成功标记",不是"退出码 0"
-# —— 这个项目的失败模式高度集中在"看起来成功了"。
+# Every step is idempotent; rerunning after an interruption skips what's already done. Each step's criterion is "success marker seen", not "exit code 0"
+# — this project's failure modes are heavily concentrated in "looked like it succeeded".
 set -uo pipefail
 
 P7_REPO="${P7_REPO:-qzpm55555/spacetools-p7-gflowrl-cprime-8xa40}"
@@ -16,10 +16,10 @@ CK="${CK:-/workspace/checkpoints}"
 MODEL="$CK/p7-step$P7_STEP"
 EVAL_OUT="${EVAL_OUT:-/workspace/exp/p7_eval_step$P7_STEP}"
 RUN_EVAL=/opt/spacetools/SpaceTools-RL/examples/toolshed/run_eval.sh
-# KV 池的目标大小(GB)。24 = SFT 基线(61.00 ± 0.77)测出来时的池子大小:
-# 48 GB 卡 × gpu_memory_utilization 0.5。这个旋钮是**整卡比例**不是绝对值,
-# 换卡不改它,池子就变了 —— 池子大小改变 batch 组成 -> 浮点归约顺序 -> 接近平局的
-# 样本翻转。要和 SFT 起点比,就得让池子一样大。
+# Target KV pool size (GB). 24 = the pool size when the SFT baseline (61.00 ± 0.77) was measured:
+# 48 GB GPU × gpu_memory_utilization 0.5. This knob is a **fraction of the whole GPU**, not an absolute value;
+# switch GPUs without changing it and the pool changes — pool size changes batch composition -> floating-point reduction order -> near-tie
+# samples flip. To compare against the SFT starting point, the pool has to be the same size.
 KV_POOL_GB="${KV_POOL_GB:-24}"
 export HF_HOME="${HF_HOME:-/workspace/hf}"
 export HF_HUB_ENABLE_HF_TRANSFER=1
@@ -27,55 +27,55 @@ export HF_HUB_ENABLE_HF_TRANSFER=1
 die(){ echo; echo "✗ $*"; exit 1; }
 step(){ echo; echo "==== $* ===="; }
 
-step "0. 机器验收"
-command -v nvidia-smi >/dev/null 2>&1 || die "没有 nvidia-smi —— 驱动没装。第一条检查是 nvidia-smi -L,不是 nvidia-smi"
+step "0. Machine acceptance check"
+command -v nvidia-smi >/dev/null 2>&1 || die "no nvidia-smi — driver not installed. The first check is nvidia-smi -L, not nvidia-smi"
 nvidia-smi --query-gpu=name,driver_version,compute_cap,memory.total --format=csv
 NGPU=$(nvidia-smi -L | wc -l)
 MEMMIN=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | sort -n | head -1)
 CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1)
 DRV=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1 | cut -d. -f1)
-[ "$NGPU" -ge 4 ] || die "只有 $NGPU 张卡。工具逻辑预留 3.0 + 策略 1.0 = 4.0,至少 4 张"
+[ "$NGPU" -ge 4 ] || die "only $NGPU GPUs. Tool logical reservation 3.0 + policy 1.0 = 4.0, need at least 4"
 case "$CC" in
     8.0|8.6|8.9) ;;
-    *) die "compute capability $CC 不在覆盖范围。环境包的自编扩展只有 sm_80/86/89 的 cubin、没带 +PTX,H100(9.0)跑不了" ;;
+    *) die "compute capability $CC is not covered. The environment package's self-built extensions only have cubins for sm_80/86/89 and no +PTX; H100 (9.0) cannot run them" ;;
 esac
-[ "${DRV:-0}" -ge 550 ] || die "驱动 $DRV < 550"
-# 显存下限:P4 在 A100-40GB 上用这套分数跑完九个 benchmark、零 OOM,所以 40 GB 够。
-# 实测峰值:Molmo 34.6 GB(上游 vlm.py:116 吃掉 dtype 配置,fp32 加载)、
-# DepthPro×2 那张 25.7 GB、策略卡 gmu×整卡。
-[ "$MEMMIN" -ge 38000 ] || die "最小单卡显存 ${MEMMIN} MiB < 40 GB。Molmo 一个 actor 就要 34.6 GB,装不下。
-    要在更小的卡上跑必须重算 TOOL_CONFIGS 的分数、可能还要上 8-bit —— 那会让分数与论文不可比,不要硬跑:
-    OOM 不会让脚本崩,只会静默掉分(实测 88.3% -> 83.1%,一声不响)。"
-[ -n "${HF_TOKEN:-}" ] || die "没有 HF_TOKEN。环境包和 ckpt 都是私有 repo"
-echo "  GPU ${NGPU} 张 · 最小显存 ${MEMMIN} MiB · cc $CC · 驱动 $DRV · HF_TOKEN len ${#HF_TOKEN}"
+[ "${DRV:-0}" -ge 550 ] || die "driver $DRV < 550"
+# GPU memory floor: P4 ran all nine benchmarks with this set of fractions on A100-40GB with zero OOM, so 40 GB is enough.
+# Measured peaks: Molmo 34.6 GB (upstream vlm.py:116 swallows the dtype config, loads in fp32),
+# the GPU with DepthPro×2 at 25.7 GB, the policy GPU at gmu×whole GPU.
+[ "$MEMMIN" -ge 38000 ] || die "smallest per-GPU memory ${MEMMIN} MiB < 40 GB. A single Molmo actor needs 34.6 GB; it won't fit.
+    To run on smaller GPUs you must recompute the TOOL_CONFIGS fractions and possibly go 8-bit — that makes scores not comparable with the paper; don't force it:
+    OOM won't crash the script, it just silently loses points (observed 88.3% -> 83.1%, without a sound)."
+[ -n "${HF_TOKEN:-}" ] || die "no HF_TOKEN. The environment package and the ckpt are both private repos"
+echo "  ${NGPU} GPUs · smallest GPU memory ${MEMMIN} MiB · cc $CC · driver $DRV · HF_TOKEN len ${#HF_TOKEN}"
 AVAIL_ROOT=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
 AVAIL_WS=$(df -BG --output=avail /workspace | tail -1 | tr -dc '0-9')
-echo "  容器盘可用 ${AVAIL_ROOT}G(要 ≥80)· /workspace 可用 ${AVAIL_WS}G(要 ≥120)"
-NEED_ROOT=80; [ -e /opt/conda-st ] && NEED_ROOT=10   # 已还原就不用再留解包空间
-[ "${AVAIL_ROOT:-0}" -ge "$NEED_ROOT" ] || die "容器盘不够(需要 ${NEED_ROOT}G)"
-[ "${AVAIL_WS:-0}" -ge 120 ] || die "网络卷不够"
+echo "  container disk free ${AVAIL_ROOT}G (need ≥80) · /workspace free ${AVAIL_WS}G (need ≥120)"
+NEED_ROOT=80; [ -e /opt/conda-st ] && NEED_ROOT=10   # if already restored, no need to keep room for unpacking
+[ "${AVAIL_ROOT:-0}" -ge "$NEED_ROOT" ] || die "not enough container disk (need ${NEED_ROOT}G)"
+[ "${AVAIL_WS:-0}" -ge 120 ] || die "not enough network volume"
 
-step "1. 拉环境包(22 GB)"
+step "1. Pull the environment package (22 GB)"
 mkdir -p "$PKG" "$CK" "$HF_HOME"
 command -v hf >/dev/null 2>&1 || pip install -q huggingface_hub hf-transfer
 HF="$(command -v hf || command -v huggingface-cli)"
 if [ ! -f "$PKG/RESTORE.sh" ]; then
-    "$HF" download "$ENV_REPO" --local-dir "$PKG" || die "环境包下载失败"
+    "$HF" download "$ENV_REPO" --local-dir "$PKG" || die "environment package download failed"
 fi
-[ -f "$PKG/RESTORE.sh" ] || die "环境包里没有 RESTORE.sh"
+[ -f "$PKG/RESTORE.sh" ] || die "no RESTORE.sh in the environment package"
 
-step "2. 还原环境到 /opt"
+step "2. Restore the environment to /opt"
 if [ -e /opt/conda-st ]; then
-    echo "  /opt/conda-st 已存在,跳过还原"
+    echo "  /opt/conda-st already exists, skipping restore"
 else
-    bash "$PKG/RESTORE.sh" "$PKG" || die "RESTORE.sh 失败"
-    bash "$PKG/POSTRESTORE.sh" || die "POSTRESTORE.sh 失败"
+    bash "$PKG/RESTORE.sh" "$PKG" || die "RESTORE.sh failed"
+    bash "$PKG/POSTRESTORE.sh" || die "POSTRESTORE.sh failed"
 fi
-[ -f "$RUN_EVAL" ] || die "还原完了还是没有 $RUN_EVAL"
+[ -f "$RUN_EVAL" ] || die "still no $RUN_EVAL after restore"
 
-step "2b. 修 BENCHMARKS 路径(上游写死的路径与 HF 数据集实际布局不符)"
-# 脚本要的是 robospatial_home_multiturn/test.parquet 之类,数据集里其实是 data/<key>.parquet。
-# 不改就在第 179 行 Missing: ... 然后 exit 1。SFT 基线用的也是 data/<key>.parquet,口径一致。
+step "2b. Fix BENCHMARKS paths (upstream's hard-coded paths don't match the HF dataset's actual layout)"
+# The script wants things like robospatial_home_multiturn/test.parquet, but the dataset actually has data/<key>.parquet.
+# Without this fix it hits Missing: ... at line 179 and then exit 1. The SFT baseline also used data/<key>.parquet; same definition.
 if grep -q 'robospatial_home_multiturn/test.parquet' "$RUN_EVAL"; then
     cp -n "$RUN_EVAL" "$RUN_EVAL.orig-benchmarks"
     python3 - "$RUN_EVAL" <<'BM_PY'
@@ -86,57 +86,57 @@ keys = ["robospatial", "reflocation", "refplacement", "refunseen", "boppose",
         "bopgrasp", "blinkdepth", "cvb2drelation", "cvb3ddepth"]
 new = "declare -A BENCHMARKS=(\n" + "".join('    [%s]="data/%s.parquet"\n' % (k, k) for k in keys) + ")\n"
 s2 = re.sub(r"declare -A BENCHMARKS=\(.*?\n\)\n", new, s, count=1, flags=re.S)
-assert s2 != s, "BENCHMARKS 块没匹配上"
+assert s2 != s, "BENCHMARKS block did not match"
 open(p, "w").write(s2)
-print("  BENCHMARKS 路径已改为 data/<key>.parquet")
+print("  BENCHMARKS paths changed to data/<key>.parquet")
 BM_PY
-    [ $? -eq 0 ] || die "改 BENCHMARKS 路径失败"
+    [ $? -eq 0 ] || die "failed to fix BENCHMARKS paths"
 else
-    echo "  已是修好的路径,跳过"
+    echo "  paths already fixed, skipping"
 fi
 
-step "3. 拉权重(按钉死的 revision,含 292 MB eval 数据)"
-bash "$PKG/FETCH_WEIGHTS.sh" || die "FETCH_WEIGHTS.sh 失败"
+step "3. Pull weights (at the pinned revisions, including 292 MB of eval data)"
+bash "$PKG/FETCH_WEIGHTS.sh" || die "FETCH_WEIGHTS.sh failed"
 
-step "4. 拉 P7 的 RL checkpoint: global_step_$P7_STEP"
+step "4. Pull P7's RL checkpoint: global_step_$P7_STEP"
 if [ ! -f "$MODEL/config.json" ]; then
-    "$HF" download "$P7_REPO" --include "global_step_$P7_STEP/*" --local-dir "$CK/p7-dl" || die "P7 ckpt 下载失败"
+    "$HF" download "$P7_REPO" --include "global_step_$P7_STEP/*" --local-dir "$CK/p7-dl" || die "P7 ckpt download failed"
     mkdir -p "$MODEL"
     cp -a "$CK/p7-dl/global_step_$P7_STEP/." "$MODEL/"
 fi
-[ -f "$MODEL/config.json" ] || die "$MODEL 里没有 config.json"
-grep -q Qwen2_5_VL "$MODEL/config.json" || die "$MODEL/config.json 不是 Qwen2.5-VL 架构"
+[ -f "$MODEL/config.json" ] || die "no config.json in $MODEL"
+grep -q Qwen2_5_VL "$MODEL/config.json" || die "$MODEL/config.json is not the Qwen2.5-VL architecture"
 du -sh "$MODEL" | sed 's/^/  /'
 
-step "5. 对齐 KV 池大小(不做这一步,换卡就不是同一个测量)"
+step "5. Match the KV pool size (without this step, switching GPUs means it's not the same measurement)"
 CARD_GB=$(( MEMMIN / 1024 ))
 GMU=$(python3 -c "print(round(min(0.85, $KV_POOL_GB / $CARD_GB), 3))")
 CUR=$(grep -oE 'gpu_memory_utilization=[0-9.]+' "$RUN_EVAL" | head -1 | cut -d= -f2)
-echo "  整卡 ${CARD_GB} GB · 目标池 ${KV_POOL_GB} GB · gpu_memory_utilization ${CUR} -> ${GMU}"
+echo "  whole GPU ${CARD_GB} GB · target pool ${KV_POOL_GB} GB · gpu_memory_utilization ${CUR} -> ${GMU}"
 if [ "$CUR" != "$GMU" ]; then
     cp -n "$RUN_EVAL" "$RUN_EVAL.orig"
     sed -i "s/gpu_memory_utilization=$CUR/gpu_memory_utilization=$GMU/" "$RUN_EVAL"
     grep -n 'gpu_memory_utilization' "$RUN_EVAL" | sed 's/^/  /'
-    echo "  ⚠️ 改过了 —— 报结果时必须写上这个取值,它不是数值中性的"
+    echo "  ⚠️ changed — when reporting results you must state this value; it is not numerically neutral"
 fi
 
-step "6. 清掉残留的 Ray(不清会让 VERIFY 第 3 项假失败)"
+step "6. Clear leftover Ray (if not cleared, VERIFY item 3 fails falsely)"
 export PATH=/opt/conda-st/envs/spacetools-rl/bin:$PATH
 ray stop --force || true
 rm -rf /root/tmp/ray
 
-step "7. 环境验收(四项全过才往下走)"
+step "7. Environment acceptance check (only proceed when all four items pass)"
 V_OUT="$(CUDA_VISIBLE_DEVICES=0 bash "$PKG/VERIFY.sh" 2>&1)"; V_RC=$?
 echo "$V_OUT" | tail -20
-echo "$V_OUT" | grep -q "四项全过" || die "VERIFY.sh 没有打出「四项全过」(退出码 $V_RC)。不要在这个状态下跑 eval,分数会是错的"
+echo "$V_OUT" | grep -qE "四项全过|all four items pass" || die "VERIFY.sh did not print \"all four items pass\" (exit code $V_RC). Do not run eval in this state, the scores will be wrong"
 
-step "8. 跑九个 benchmark(约 2 小时 10 分)"
-cd /opt/spacetools/SpaceTools-RL || die "仓库不在 /opt/spacetools/SpaceTools-RL"
+step "8. Run the nine benchmarks (about 2 h 10 min)"
+cd /opt/spacetools/SpaceTools-RL || die "repo is not at /opt/spacetools/SpaceTools-RL"
 export ROBOREFER_MODEL="$CK/RoboRefer-8B-SFT"
 export DEPTH_CHECKPOINT="$CK/depth_pro.pt"
 export CONDA_ROOT=/opt/conda-st
 export PATH=/opt/conda-st/bin:$PATH
-# 非交互 bash 继承不到 shell 函数,conda activate 是函数 -> 靠 BASH_ENV 自己 source
+# Non-interactive bash doesn't inherit shell functions, and conda activate is a function -> rely on BASH_ENV to source it
 export BASH_ENV=/opt/conda-st/etc/profile.d/conda.sh
 export NUM_GPUS=4
 export EVAL_GPUS=1
@@ -145,29 +145,29 @@ bash "$RUN_EVAL" "$MODEL" \
     robospatial reflocation refplacement refunseen \
     blinkdepth cvb2drelation cvb3ddepth boppose bopgrasp
 EVAL_RC=$?
-echo "  run_eval.sh 退出码 $EVAL_RC"
-[ "$EVAL_RC" -eq 0 ] || die "run_eval.sh 失败(退出码 $EVAL_RC)——九个 benchmark 没有跑完,下面的门禁和对照口径都不要看"
+echo "  run_eval.sh exit code $EVAL_RC"
+[ "$EVAL_RC" -eq 0 ] || die "run_eval.sh failed (exit code $EVAL_RC) — the nine benchmarks did not finish; ignore the gate and comparison numbers below"
 
-step "9. 健康门禁(先数 OOM 和工具错误,再看分数)"
+step "9. Health gate (count OOMs and tool errors first, then look at scores)"
 PD=""
 for C in "$(dirname "$0")/parse_dump.py" "$PKG/parse_dump.py" /opt/spacetools/spacetools-repro/tools/parse_dump.py; do
     [ -f "$C" ] && PD="$C" && break
 done
 if [ -z "$PD" ]; then
-    echo "  ⚠️ 找不到 parse_dump.py,跳过门禁 —— 那就必须手工数,而且要在看分数之前:"
-    echo "     grep -c OutOfMemoryError 和 grep -cE 'Error:|ERROR:toolshed' 都必须是 0"
+    echo "  ⚠️ parse_dump.py not found, skipping the gate — then you must count by hand, and before looking at scores:"
+    echo "     grep -c OutOfMemoryError and grep -cE 'Error:|ERROR:toolshed' must both be 0"
 else
     for B in robospatial reflocation refplacement refunseen blinkdepth cvb2drelation cvb3ddepth boppose bopgrasp; do
         D="$EVAL_OUT/$B"
-        [ -d "$D" ] || { echo "  跳过 $B(没有输出目录)"; continue; }
-        python "$PD" --strict "$D" || echo "  ✗ $B 没过门禁 —— 读成「这个 benchmark 还没有结果」,不是「有个警告」"
+        [ -d "$D" ] || { echo "  skipping $B (no output directory)"; continue; }
+        python "$PD" --strict "$D" || echo "  ✗ $B failed the gate — read it as \"this benchmark has no result yet\", not \"there's a warning\""
     done
 fi
 
 echo
-echo "==== 完成 · 输出在 $EVAL_OUT ===="
-echo "报结果时要一起写上:gpu_memory_utilization=$GMU · 整卡 ${CARD_GB} GB · NUM_GPUS=4 EVAL_GPUS=1"
-echo "对照口径:"
-echo "  RoboSpatial Overall  SFT 起点 61.00 ± 0.77  ·  官方 ckpt(P4 复现)65.43–66.00  ·  论文 70.00"
-echo "  RefSpatial 三项      SFT 起点 52.58 简单平均  ·  官方 ckpt 53.35  ·  论文 53.07"
-echo "  boppose / bopgrasp 分数有抖动,P4 是跑 3 次报区间的"
+echo "==== Done · output in $EVAL_OUT ===="
+echo "When reporting results, also state: gpu_memory_utilization=$GMU · whole GPU ${CARD_GB} GB · NUM_GPUS=4 EVAL_GPUS=1"
+echo "Comparison numbers:"
+echo "  RoboSpatial Overall  SFT starting point 61.00 ± 0.77  ·  official checkpoint (P4 reproduction) 65.43–66.00  ·  paper 70.00"
+echo "  RefSpatial three     SFT starting point 52.58 simple mean  ·  official checkpoint 53.35  ·  paper 53.07"
+echo "  boppose / bopgrasp scores jitter; P4 ran them 3 times and reported an interval"

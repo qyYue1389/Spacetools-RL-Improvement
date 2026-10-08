@@ -1,50 +1,50 @@
-# P1_prep:P1 / P2 / P3 开机前(无 GPU)的准备与结论
+# P1_prep: preparation and conclusions for P1 / P2 / P3 before the GPU session (no GPU)
 
-2026-09-25。对应 Design Doc 各节里标 ✅ 的条目。
+2026-09-25. Corresponds to the items marked ✅ in the sections of the Design Doc.
 
-## 文件
+## Files
 
-| 文件 | 作用 |
+| File | Purpose |
 |---|---|
-| `p1a_ray_trainer.diff` | P1-a 补丁(基于训练用的 SpaceTools-RL `c6fef78a`;2026-09-30 从 9-14 的旧底重做,旧版缺 β 分解日志):`compute_gflowrl_flow_gap(filter_degenerate=...)` 把组内奖励极差为 0 的组的 g̃ 置 0;driver 守卫(filter 打开时要求 `ppo_mini_batch_size == train_batch_size` 且 `ppo_epochs == 1`);新日志 `gflowrl/kept_groups`、`kept_rollout_frac`、`clip_saturation_kept`、`g_abs_p50/p90/p99` |
-| `p1a_run_rl_gflowrl.diff` | 新开关 `GF_FILTER_DEGEN`(默认 false) |
-| `patched/` | 打好补丁的两个文件(未动 SpaceTools-RL 仓库本身) |
-| `p1a_check.py` | 自检,CPU 上跑,需 torch:`python p1a_check.py patched/ray_trainer.py <原 ray_trainer.py> <core_algos.py>` |
-| `p2_query_type.py` | P2 开机前调查:三臂在 Vacant 上给 roborefer 的查询写法(只问锚物体 / 带位置描述)与各自的命中、改点、正确率 |
-| `robospatial_vacant.parquet` | 训练中验证集:robospatial eval 里的 Vacant 122 题(与原 parquet 同 schema)。`data.val_files=<它> trainer.test_freq=10 trainer.val_before_train=True` |
-| `p1_monitor.py` | 训练中监控:只问锚物体的查询占比(主判据)、改点率(± 按 prompt bootstrap SE)、0.05 网格、透传 / 改点正确率、工具点命中率;`--upper` 强制透传 |
+| `p1a_ray_trainer.diff` | P1-a patch (based on SpaceTools-RL `c6fef78a` as used in training; redone on 2026-09-30 from the old 9-14 base, the old version lacked the β-decomposition logs): `compute_gflowrl_flow_gap(filter_degenerate=...)` sets g̃ to 0 for groups whose within-group reward range is 0; driver guard (when filter is on, requires `ppo_mini_batch_size == train_batch_size` and `ppo_epochs == 1`); new logs `gflowrl/kept_groups`, `kept_rollout_frac`, `clip_saturation_kept`, `g_abs_p50/p90/p99` |
+| `p1a_run_rl_gflowrl.diff` | New switch `GF_FILTER_DEGEN` (default false) |
+| `patched/` | The two patched files (the SpaceTools-RL repo itself is untouched) |
+| `p1a_check.py` | Self-check, runs on CPU, needs torch: `python p1a_check.py patched/ray_trainer.py <original ray_trainer.py> <core_algos.py>` |
+| `p2_query_type.py` | P2 investigation before the GPU session: the query phrasing each of the three arms gives roborefer on Vacant (anchor object only / with a location description) and the respective hit rate, point override and accuracy |
+| `robospatial_vacant.parquet` | In-training validation set: the 122 Vacant questions from the robospatial eval (same schema as the original parquet). `data.val_files=<it> trainer.test_freq=10 trainer.val_before_train=True` |
+| `p1_monitor.py` | In-training monitoring: share of queries that ask only for the anchor object (primary criterion), point-override rate (± per-prompt bootstrap SE), 0.05 grid, pass-through / point-override accuracy, tool-point hit rate; `--upper` forces pass-through |
 
-## 自检结果(p1a_check.py 全 PASS)
+## Self-check results (p1a_check.py all PASS)
 
-1. filter 关闭时 advantages 与原函数逐位一致。
-2. filter 打开时,退化组 g̃ = 0,其余行不变;kept_groups / kept_rollout_frac 正确。
-3. on-policy(dp_actor 令 `old_log_prob = log_prob.detach()`)下,梯度与「真正的 loss mask、分母保留全部序列」逐位相等(max|diff| = 0)。
-4. 反例:off-policy 时退化组会收到近端项梯度 → 守卫必要。
-5. 另外 `04_gflowrl_implementation/checks/run_checks.sh` 指向打了补丁的完整树(2026-09-30 重做后),六个自检全部 PASS。
+1. With filter off, advantages match the original function bit-for-bit.
+2. With filter on, degenerate groups have g̃ = 0 and the other rows are unchanged; kept_groups / kept_rollout_frac are correct.
+3. On-policy (dp_actor sets `old_log_prob = log_prob.detach()`), the gradient is bit-for-bit equal to "a real loss mask with all sequences kept in the denominator" (max|diff| = 0).
+4. Counterexample: off-policy, degenerate groups receive a proximal-term gradient → the guard is necessary.
+5. In addition, `04_gflowrl_implementation/checks/run_checks.sh` pointed at the full patched tree (after the 2026-09-30 redo): all six self-checks PASS.
 
-## 训练时怎么开
+## How to turn it on in training
 
 ```bash
 GF_FILTER_DEGEN=true bash examples/toolshed/run_rl_gflowrl.sh \
-    trainer.rollout_data_dir=$OUT/rollouts            # 不开就读不到改点率
-# P1-c B 臂:再加  actor_rollout_ref.actor.grad_clip=<L̄>   (AdamW 下 ≡ loss×1/L̄)
-# P1-c C 臂:GF_EPS_LOW=0.28 GF_EPS_HIGH=0.20
+    trainer.rollout_data_dir=$OUT/rollouts            # without this the point-override rate can't be read
+# P1-c arm B: also add  actor_rollout_ref.actor.grad_clip=<L̄>   (under AdamW ≡ loss×1/L̄)
+# P1-c arm C: GF_EPS_LOW=0.28 GF_EPS_HIGH=0.20
 python p1_monitor.py --window 10 $OUT/rollouts
-python p1_monitor.py --window 1 $OUT/val_outputs   # 训练中验证:每次 122 题的只问物体题数
+python p1_monitor.py --window 1 $OUT/val_outputs   # in-training validation: number of object-only questions out of 122 each time
 ```
 
-注意:`_dump_generations` 每步会把 320 条样本的图存成 PNG。开关已加在 `../infra_prep/patched/ray_trainer.py`(本目录的 P1-a 版本没有):训练命令再带 `+trainer.dump_images=false` 就只写 JSONL,见 `../infra_prep/README.md` §6。
+Note: `_dump_generations` saves the images of the 320 samples as PNG at every step. A switch has been added in `../infra_prep/patched/ray_trainer.py` (the P1-a version in this directory doesn't have it): add `+trainer.dump_images=false` to the training command and only JSONL is written, see `../infra_prep/README.md` §6.
 
-## 监控脚本的校准
+## Calibration of the monitoring script
 
-在 P0 的 9 份 robospatial dump 上逐位复现 P0 表:透传 72.7 / 100.3 / 77.0,改点 49.3 / 21.7 / 44.0,网格 18.7 / 7.0 / 18.3,P4 改点正确率 27.7%。
+On P0's 9 robospatial dumps it reproduces the P0 table exactly: pass-through 72.7 / 100.3 / 77.0, point override 49.3 / 21.7 / 44.0, grid 18.7 / 7.0 / 18.3, P4 point-override accuracy 27.7%.
 
-## 关键发现
+## Key findings
 
-- **Vacant 差距的根在查询写法。** 只问锚物体("cup")时工具点命中 0–3%、只能改点;带位置描述时命中 56%。只问物体的题每次 SFT 42.0 · C′ 34.3 · GRPO 13.3 / 122,三臂在每一类内部几乎一样;P4 对、C′ 错的 13 题全是这个模式。SFT 数据里 RoboSpatial 这个模板 410 / 410 条示范只问物体。主判据阈值:20 步窗口下降 ≥ 12 pp。
+- **The root of the Vacant gap is the query phrasing.** When asking only for the anchor object ("cup") the tool point hits 0–3% and the model can only override the point; with a location description it hits 56%. Object-only questions per run: SFT 42.0 · C′ 34.3 · GRPO 13.3 / 122; within each category the three arms are almost the same; the 13 questions P4 gets right and C′ gets wrong all follow this pattern. In the SFT data, 410 / 410 demonstrations of this RoboSpatial template ask only for the object. Primary-criterion threshold: a drop of ≥ 12 pp over a 20-step window.
 
-- **P2 的根在工具调用质量。** 工具点(最后一次 roborefer 的第一个点)落在 GT 内:SFT 46.3、GRPO 60.3、C′ 49.3 / 122(三次均值;GRPO vs C′ 稳定样本 13 : 4,p = 0.049)。改点样本上工具点命中只有 10–19%,改后答案 19–28%。
-- **强制透传不是上界:** Vacant SFT 50.7 → 46.3、GRPO 62.3 → 60.3、C′ 53.7 → 49.3。
-- **P1-c:** 按 P7 grad_norm,L̄ = 334 时 9 / 85 步(10.6%)仍会被裁;250 → 21%,200 → 40%。
-- **P3:** SFT 数据里 RoboSpatial yes/no 977 条,调 depth_estimator 的 0 条;depth_estimator 只在 RefSpatial depth(A/B 模板)和 bopask 出现。front/behind 29 题三次均值 SFT 17.3 / GRPO 19.0 / C′ 19.3,旧的 72.4% → 62.1% 是单次噪声。
-- **阈值:** 按 P0 数据模拟,只读 RoboSpatial vacant 两窗差 SD ≈ 9 pp;与 RefSpatial pointing 合并后 ≈ 5 pp。
+- **The root of P2 is tool-call quality.** Tool point (first point of the last roborefer call) falls inside GT: SFT 46.3, GRPO 60.3, C′ 49.3 / 122 (mean of three runs; GRPO vs C′ stable samples 13 : 4, p = 0.049). On point-override samples the tool point hits only 10–19%, and the overridden answer 19–28%.
+- **Forced pass-through is not an upper bound:** Vacant SFT 50.7 → 46.3, GRPO 62.3 → 60.3, C′ 53.7 → 49.3.
+- **P1-c:** based on P7 grad_norm, with L̄ = 334, 9 / 85 steps (10.6%) would still be clipped; 250 → 21%, 200 → 40%.
+- **P3:** in the SFT data, 977 RoboSpatial yes/no samples, 0 of which call depth_estimator; depth_estimator only appears in RefSpatial depth (A/B templates) and bopask. On the 29 front/behind questions the three-run means are SFT 17.3 / GRPO 19.0 / C′ 19.3; the old 72.4% → 62.1% was single-run noise.
+- **Thresholds:** simulated on P0 data, the SD of the two-window difference reading only RoboSpatial vacant is ≈ 9 pp; merged with RefSpatial pointing ≈ 5 pp.

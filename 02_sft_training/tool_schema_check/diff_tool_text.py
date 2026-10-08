@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
-比较两份 toolshed YAML 最终会拼进 SFT system prompt 的那段文本是否逐字一致。
+Compare whether the text that two toolshed YAMLs ultimately splice into the SFT system prompt is verbatim identical.
 
-为什么不用普通的 `diff`:
-    两份 YAML 的键顺序、缩进、引号风格几乎必然不同(一份是签在仓库里的,
-    一份是 generate_toolshed_config.py 从活 router 导出的),裸 diff 全是噪声。
-    真正要比的是 run_sft.sh 第 88–110 行**构造出来的那段字符串** ——
-    因为进 system prompt 的只有它。
+Why not a plain `diff`:
+    The two YAMLs almost certainly differ in key order, indentation and quoting style (one is checked into the repo,
+    the other is exported by generate_toolshed_config.py from a live router), so a raw diff is all noise.
+    What really needs comparing is **the string constructed** by lines 88–110 of run_sft.sh —
+    because that is the only thing that goes into the system prompt.
 
-本脚本逐字复刻 run_sft.sh 的构造逻辑,然后比两段结果。
+This script replicates run_sft.sh's construction logic verbatim, then compares the two results.
 
-用法:
+Usage:
     python3 diff_tool_text.py A.yaml B.yaml
 
-    # 典型:仓库静态版  vs  你 P4 那次跑出来的
+    # typical: static repo version  vs  the one from your P4 run
     python3 diff_tool_text.py \
         toolshed_v1_config.repo.yaml \
         /path/to/eval_v1_.../toolshed_config.yaml
 
-退出码:
-    0 = 逐字一致,SFT 可以用任意一份
-    1 = 不一致,**用 P4 那份**(它才是 eval 时模型真正看到的)
+Exit code:
+    0 = verbatim identical, SFT can use either one
+    1 = different, **use the P4 one** (that is what the model actually saw during eval)
 """
 
 import sys
@@ -31,11 +31,11 @@ import hashlib
 try:
     import yaml
 except ImportError:
-    sys.exit("需要 pyyaml:  pip install pyyaml")
+    sys.exit("needs pyyaml:  pip install pyyaml")
 
 
 def build_tool_text(yaml_path):
-    """逐字复刻 scripts/spacetools/run_sft.sh 里 PREP_PY 的构造。"""
+    """Verbatim replica of the PREP_PY construction in scripts/spacetools/run_sft.sh."""
     with open(yaml_path) as f:
         tool_data = yaml.safe_load(f)
 
@@ -71,38 +71,38 @@ def main():
     b_text, b_schemas = build_tool_text(b_path)
 
     print(f"A = {a_path}")
-    print(f"    {len(a_schemas)} 个 schema · {len(a_text)} 字符 · sha256 {hashlib.sha256(a_text.encode()).hexdigest()[:16]}")
+    print(f"    {len(a_schemas)} schemas · {len(a_text)} chars · sha256 {hashlib.sha256(a_text.encode()).hexdigest()[:16]}")
     print(f"B = {b_path}")
-    print(f"    {len(b_schemas)} 个 schema · {len(b_text)} 字符 · sha256 {hashlib.sha256(b_text.encode()).hexdigest()[:16]}")
+    print(f"    {len(b_schemas)} schemas · {len(b_text)} chars · sha256 {hashlib.sha256(b_text.encode()).hexdigest()[:16]}")
     print()
 
-    # 1. 数量与方法名(最响的失败模式:某个工具没起来,schema 少了)
+    # 1. count and method names (the loudest failure mode: some tool did not come up, a schema is missing)
     if len(a_schemas) != 11 or len(b_schemas) != 11:
-        print(f"⚠️  v1 应当是 11 个 schema。A={len(a_schemas)} B={len(b_schemas)}")
-        print("    少了通常意味着导出那一刻某个工具 actor 没起来。")
+        print(f"⚠️  v1 should have 11 schemas. A={len(a_schemas)} B={len(b_schemas)}")
+        print("    Fewer usually means some tool actor was not up at the moment of export.")
         print()
 
     na, nb = names(a_schemas), names(b_schemas)
     if na != nb:
-        print("❌ 方法名列表不同(顺序也算):")
+        print("❌ method name lists differ (order counts too):")
         only_a = [n for n in na if n not in nb]
         only_b = [n for n in nb if n not in na]
         if only_a:
-            print(f"   只在 A: {only_a}")
+            print(f"   only in A: {only_a}")
         if only_b:
-            print(f"   只在 B: {only_b}")
+            print(f"   only in B: {only_b}")
         if not only_a and not only_b:
-            print(f"   集合相同但顺序不同:\n     A: {na}\n     B: {nb}")
-            print("   ⚠️ 顺序也会改变 system prompt 的字节,仍算不一致。")
+            print(f"   same set but different order:\n     A: {na}\n     B: {nb}")
+            print("   ⚠️ order also changes the system prompt bytes, still counts as different.")
         print()
 
-    # 2. 逐字比较最终文本
+    # 2. verbatim comparison of the final text
     if a_text == b_text:
-        print("✅ 一致 —— 拼进 system prompt 的那段文本逐字相同。SFT 用哪一份都行。")
+        print("✅ identical — the text spliced into the system prompt is verbatim the same. SFT can use either.")
         return 0
 
-    print("❌ 不一致。差异如下(-=A  +=B):\n")
-    # 按 schema 拆行比,避免整段单行不可读
+    print("❌ different. Differences below (-=A  +=B):\n")
+    # compare line by line per schema, so the whole block is not one unreadable line
     a_lines = a_text.split("\n")
     b_lines = b_text.split("\n")
     shown = 0
@@ -112,19 +112,19 @@ def main():
         if line.startswith("@@"):
             print(line)
             continue
-        # 单个 schema 可能很长,截断显示并指出第一个分歧位置
+        # a single schema can be very long; truncate the display and point out the first divergence
         tag, body = line[0], line[1:]
         if len(body) > 400:
-            body = body[:400] + f" …(共 {len(body)} 字符)"
+            body = body[:400] + f" … ({len(body)} chars total)"
         print(tag + body)
         shown += 1
         if shown >= 40:
-            print("… 差异过多,已截断")
+            print("… too many differences, truncated")
             break
 
     print()
-    print("处置:**用 P4 那次跑出来的那份**做 SFT 的 TOOL_CONFIG ——")
-    print("      它才是 eval 时模型真正看到的 schema,训练/推理口径必须以它为准。")
+    print("Action: **use the one from the P4 run** as the SFT TOOL_CONFIG —")
+    print("      it is the schema the model actually saw during eval; the training/inference definition must follow it.")
     return 1
 
 
