@@ -211,10 +211,6 @@ Scores are only comparable under the same protocol: `gpu_memory_utilization` set
 - Tools: [RoboRefer](https://github.com/Zhoues/RoboRefer) · [Molmo](https://huggingface.co/allenai/Molmo-7B-D-0924) · [Depth Pro](https://github.com/apple/ml-depth-pro) · [SAM 2](https://github.com/facebookresearch/sam2) · [GraspGen](https://github.com/NVlabs/GraspGen)
 - Related objectives discussed in the design notes: [FlowRL](https://github.com/Xuekai-Zhu/FlowRL) · [FoR](https://github.com/Yu-Fangxu/FoR) · [TBA](https://github.com/bbartoldson/TBA) · GRPO ([arXiv:2402.03300](https://arxiv.org/abs/2402.03300)) · PPO ([arXiv:1707.06347](https://arxiv.org/abs/1707.06347))
 
-## License
-
-Apache-2.0 (see [LICENSE](LICENSE)). Files under `04_gflowrl_implementation/spacetools_rl_modified/`, `07_gflowrl_improvement/p1_prep/patched/` and `07_gflowrl_improvement/infra_prep/patched/` are modified versions of [SpaceTools-RL](https://github.com/ChicyChen/SpaceTools-RL) / [verl](https://github.com/volcengine/verl) files, and `02_sft_training/run_sft.sh` of a [SpaceTools-SFT](https://github.com/ChicyChen/SpaceTools-SFT) file; all three projects are Apache-2.0. `07_gflowrl_improvement/infra_prep/toolshed_tool_timing_vs_712e557.diff` and the patches under `00_environment/upstream_patches/` are diffs against [SpaceTools-Toolshed](https://github.com/NVlabs/SpaceTools-Toolshed), [GraspGen](https://github.com/NVlabs/GraspGen) and [RoboRefer](https://github.com/Zhoues/RoboRefer) which are under their own licenses; this repo carries only the diffs, not copies of those files. The full list of modified upstream files is in §6.
-
 ---
 
 <a id="中文"></a>
