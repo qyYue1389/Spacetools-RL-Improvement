@@ -20,4 +20,4 @@ SFT 只需一个 conda 环境;eval 与 RL 需要五个(driver + 四个工具环�
 | `env_freeze/` | `pip freeze` of all five envs |
 | `env.sh`, `tool-constraints.txt`, `verify_env_imports.sh`, `rebuild_pointnet2_sm80.sh`, `tool_chain_smoke_test.py` | Cache/path setup, pip constraints, import check, pointnet2 rebuild for A100, all-tools chain test without a language model |
 
-Packaged env on Hugging Face / HF 上的环境包: [`qzpm55555/spacetools-eval-env`](https://huggingface.co/qzpm55555/spacetools-eval-env) — see `BUILD_GUIDE.md` §4.1.
+Packaged env on Hugging Face / HF 上的环境包: [`qyYue1389/spacetools-eval-env`](https://huggingface.co/qyYue1389/spacetools-eval-env) — see `BUILD_GUIDE.md` §4.1.

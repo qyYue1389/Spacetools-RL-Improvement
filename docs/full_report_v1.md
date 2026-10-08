@@ -338,7 +338,7 @@ sm_86".
 
 ### 3.3 Eval / RL environment (22 GB package, four acceptance checks)
 
-RL and eval share one environment, packaged as `qzpm55555/spacetools-eval-env` (21 GB, 6 shards).
+RL and eval share one environment, packaged as `qyYue1389/spacetools-eval-env` (21 GB, 6 shards).
 **It must be restored to `/opt/conda-st` + `/opt/spacetools`** — absolute paths are baked into the conda environments,
 and changing the path breaks everything.
 
@@ -2249,7 +2249,7 @@ P7_STEP=85 bash eval/GFlowRL/P7_GFLOWRL_EVAL/scripts/EVAL_FROM_SCRATCH.sh
 ```
 gpu_memory_utilization=0.545 (KV pool aligned to 24 GB) · NUM_GPUS=4 EVAL_GPUS=1
 4× RTX A6000 · vlm num_gpus=1.0 · greedy decoding
-ckpt: qzpm55555/spacetools-p7-gflowrl-cprime-8xa40 @ global_step_85
-env:  qzpm55555/spacetools-eval-env
+ckpt: qyYue1389/spacetools-p7-gflowrl-cprime-8xa40 @ global_step_85
+env:  qyYue1389/spacetools-eval-env
 data: siyich/spacetools-eval-benchmarks @ 1d539ac9
 ```

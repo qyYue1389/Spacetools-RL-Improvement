@@ -1,6 +1,6 @@
 # 02 · SFT training (SpaceTools Step 3) / SFT 训练
 
-Qwen2.5-VL-3B-Instruct, full fine-tuning with LLaMA-Factory ([SpaceTools-SFT](https://github.com/ChicyChen/SpaceTools-SFT)), 3000 steps on 4× RTX A6000 in 7 h 45 min, global batch 8 (= paper). The result is the start point π_ref for RL, published as [`qzpm55555/spacetools-sft-v1-4xa6000`](https://huggingface.co/qzpm55555/spacetools-sft-v1-4xa6000).
+Qwen2.5-VL-3B-Instruct, full fine-tuning with LLaMA-Factory ([SpaceTools-SFT](https://github.com/ChicyChen/SpaceTools-SFT)), 3000 steps on 4× RTX A6000 in 7 h 45 min, global batch 8 (= paper). The result is the start point π_ref for RL, published as [`qyYue1389/spacetools-sft-v1-4xa6000`](https://huggingface.co/qyYue1389/spacetools-sft-v1-4xa6000).
 
 | Path | What |
 |---|---|

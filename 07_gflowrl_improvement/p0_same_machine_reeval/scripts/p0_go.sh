@@ -7,7 +7,7 @@ if [ "$1" != "run" ]; then
 fi
 export HF_TOKEN=$(cat /root/.hf_token)
 export HF_HOME=/workspace/hf
-export MY_SFT_REPO=qzpm55555/spacetools-sft-v1-4xa6000
+export MY_SFT_REPO=qyYue1389/spacetools-sft-v1-4xa6000
 export MY_SFT_REV=91fd4bdf6d2ffe3b355cc650e71925c6e91a15c5
 export P7_STEP=85
 export KV_POOL_GB=24

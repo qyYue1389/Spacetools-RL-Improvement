@@ -14,7 +14,7 @@ OUT=/workspace/exp/p7_cprime/rl_output
 SNAP=/workspace/exp/p7_cprime/eval_ckpts
 MERGED=/workspace/merged
 PROV=$MERGED/provenance
-REPO=qzpm55555/spacetools-p7-gflowrl-cprime-8xa40
+REPO=qyYue1389/spacetools-p7-gflowrl-cprime-8xa40
 VERL_DIR=/opt/spacetools/SpaceTools-RL
 
 echo "WAIT_TRAIN" > /root/logs/status_save
@@ -63,7 +63,7 @@ python - <<'PY'
 import os
 from huggingface_hub import HfApi
 api = HfApi(token=os.environ["HF_TOKEN"])
-repo = "qzpm55555/spacetools-p7-gflowrl-cprime-8xa40"
+repo = "qyYue1389/spacetools-p7-gflowrl-cprime-8xa40"
 fs = sorted(api.list_repo_files(repo))
 print(len(fs), "files")
 for f in fs:

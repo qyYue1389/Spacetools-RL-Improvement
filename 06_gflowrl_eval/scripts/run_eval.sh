@@ -10,7 +10,7 @@ set -x
 export HF_HOME=/workspace/hf
 export PATH=/opt/conda-st/bin:$PATH
 cd /root
-hf download qzpm55555/spacetools-p7-gflowrl-cprime-8xa40 \
+hf download qyYue1389/spacetools-p7-gflowrl-cprime-8xa40 \
     --include "EVAL_FROM_SCRATCH.sh" --include "parse_dump.py" --local-dir /root || exit 1
 grep -c BASH_ENV /root/EVAL_FROM_SCRATCH.sh
 grep -cE "2b. (修|Fix) BENCHMARKS" /root/EVAL_FROM_SCRATCH.sh

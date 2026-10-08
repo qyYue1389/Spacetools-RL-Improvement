@@ -2,7 +2,7 @@
 
 Build date 2026-09-10 · RTX A6000 48GB · Ubuntu 24.04.3 · driver 580.159.04 · system CUDA 12.8
 
-Package location: `https://huggingface.co/qzpm55555/spacetools-eval-env` (private)
+Package location: `https://huggingface.co/qyYue1389/spacetools-eval-env` (private)
 
 > **The GitHub source repos are authoritative, not any fork.**
 > `spacetools/SpaceTools` · `ChicyChen/SpaceTools-RL` · `NVlabs/SpaceTools-Toolshed` · `NVlabs/GraspGen` · `Zhoues/RoboRefer`
@@ -401,7 +401,7 @@ bash install_tools/tool_scripts/install_graspgen.sh
 ### 4.1 Restore from HF (recommended)
 
 ```bash
-hf download qzpm55555/spacetools-eval-env --local-dir ./pkg
+hf download qyYue1389/spacetools-eval-env --local-dir ./pkg
 cd pkg
 cat spacetools-envs-*.tar.zst.part* > spacetools-envs-20260910-0959.tar.zst
 
@@ -754,7 +754,7 @@ When testing `compute_grasp` with a random point cloud, the network forward pass
 ### 7.3 Package contents
 
 ```
-https://huggingface.co/qzpm55555/spacetools-eval-env   (private)
+https://huggingface.co/qyYue1389/spacetools-eval-env   (private)
 
 spacetools-envs-*.tar.zst.part00..05        22.10 GB   five conda environments + four repos (with .git)
 spacetools-scripts-*.tar.zst                  81 KB    build/fix/acceptance scripts + constraints + freeze

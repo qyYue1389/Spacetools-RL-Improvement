@@ -342,12 +342,12 @@ set to 1            →  2.3 + 1 = 3.3 ≤ 4.0   logically enough, but see the w
 ## 7. Provenance
 
 ```
-SFT ckpt   qzpm55555/spacetools-sft-v1-4xa6000
+SFT ckpt   qyYue1389/spacetools-sft-v1-4xa6000
            commit 91fd4bdf6d2ffe3b355cc650e71925c6e91a15c5
            Qwen2_5_VLForConditionalGeneration · bfloat16 · 7.6 GB
            num_attention_heads=16 · num_hidden_layers=36
 
-Env package     qzpm55555/spacetools-eval-env
+Env package     qyYue1389/spacetools-eval-env
            spacetools-envs-20260910-0959.tar.zst
            22102227452 bytes (after concatenation, byte-for-byte match with the README record) · sha256 12/12 OK
 

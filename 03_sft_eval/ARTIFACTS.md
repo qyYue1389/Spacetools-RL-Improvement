@@ -1,6 +1,6 @@
 # SFT eval raw artifacts · 2026-09-11/12
 
-Eval of `qzpm55555/spacetools-sft-v1-4xa6000` @ `91fd4bdf6d2ffe3b355cc650e71925c6e91a15c5`
+Eval of `qyYue1389/spacetools-sft-v1-4xa6000` @ `91fd4bdf6d2ffe3b355cc650e71925c6e91a15c5`
 on 4× RTX A6000. For the analysis and conclusions see `03_sft_eval/sft_eval_report.md`.
 
 The machine has been terminated; this is everything that could be kept.

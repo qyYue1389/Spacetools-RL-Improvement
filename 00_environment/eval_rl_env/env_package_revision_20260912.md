@@ -1,7 +1,7 @@
 # Environment package revision 2026-09-12: POSTRESTORE.sh + VERIFY pre-check
 
 Written 2026-09-12 · based on the findings of the 2026-09-11 eval in `03_sft_eval/sft_eval_results.md`
-· already pushed to `qzpm55555/spacetools-eval-env`
+· already pushed to `qyYue1389/spacetools-eval-env`
 
 ---
 

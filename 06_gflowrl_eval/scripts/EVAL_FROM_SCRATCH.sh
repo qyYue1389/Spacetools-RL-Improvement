@@ -8,9 +8,9 @@
 # — this project's failure modes are heavily concentrated in "looked like it succeeded".
 set -uo pipefail
 
-P7_REPO="${P7_REPO:-qzpm55555/spacetools-p7-gflowrl-cprime-8xa40}"
+P7_REPO="${P7_REPO:-qyYue1389/spacetools-p7-gflowrl-cprime-8xa40}"
 P7_STEP="${P7_STEP:-85}"
-ENV_REPO="${ENV_REPO:-qzpm55555/spacetools-eval-env}"
+ENV_REPO="${ENV_REPO:-qyYue1389/spacetools-eval-env}"
 PKG="${PKG:-/workspace/envpkg}"
 CK="${CK:-/workspace/checkpoints}"
 MODEL="$CK/p7-step$P7_STEP"

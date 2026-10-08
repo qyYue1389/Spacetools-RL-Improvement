@@ -1,6 +1,6 @@
 # P7 GFlowRL (C′) checkpoint eval report
 
-Subject: `global_step_85` of `qzpm55555/spacetools-p7-gflowrl-cprime-8xa40`
+Subject: `global_step_85` of `qyYue1389/spacetools-p7-gflowrl-cprime-8xa40`
 Executed: 2026-09-17 ~ 09-18 · RunPod 4× RTX A6000
 Companions: `05_gflowrl_training/gflowrl_training_report_8xA40.md` (training side), `03_sft_eval/sft_eval_report.md` (starting point), `P4→P5 handoff document (not included)` (official checkpoint comparison)
 
@@ -83,7 +83,7 @@ sglang 0.5.6 · verl 0.8.0.dev
 conda envs: spacetools-rl / -tool-vlm / -tool-roborefer / -tool-bbox / -tool-graspgen
 ```
 
-The environment package `qzpm55555/spacetools-eval-env` is unpacked to `/opt/conda-st` + `/opt/spacetools`
+The environment package `qyYue1389/spacetools-eval-env` is unpacked to `/opt/conda-st` + `/opt/spacetools`
 (absolute paths are baked into the conda environments, so the location cannot change); weights are pulled at the pinned revisions.
 
 ### 2.3 How the GPUs are split

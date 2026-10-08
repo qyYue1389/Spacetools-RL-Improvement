@@ -3,7 +3,7 @@
 > Training time: 2026-09-16 08:35:04 → 2026-09-17 06:32:35 UTC (21 h 57 min)
 > Machine: RunPod 8× A40 48 GB (released after this report was generated)
 > Result: `FULL_DONE_PASS`, all 85 steps completed, exit code 0
-> Artifacts: `qzpm55555/spacetools-p7-gflowrl-cprime-8xa40` (private HF repo)
+> Artifacts: `qyYue1389/spacetools-p7-gflowrl-cprime-8xa40` (private HF repo)
 > This file, together with the raw files in the same directory, forms the complete record of this training run
 
 ---
@@ -23,7 +23,7 @@ no interruptions throughout; three checkpoints (85 / 60 / 30) have been merged i
 
 | | |
 |---|---|
-| base model | `qzpm55555/spacetools-sft-v1-4xa6000` @ `91fd4bdf6d2ffe3b355cc650e71925c6e91a15c5` |
+| base model | `qyYue1389/spacetools-sft-v1-4xa6000` @ `91fd4bdf6d2ffe3b355cc650e71925c6e91a15c5` |
 | Architecture | Qwen2.5-VL-3B-Instruct (4.066 B parameters, vision encoder frozen, 2.55 B trainable) |
 | Algorithm | GFlowRL Eq. 4/6/7/8, variant `cprime` |
 | Control | the paper's GRPO (**not** run this time; only the single GFlowRL arm was trained) |
@@ -111,7 +111,7 @@ spacetools-tool-bbox       3D bbox · vision_ops
 spacetools-tool-graspgen   GraspGen
 ```
 
-The environments were not installed fresh; they were restored from `qzpm55555/spacetools-eval-env` (22 GB package) into `/opt`
+The environments were not installed fresh; they were restored from `qyYue1389/spacetools-eval-env` (22 GB package) into `/opt`
 — the conda environments have absolute paths baked in and must be restored to `/opt/conda-st`; with a different path everything breaks.
 
 ---
@@ -504,7 +504,7 @@ Two points that must be kept in mind:
 ### 8.5 Where all the artifacts are
 
 ```
-private HF repo   qzpm55555/spacetools-p7-gflowrl-cprime-8xa40
+private HF repo   qyYue1389/spacetools-p7-gflowrl-cprime-8xa40
   global_step_85/ 60/ 30/        three HF-format ckpts, 7.6 GB each
   provenance/                    p7_metrics.csv · as-run scripts · full logs · commit SHAs
   bundle/p7_bundle.tar.gz        full version of this directory (including the complete 9.8 MB training log)

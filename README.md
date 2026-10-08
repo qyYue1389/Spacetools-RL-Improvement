@@ -152,9 +152,9 @@ Every upstream file we modified. Changes marked **P1(a)** or **Infra** are prepa
 
 | Repo | Contents |
 |---|---|
-| [`qzpm55555/spacetools-sft-v1-4xa6000`](https://huggingface.co/qzpm55555/spacetools-sft-v1-4xa6000) | Our Step 3 SFT checkpoint (π_ref for RL) + training evidence (eval logs, data provenance). Eval pinned at revision `91fd4bdf6d2ffe3b355cc650e71925c6e91a15c5` |
-| [`qzpm55555/spacetools-p7-gflowrl-cprime-8xa40`](https://huggingface.co/qzpm55555/spacetools-p7-gflowrl-cprime-8xa40) | GFlowRL C′ checkpoints `global_step_30/60/85` (HF format, 7.6 GB each) + provenance bundle with full training logs |
-| [`qzpm55555/spacetools-eval-env`](https://huggingface.co/qzpm55555/spacetools-eval-env) | Packaged eval/RL environment (5 conda envs, ~22 GB split archive) with `FETCH_WEIGHTS.sh`, `RESTORE.sh`, `VERIFY.sh`, `POSTRESTORE.sh` |
+| [`qyYue1389/spacetools-sft-v1-4xa6000`](https://huggingface.co/qyYue1389/spacetools-sft-v1-4xa6000) | Our Step 3 SFT checkpoint (π_ref for RL) + training evidence (eval logs, data provenance). Eval pinned at revision `91fd4bdf6d2ffe3b355cc650e71925c6e91a15c5` |
+| [`qyYue1389/spacetools-p7-gflowrl-cprime-8xa40`](https://huggingface.co/qyYue1389/spacetools-p7-gflowrl-cprime-8xa40) | GFlowRL C′ checkpoints `global_step_30/60/85` (HF format, 7.6 GB each) + provenance bundle with full training logs |
+| [`qyYue1389/spacetools-eval-env`](https://huggingface.co/qyYue1389/spacetools-eval-env) | Packaged eval/RL environment (5 conda envs, ~22 GB split archive) with `FETCH_WEIGHTS.sh`, `RESTORE.sh`, `VERIFY.sh`, `POSTRESTORE.sh` |
 
 Upstream artifacts used: base model [`Qwen/Qwen2.5-VL-3B-Instruct`](https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct), official checkpoint [`siyich/spacetools-ckpt`](https://huggingface.co/siyich/spacetools-ckpt), SFT data [`siyich/spacetools-sft`](https://huggingface.co/datasets/siyich/spacetools-sft), RL data [`siyich/spacetools-rlfulltools`](https://huggingface.co/datasets/siyich/spacetools-rlfulltools), eval benchmarks [`siyich/spacetools-eval-benchmarks`](https://huggingface.co/datasets/siyich/spacetools-eval-benchmarks) @ `1d539ac9`, tool weights [`Zhoues/RoboRefer-8B-SFT`](https://huggingface.co/Zhoues/RoboRefer-8B-SFT), [`allenai/Molmo-7B-D-0924`](https://huggingface.co/allenai/Molmo-7B-D-0924), [`facebook/sam2.1-hiera-small`](https://huggingface.co/facebook/sam2.1-hiera-small), [`adithyamurali/GraspGenModels`](https://huggingface.co/adithyamurali/GraspGenModels) (all revisions pinned in [`03_sft_eval/config/WEIGHTS_PINS.txt`](03_sft_eval/config/WEIGHTS_PINS.txt)).
 
@@ -321,9 +321,9 @@ Scores are only comparable under the same protocol: `gpu_memory_utilization` set
 
 | Repo | 内容 |
 |---|---|
-| [`qzpm55555/spacetools-sft-v1-4xa6000`](https://huggingface.co/qzpm55555/spacetools-sft-v1-4xa6000) | 我们训的 SFT checkpoint(RL 的 π_ref)及训练证据 |
-| [`qzpm55555/spacetools-p7-gflowrl-cprime-8xa40`](https://huggingface.co/qzpm55555/spacetools-p7-gflowrl-cprime-8xa40) | GFlowRL C′ 的 `global_step_30/60/85`(HF 格式)与完整训练日志 |
-| [`qzpm55555/spacetools-eval-env`](https://huggingface.co/qzpm55555/spacetools-eval-env) | eval/RL 环境包(5 个 conda 环境,约 22 GB)及还原、验收脚本 |
+| [`qyYue1389/spacetools-sft-v1-4xa6000`](https://huggingface.co/qyYue1389/spacetools-sft-v1-4xa6000) | 我们训的 SFT checkpoint(RL 的 π_ref)及训练证据 |
+| [`qyYue1389/spacetools-p7-gflowrl-cprime-8xa40`](https://huggingface.co/qyYue1389/spacetools-p7-gflowrl-cprime-8xa40) | GFlowRL C′ 的 `global_step_30/60/85`(HF 格式)与完整训练日志 |
+| [`qyYue1389/spacetools-eval-env`](https://huggingface.co/qyYue1389/spacetools-eval-env) | eval/RL 环境包(5 个 conda 环境,约 22 GB)及还原、验收脚本 |
 
 ## 8. 复现
 

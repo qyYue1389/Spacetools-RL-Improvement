@@ -16,7 +16,7 @@ Raw artifacts: `/workspace/exp/p0/` (dumps of the 12 runs), `/workspace/parsed/`
 | | |
 |---|---|
 | Machine | 4× RTX 6000 Ada (sm_89, 49140 MiB, all four GPUs same capacity, no mixed ECC) · Ubuntu 24.04 · driver 610.43.02 |
-| Environment | `qzpm55555/spacetools-eval-env`, all four `VERIFY.sh` checks pass |
+| Environment | `qyYue1389/spacetools-eval-env`, all four `VERIFY.sh` checks pass |
 | KV pool | Whole GPU 47 GB × `gpu_memory_utilization=0.511` = **24.5 GB**, identical across all three arms |
 | Scale | 12 independent invocations · 5097 samples · about 24 minutes each · about 4 h 10 m in total |
 | Order | run1 (sft→p4→cp) → run2 → run3 → ref1, **interleaved by run**, not grouped by ckpt |
@@ -26,9 +26,9 @@ Provenance of the three arms (pinned by revision):
 
 | Arm | repo | revision |
 |---|---|---|
-| SFT starting point | `qzpm55555/spacetools-sft-v1-4xa6000` | `91fd4bdf` |
+| SFT starting point | `qyYue1389/spacetools-sft-v1-4xa6000` | `91fd4bdf` |
 | P4 official GRPO | `siyich/spacetools-ckpt` | `f953b1a1` |
-| C′ step85 | `qzpm55555/spacetools-p7-gflowrl-cprime-8xa40` | `global_step_85` |
+| C′ step85 | `qyYue1389/spacetools-p7-gflowrl-cprime-8xa40` | `global_step_85` |
 
 ### 1.1 Two deviations (must be recorded in PROVENANCE)
 

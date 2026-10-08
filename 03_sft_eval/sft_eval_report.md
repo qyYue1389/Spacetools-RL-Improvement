@@ -1,6 +1,6 @@
 # SFT checkpoint eval report
 
-Subject: `qzpm55555/spacetools-sft-v1-4xa6000` @ `91fd4bdf6d2ffe3b355cc650e71925c6e91a15c5`
+Subject: `qyYue1389/spacetools-sft-v1-4xa6000` @ `91fd4bdf6d2ffe3b355cc650e71925c6e91a15c5`
 Run: 2026-09-11/12 · 4× RTX A6000 · based on `SFT eval handoff doc (not included)`
 Companions: `03_sft_eval/sft_eval_results.md` (raw numbers and provenance), `00_environment/eval_rl_env/env_package_revision_20260912.md` (environment-side changes)
 
@@ -190,7 +190,7 @@ Final environment compared with the packaging machine:
 ### 3.2 Environment restore
 
 ```
-hf download qzpm55555/spacetools-eval-env     21 GB, 6 shards
+hf download qyYue1389/spacetools-eval-env     21 GB, 6 shards
 sha256sum -c                                   12/12 OK
 FETCH_WEIGHTS.sh                               79 GB, at pinned revisions
 RESTORE.sh                                     concatenated 22102227452 bytes (byte-for-byte match with the README record)

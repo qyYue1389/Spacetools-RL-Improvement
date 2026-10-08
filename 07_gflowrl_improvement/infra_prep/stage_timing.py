@@ -11,7 +11,7 @@ step "unaccounted".  This reads every timing_s/* key, so the gap can be attribut
     python3 stage_timing.py full_train.log --csv out.csv
 
 The full P7 log is in the HF repo:  provenance/ (or bundle/p7_bundle.tar.gz)
-    hf download qzpm55555/spacetools-p7-gflowrl-cprime-8xa40 --include "provenance/*" --local-dir p7_hf
+    hf download qyYue1389/spacetools-p7-gflowrl-cprime-8xa40 --include "provenance/*" --local-dir p7_hf
 """
 import argparse, re, statistics as st, sys
 

@@ -1,6 +1,6 @@
 # 05 · GFlowRL training / GFlowRL 训练
 
-One run of the C′ arm: 85 steps (1 epoch, as in upstream `run_rl.sh`), `rollout.n` = G = 5, β = 8, ε = 0.2 / 0.28, on 8× A40 (4 GPUs for tools, 4 for training), 21 h 57 min, exit code 0. Checkpoints 30 / 60 / 85 are on [`qzpm55555/spacetools-p7-gflowrl-cprime-8xa40`](https://huggingface.co/qzpm55555/spacetools-p7-gflowrl-cprime-8xa40).
+One run of the C′ arm: 85 steps (1 epoch, as in upstream `run_rl.sh`), `rollout.n` = G = 5, β = 8, ε = 0.2 / 0.28, on 8× A40 (4 GPUs for tools, 4 for training), 21 h 57 min, exit code 0. Checkpoints 30 / 60 / 85 are on [`qyYue1389/spacetools-p7-gflowrl-cprime-8xa40`](https://huggingface.co/qyYue1389/spacetools-p7-gflowrl-cprime-8xa40).
 C′ 臂的一次完整训练。
 
 | Path | What |
