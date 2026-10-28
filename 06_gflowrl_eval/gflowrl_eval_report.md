@@ -429,6 +429,9 @@ The correct criterion is **success marker + sample count + OOM count + router-lo
 (This and SFT report §6.6 "the acceptance-check script itself can also give a false green" are two sides of the same class of problem:
 one fails yet exits 0, the other succeeds yet exits 15.)
 
+> **Addendum 2026-10-28:** step 8 of `EVAL_FROM_SCRATCH.sh` used `[ $EVAL_RC -eq 0 ] || die`,
+> which hit exactly this and marked every successful run as failed. It now checks the log for `EVALUATION COMPLETE` (commit `1559954`).
+
 ### 7.3 `run_eval.sh` has no concurrency guard; two instances kill each other
 
 The launch command was retried once by an upper layer, which started two `run_eval.sh` at the same time. Both run
@@ -461,7 +464,8 @@ The fix is `BASH_ENV=/opt/conda-st/etc/profile.d/conda.sh`; no script change nee
 
 The gate step of `EVAL_FROM_SCRATCH.sh` passes a directory, while `parse_dump.py` wants the
 `0.jsonl` file path, so it prints `not a file` and reports `CONTAMINATED OR UNREADABLE`.
-This time the gate was rerun by hand with file paths. **This is a defect that gives the illusion "the gate ran"; it needs fixing.**
+This time the gate was rerun by hand with file paths. **This is a defect that gives the illusion "the gate ran".**
+Fixed (2026-10-28, commit `1559954`): the gate now passes `<benchmark>/0.jsonl` to `parse_dump.py`.
 
 ### 7.8 `analyze_grasp_result.py` undercounts one class of grasp failure
 

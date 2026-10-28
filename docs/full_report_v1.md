@@ -1491,6 +1491,8 @@ even the raw text `CUDA out of memory` appears 0 times.
 > toolshed, `wait` carries the SIGTERM out, and **the script's exit code is 15**. All three runs had exit code 15,
 > and all three ran to completion — **judging by exit code would discard a batch of fully valid results.** The correct criterion is
 > **success marker + sample count + OOM count + router-lost count**, not `$?`.
+> (2026-10-28: step 8 of `EVAL_FROM_SCRATCH.sh` still judged by exit code and now checks the success marker;
+> the step-9 gate passed a directory to `parse_dump.py` and now passes `0.jsonl`. Commit `1559954`.)
 > ② `run_eval.sh` has no concurrency protection: both instances run `ray stop --force` at startup, and the later one kills the earlier one's
 > toolshed together with all its tool actors, while **the earlier eval keeps running and still produces scores**,
 > only every tool call gets `Could not find ToolRouterActor`. An atomic lock has been added + this count is now part of the gate.
