@@ -141,16 +141,18 @@ export BASH_ENV=/opt/conda-st/etc/profile.d/conda.sh
 export NUM_GPUS=4
 export EVAL_GPUS=1
 export OUTPUT_DIR="$EVAL_OUT"
+mkdir -p "$EVAL_OUT"
 bash "$RUN_EVAL" "$MODEL" \
     robospatial reflocation refplacement refunseen \
-    blinkdepth cvb2drelation cvb3ddepth boppose bopgrasp
-EVAL_RC=$?
-echo "  run_eval.sh exit code $EVAL_RC"
-[ "$EVAL_RC" -eq 0 ] || die "run_eval.sh failed (exit code $EVAL_RC) — the nine benchmarks did not finish; ignore the gate and comparison numbers below"
+    blinkdepth cvb2drelation cvb3ddepth boppose bopgrasp 2>&1 | tee "$EVAL_OUT/run_eval.log"
+EVAL_RC=${PIPESTATUS[0]}
+echo "  run_eval.sh exit code $EVAL_RC (15 is normal on success: its cleanup trap kills the background toolshed and wait passes the SIGTERM out)"
+# Judge by the success marker, not by $? — a finished run exits 15 (gflowrl_eval_report.md §7.2)
+grep -q "EVALUATION COMPLETE" "$EVAL_OUT/run_eval.log" || die "run_eval.sh did not print EVALUATION COMPLETE (exit code $EVAL_RC) — the nine benchmarks did not finish; ignore the gate and comparison numbers below"
 
 step "9. Health gate (count OOMs and tool errors first, then look at scores)"
 PD=""
-for C in "$(dirname "$0")/parse_dump.py" "$PKG/parse_dump.py" /opt/spacetools/spacetools-repro/tools/parse_dump.py; do
+for C in "$(dirname "$0")/parse_dump.py" "$(dirname "$0")/../../tools/parse_dump.py" "$PKG/parse_dump.py" /opt/spacetools/spacetools-repro/tools/parse_dump.py; do
     [ -f "$C" ] && PD="$C" && break
 done
 if [ -z "$PD" ]; then
@@ -158,8 +160,8 @@ if [ -z "$PD" ]; then
     echo "     grep -c OutOfMemoryError and grep -cE 'Error:|ERROR:toolshed' must both be 0"
 else
     for B in robospatial reflocation refplacement refunseen blinkdepth cvb2drelation cvb3ddepth boppose bopgrasp; do
-        D="$EVAL_OUT/$B"
-        [ -d "$D" ] || { echo "  skipping $B (no output directory)"; continue; }
+        D="$EVAL_OUT/$B/0.jsonl"   # parse_dump.py takes the dump file, not the directory (gflowrl_eval_report.md §7.7)
+        [ -f "$D" ] || { echo "  ✗ $B has no dump ($D) — read it as \"this benchmark has no result yet\""; continue; }
         python "$PD" --strict "$D" || echo "  ✗ $B failed the gate — read it as \"this benchmark has no result yet\", not \"there's a warning\""
     done
 fi
